@@ -1,0 +1,63 @@
+# America's Mattress — Operations Hub
+## Deploy Guide for Conner
+
+---
+
+## OPTION A: Edit on Your Computer First (Recommended)
+### Install & Run Locally (one-time setup, ~5 minutes)
+
+1. Install Node.js (free): https://nodejs.org — click "LTS" version
+2. Unzip this folder anywhere on your computer
+3. Open a terminal (Windows: press Win+R, type "cmd", hit Enter)
+4. Type these commands one at a time:
+
+   cd path\to\americas-mattress
+   npm install
+   npm start
+
+5. Your browser will open automatically at http://localhost:3000
+6. You can now edit src/App.jsx in any text editor and the page updates live
+
+---
+
+## OPTION B: Deploy to the Web (Your Team Accesses via URL)
+### Deploy on Vercel — FREE, takes ~10 minutes
+
+1. Go to https://github.com and create a free account
+2. Create a new repository called "americas-mattress"
+3. Upload all files from this folder to that repo
+4. Go to https://vercel.com — sign in with your GitHub account
+5. Click "Add New Project" → select "americas-mattress"
+6. Click Deploy (leave all settings as-is)
+7. Vercel gives you a URL like: https://americas-mattress.vercel.app
+8. Share that URL with your team — works on any computer or phone!
+
+### To update the app after deploying:
+- Edit src/App.jsx
+- Push changes to GitHub
+- Vercel auto-deploys in ~30 seconds
+
+---
+
+## EDITING THE APP: Quick Reference (src/App.jsx)
+
+### Change employee names/roles:
+Find INITIAL_EMPLOYEES near the top and edit the list.
+
+### Change your name in the chain of command:
+Find ESCALATION and update "Conner (Manager)" to whatever you prefer.
+
+### Add/Remove employees without code:
+Use the "👥 Team" tab in the app itself — no code needed!
+
+### Import deliveries from a spreadsheet:
+Export your delivery list as CSV with these column headers:
+  Customer, Address, Phone, Item, Window, AssignedTo, Status,
+  Floor, Elevator (yes/no), Removal (yes/no), Payment, Transfer (yes/no)
+
+Then click "📂 Import CSV" in the app header.
+
+---
+
+## NEED HELP?
+Ask Claude at claude.ai — paste your question and reference this app.
