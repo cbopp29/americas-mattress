@@ -8,6 +8,7 @@ const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 const ALL_DAYS = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
 const ROLES = ["Driver","Helper","Driver/Helper","Coordinator","Loader","Manager","Warehouse","Other"];
 const GOOGLE_SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRUFm-Pdfi79zd08mVvDwkGRli6obO0R9d1JGJQLU6jQBKBtTmUdfOGn6TZ3QH0FA/pubhtml";
+const GOOGLE_SHEET_EMBED = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRUFm-Pdfi79zd08mVvDwkGRli6obO0R9d1JGJQLU6jQBKBtTmUdfOGn6TZ3QH0FA/pubhtml?widget=true&headers=false";
 
 const STATUS_COLORS = {
   "Scheduled":   { bg:"#1e293b", text:"#94a3b8", dot:"#64748b" },
@@ -100,9 +101,9 @@ const GLOBAL_STYLES = `
     /* Manager: stack all multi-col grids to single col */
     .del-form-grid, .del-form-3, .new-emp-grid, .prob-grid { grid-template-columns:1fr!important }
     /* Manager: tasks sidebar goes horizontal scrollable row */
-    .tasks-layout { grid-template-columns:1fr!important }
-    .tasks-sidebar { display:flex!important; flex-direction:row!important; overflow-x:auto!important; gap:6px!important; padding-bottom:6px!important; flex-wrap:nowrap!important }
-    .tasks-sidebar button { flex-shrink:0!important; min-width:90px!important }
+    .tasks-layout { grid-template-columns:1fr!important; display:flex!important; flex-direction:column!important }
+    .tasks-sidebar { display:grid!important; grid-template-columns:repeat(4,1fr)!important; overflow-x:unset!important; gap:6px!important }
+    .tasks-sidebar button { min-width:unset!important }
     /* Manager: task add form stacks */
     .task-add-grid { grid-template-columns:1fr 1fr!important }
     /* Manager: delivery card status buttons wrap */
@@ -177,7 +178,7 @@ function LoginScreen({ employees, onLogin }) {
 }
 
 // ─── DRIVER VIEW ──────────────────────────────────────────────────────────────
-function DriverView({ user, deliveries, customTasks, baseTasks, messages, problems, onStatusUpdate, onLogout, onSendMessage, onLogProblem }) {
+function DriverView({ user, deliveries, customTasks, baseTasks, messages, problems, employees, onStatusUpdate, onLogout, onSendMessage, onLogProblem }) {
   const [tab, setTab] = useState("deliveries");
   const [openDel, setOpenDel] = useState(null);
   const [msgInput, setMsgInput] = useState("");
@@ -202,20 +203,40 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
     setMsgInput("");
   };
 
+  // Compress image to max 800px wide and ~400KB before uploading
+  const compressPhoto = (file) => new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const img = new Image();
+      img.onload = () => {
+        const MAX = 800;
+        let w = img.width, h = img.height;
+        if (w > MAX) { h = Math.round(h * MAX / w); w = MAX; }
+        const canvas = document.createElement("canvas");
+        canvas.width = w; canvas.height = h;
+        canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+        canvas.toBlob((blob) => resolve(blob), "image/jpeg", 0.75);
+      };
+      img.src = ev.target.result;
+    };
+    reader.readAsDataURL(file);
+  });
+
   const handlePhoto = async (e, deliveryId) => {
     const file = e.target.files[0];
     if (!file) return;
     setUploadingFor(deliveryId);
     try {
-      const path = `deliveries/${deliveryId}/${Date.now()}_${file.name}`;
-      const { error } = await sb.storage.from("photos").upload(path, file);
+      const compressed = await compressPhoto(file);
+      const path = `deliveries/${deliveryId}/${Date.now()}.jpg`;
+      const { error } = await sb.storage.from("photos").upload(path, compressed, { contentType:"image/jpeg" });
       if (!error) {
         const url = sb.storage.from("photos").getPublicUrl(path).data.publicUrl;
         const msg = { id:Date.now(), sender_id:user.id, sender_name:user.name, text:"📷 Photo", delivery_id:deliveryId, photo_url:url, created_at:new Date().toISOString() };
         await sb.from("messages").insert(msg);
         onSendMessage(msg);
       }
-    } catch(e) {}
+    } catch(e) { console.error(e); }
     setUploadingFor(null);
   };
 
@@ -247,10 +268,14 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
       {/* Driver nav */}
       <div style={{display:"flex",background:"#0a1628",borderBottom:"1px solid #1e2d3d"}}>
         {[
+          {key:"dashboard",label:isEs?"Inicio":"Dashboard",icon:"⬛"},
           {key:"deliveries",label:isEs?"Entregas":"Deliveries",icon:"🚛"},
           {key:"tasks",label:isEs?"Tareas":"Tasks",icon:"✅"},
           {key:"messages",label:isEs?"Mensajes":"Messages",icon:"💬"},
           {key:"problems",label:isEs?"Problemas":"Problems",icon:"⚠️"},
+          {key:"inventory",label:isEs?"Inventario":"Inventory",icon:"📦"},
+          {key:"sms",label:"SMS",icon:"📱"},
+          {key:"inspection",label:isEs?"Inspección":"Inspect",icon:"🔍"},
         ].map(t=>(
           <button key={t.key} className="btn" onClick={()=>setTab(t.key)}
             style={{flex:1,padding:"12px 4px",fontSize:12,fontWeight:600,color:tab===t.key?"#60a5fa":"#64748b",borderBottom:tab===t.key?"2px solid #3b82f6":"2px solid transparent",background:"none",borderRadius:0,textAlign:"center"}}>
@@ -437,7 +462,169 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
             ))}
           </div>
         )}
+
+        {/* DASHBOARD TAB */}
+        {tab==="dashboard"&&(
+          <div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:9,marginBottom:14}}>
+              {[
+                {l:isEs?"Total":"Total",v:deliveries.length,c:"#3b82f6",i:"📦"},
+                {l:isEs?"Entregado":"Delivered",v:deliveries.filter(d=>d.status==="Delivered").length,c:"#22c55e",i:"✅"},
+                {l:isEs?"En Camino":"In Transit",v:deliveries.filter(d=>d.status==="In Transit").length,c:"#60a5fa",i:"🚛"},
+              ].map(s=>(
+                <div key={s.l} style={{...cardStyle,padding:"13px 12px",textAlign:"center"}}>
+                  <div style={{fontSize:20,marginBottom:4}}>{s.i}</div>
+                  <div style={{fontSize:24,fontWeight:700,color:s.c,fontFamily:"monospace"}}>{s.v}</div>
+                  <div style={{fontSize:11,color:"#475569",marginTop:3}}>{s.l}</div>
+                </div>
+              ))}
+            </div>
+            <div style={{...cardStyle,overflow:"hidden"}}>
+              <div style={{padding:"10px 14px",background:"#0a1628",fontSize:10,fontWeight:700,letterSpacing:".1em",color:"#475569",textTransform:"uppercase"}}>{isEs?"Todas las Entregas de Hoy":"All Today's Deliveries"}</div>
+              {deliveries.length===0?(
+                <div style={{padding:24,textAlign:"center",color:"#475569",fontSize:13}}>{isEs?"No hay entregas.":"No deliveries today."}</div>
+              ):(
+                [...deliveries].sort((a,b)=>(a.stop_order||0)-(b.stop_order||0)).map((d,i)=>{
+                  const emp=employees.find(e=>e.id===d.assigned_to);
+                  const sc=STATUS_COLORS[d.status]||STATUS_COLORS["Scheduled"];
+                  return(
+                    <div key={d.id} style={{display:"flex",alignItems:"center",padding:"11px 14px",borderTop:i>0?"1px solid #131f2e":"none",gap:10,flexWrap:"wrap"}}>
+                      <span style={{fontSize:10,color:"#64748b",fontFamily:"monospace",width:20}}>#{d.stop_order}</span>
+                      <div style={{flex:1,minWidth:100}}>
+                        <div style={{fontWeight:600,fontSize:13,color:"#e2e8f0"}}>{d.customer}</div>
+                        <div style={{fontSize:11,color:"#475569"}}>{(d.items||[]).map(x=>`${x.qty}x ${x.name}`).join(", ")}</div>
+                      </div>
+                      <div style={{fontSize:11,color:"#64748b"}}>{emp?.name}</div>
+                      <span className="badge" style={{background:sc.bg,color:sc.text}}>
+                        <span style={{width:5,height:5,borderRadius:"50%",background:sc.dot,...(d.status==="In Transit"?{animation:"pulse 2s infinite"}:{})}}/>
+                        {d.status}
+                      </span>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* INVENTORY TAB */}
+        {tab==="inventory"&&(
+          <div>
+            <div style={{marginBottom:10,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <div style={{fontWeight:700,fontSize:14,color:"#f1f5f9"}}>📦 {isEs?"Inventario":"Inventory"}</div>
+              <a href={GOOGLE_SHEET_URL} target="_blank" rel="noreferrer" style={{background:"#1e2d3d",color:"#60a5fa",borderRadius:8,padding:"6px 12px",fontSize:12,fontWeight:600,textDecoration:"none"}}>🔗 {isEs?"Abrir":"Open"}</a>
+            </div>
+            <div style={{...cardStyle,overflow:"hidden",borderRadius:12}}>
+              {GOOGLE_SHEET_URL==="YOUR_SHEET_URL_HERE"?(
+                <div style={{padding:40,textAlign:"center",color:"#475569",fontSize:13}}>{isEs?"Hoja no conectada aún.":"Sheet not connected yet."}</div>
+              ):(
+                <iframe src={GOOGLE_SHEET_EMBED} width="100%" height="500" style={{border:0,display:"block"}} title="Inventory"/>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* SMS TAB */}
+        {tab==="sms"&&(
+          <div>
+            <div style={{fontWeight:700,fontSize:14,color:"#f1f5f9",marginBottom:12}}>📱 {isEs?"SMS a Clientes":"Customer SMS"}</div>
+            {deliveries.length===0?(
+              <div style={{...cardStyle,padding:36,textAlign:"center",color:"#475569"}}>{isEs?"No hay entregas.":"No deliveries yet."}</div>
+            ):(
+              deliveries.map(d=>{
+                const sc=STATUS_COLORS[d.status]||STATUS_COLORS["Scheduled"];
+                return(
+                  <div key={d.id} style={{...cardStyle,padding:"13px 14px",marginBottom:10}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:7,marginBottom:8}}>
+                      <div>
+                        <div style={{fontWeight:700,fontSize:13,color:"#f1f5f9"}}>{d.customer}</div>
+                        <div style={{fontSize:11,color:"#64748b"}}>{d.phone} · {d.delivery_window}</div>
+                      </div>
+                      <span className="badge" style={{background:sc.bg,color:sc.text}}><span style={{width:5,height:5,borderRadius:"50%",background:sc.dot}}/>{d.status}</span>
+                    </div>
+                    <div style={{background:"#0a1628",borderRadius:8,padding:"10px 12px",fontSize:12,color:"#475569",fontStyle:"italic"}}>
+                      {isEs?"SMS generado por Conner.":"SMS messages are generated by Conner."}
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        )}
+
+        {/* INSPECTION TAB */}
+        {tab==="inspection"&&(
+          <div>
+            <div style={{...cardStyle,padding:14,marginBottom:12}}>
+              <div style={{fontWeight:700,fontSize:14,color:"#f1f5f9",marginBottom:12}}>🔍 {isEs?"Inspección del Camión":"Truck Inspection"}</div>
+              <div style={{fontSize:12,color:"#94a3b8",marginBottom:12}}>{isEs?"Sube fotos de la inspección previa al viaje.":"Upload photos of your pre-trip inspection."}</div>
+              <DriverInspectionUpload user={user} onUploaded={(ins)=>{}} isEs={isEs}/>
+            </div>
+          </div>
+        )}
+
       </div>
+    </div>
+  );
+}
+
+// ─── DRIVER INSPECTION UPLOAD ─────────────────────────────────────────────────
+function DriverInspectionUpload({ user, onUploaded, isEs }) {
+  const [notes, setNotes] = useState("");
+  const [uploading, setUploading] = useState(false);
+  const [done, setDone] = useState(false);
+  const fileRef = useRef();
+
+  const compressPhoto = (file) => new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const img = new Image();
+      img.onload = () => {
+        const MAX = 800; let w=img.width, h=img.height;
+        if(w>MAX){h=Math.round(h*MAX/w);w=MAX;}
+        const canvas=document.createElement("canvas"); canvas.width=w; canvas.height=h;
+        canvas.getContext("2d").drawImage(img,0,0,w,h);
+        canvas.toBlob((blob)=>resolve(blob),"image/jpeg",0.75);
+      };
+      img.src=ev.target.result;
+    };
+    reader.readAsDataURL(file);
+  });
+
+  const handleUpload = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    setUploading(true);
+    try {
+      const compressed = await compressPhoto(file);
+      const path = `inspections/${user.id}/${Date.now()}.jpg`;
+      const { error } = await sb.storage.from("photos").upload(path, compressed, {contentType:"image/jpeg"});
+      if (!error) {
+        const url = sb.storage.from("photos").getPublicUrl(path).data.publicUrl;
+        const ins = { id:Date.now(), emp_id:user.id, emp_name:user.name, photo_url:url, notes:notes.trim(), inspection_date:new Date().toISOString().split("T")[0], created_at:new Date().toISOString() };
+        await sb.from("inspections").insert(ins);
+        onUploaded(ins);
+        setDone(true);
+        setNotes("");
+        setTimeout(()=>setDone(false),3000);
+      }
+    } catch(e) { console.error(e); }
+    setUploading(false);
+  };
+
+  const inputStyle = {background:"#0a1628",border:"1px solid #1e2d3d",borderRadius:8,padding:"10px 14px",fontSize:14,color:"#e2e8f0",width:"100%",fontFamily:"inherit"};
+
+  return (
+    <div>
+      <textarea value={notes} onChange={e=>setNotes(e.target.value)}
+        placeholder={isEs?"Notas de inspección (defectos, problemas...)":"Inspection notes (defects, issues...)"}
+        rows={3} style={{...inputStyle,resize:"vertical",marginBottom:10}}/>
+      <input ref={fileRef} type="file" accept="image/*" capture="environment" onChange={handleUpload} style={{display:"none"}}/>
+      <button className="btn" onClick={()=>fileRef.current.click()} disabled={uploading}
+        style={{width:"100%",background:done?"linear-gradient(135deg,#059669,#047857)":"linear-gradient(135deg,#2563eb,#1d4ed8)",color:"#fff",padding:13,fontSize:14,fontWeight:700,marginBottom:8}}>
+        {uploading?"⏳ Uploading...":done?"✅ Submitted!":"📷 "+ (isEs?"Tomar Foto de Inspección":"Take Inspection Photo")}
+      </button>
+      <div style={{fontSize:11,color:"#475569",textAlign:"center"}}>{isEs?"Conner puede ver todas las fotos de inspección.":"Conner can review all inspection photos."}</div>
     </div>
   );
 }
@@ -500,8 +687,12 @@ export default function App() {
   const [newTaskInput, setNewTaskInput] = useState({ text:"", priority:"high", category:"Delivery", day:"All" });
   const [teamMsg, setTeamMsg] = useState("");
   const [todayDate] = useState(new Date().toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"}));
+  const [dateFilter, setDateFilter] = useState("today");
+  const [inspections, setInspections] = useState([]);
+  const [customDateFrom, setCustomDateFrom] = useState("");
+  const [customDateTo, setCustomDateTo] = useState("");
 
-  const EMPTY_DEL = { id:"", customer:"", address:"", phone:"", items:[{qty:1,name:""}], delivery_window:"", assigned_to:1, status:"Scheduled", notes:"", floor:"1", elevator:false, removal_requested:false, transfer_scheduled:false, route_notes:"", stop_order:deliveries.length+1 };
+  const todayStr = new Date().toISOString().split("T")[0]; const EMPTY_DEL = { id:"", customer:"", address:"", phone:"", items:[{qty:1,name:""}], delivery_window:"", assigned_to:1, status:"Scheduled", notes:"", floor:"1", elevator:false, removal_requested:false, transfer_scheduled:false, route_notes:"", stop_order:deliveries.length+1, delivery_date:todayStr, ticket_number:"" };
 
   // Load data
   useEffect(()=>{
@@ -545,7 +736,7 @@ export default function App() {
 
   const saveDelivery = async (d) => {
     setSyncing(true);
-    const row = { customer:d.customer,address:d.address,phone:d.phone,items:d.items||[],delivery_window:d.delivery_window||"",assigned_to:Number(d.assigned_to)||1,status:d.status,notes:d.notes||"",floor:d.floor||"1",elevator:!!d.elevator,removal_requested:!!d.removal_requested,transfer_scheduled:!!d.transfer_scheduled,route_notes:d.route_notes||"",stop_order:Number(d.stop_order)||1 };
+    const today = new Date().toISOString().split('T')[0]; const row = { customer:d.customer,address:d.address,phone:d.phone,items:d.items||[],delivery_window:d.delivery_window||"",assigned_to:Number(d.assigned_to)||1,status:d.status,notes:d.notes||"",floor:d.floor||"1",elevator:!!d.elevator,removal_requested:!!d.removal_requested,transfer_scheduled:!!d.transfer_scheduled,route_notes:d.route_notes||"",stop_order:Number(d.stop_order)||1,delivery_date:d.delivery_date||today,ticket_number:d.ticket_number||"" };
     if (!d.id) {
       const nid = `D-${String(deliveries.length+1).padStart(3,"0")}-${Date.now()}`;
       const {data} = await sb.from("deliveries").insert({...row,id:nid}).select();
@@ -631,6 +822,29 @@ export default function App() {
     setNewEmp({name:"",role:"Driver",lang:"en",workdays:["Mon","Tue","Wed","Fri"],pin:""});
   };
 
+  // Date filtering
+  const getFilteredDeliveries = () => {
+    const now = new Date();
+    const todayISO = now.toISOString().split("T")[0];
+    if (dateFilter==="today") return deliveries.filter(d=>(d.delivery_date||todayISO)===todayISO);
+    if (dateFilter==="week") {
+      const weekAgo = new Date(now); weekAgo.setDate(weekAgo.getDate()-7);
+      return deliveries.filter(d=>new Date(d.delivery_date||todayISO)>=weekAgo);
+    }
+    if (dateFilter==="month") {
+      const monthAgo = new Date(now); monthAgo.setDate(monthAgo.getDate()-30);
+      return deliveries.filter(d=>new Date(d.delivery_date||todayISO)>=monthAgo);
+    }
+    if (dateFilter==="custom" && customDateFrom) {
+      return deliveries.filter(d=>{
+        const dd = d.delivery_date||todayISO;
+        return dd>=customDateFrom && (!customDateTo||dd<=customDateTo);
+      });
+    }
+    return deliveries;
+  };
+  const filteredDeliveries = getFilteredDeliveries();
+
   const stats = {
     total:deliveries.length,
     delivered:deliveries.filter(d=>d.status==="Delivered").length,
@@ -652,7 +866,7 @@ export default function App() {
   if (!currentUser.is_manager&&!currentUser.isManager) return (
     <DriverView
       user={currentUser} deliveries={deliveries} customTasks={customTasks} baseTasks={baseTasks}
-      messages={messages} problems={problems}
+      messages={messages} problems={problems} employees={employees}
       onStatusUpdate={updStatus} onLogout={()=>setCurrentUser(null)}
       onSendMessage={(m)=>setMessages(prev=>[...prev,m])}
       onLogProblem={(p)=>setProblems(prev=>[...prev,p])}
@@ -700,6 +914,7 @@ export default function App() {
             {key:"inventory",label:"Inventory",icon:"📦"},
             {key:"team",label:"Team",icon:"👥"},
             {key:"basetasks",label:"Templates",icon:"✏️"},
+            {key:"inspections",label:"Inspections",icon:"🔍"},
           ].map(t=>(
             <button key={t.key} className="btn" onClick={()=>setTab(t.key)}
               style={{padding:"12px 13px",fontSize:12,fontWeight:500,whiteSpace:"nowrap",color:tab===t.key?"#60a5fa":"#64748b",borderBottom:tab===t.key?"2px solid #3b82f6":"2px solid transparent",background:"none",borderRadius:0}}>
@@ -796,7 +1011,7 @@ export default function App() {
               ))}
             </div>
             <div style={{display:"grid",gridTemplateColumns:"min(190px,30%) 1fr",gap:14}} /* responsive */>
-              <div className="tasks-sidebar" style={{display:"flex",flexDirection:"column",gap:6}}>
+              <div className="tasks-sidebar" style={{display:"flex",flexDirection:"column",gap:6,overflowY:"auto",maxHeight:"70vh"}}>
                 {employees.map(emp=>{
                   const w=working(emp,selectedDay);
                   return(
@@ -892,21 +1107,38 @@ export default function App() {
         {/* DELIVERIES */}
         {tab==="deliveries"&&(
           <div className="fade">
+            {/* Date filter */}
+            <div style={{display:"flex",gap:7,marginBottom:12,flexWrap:"wrap",alignItems:"center"}}>
+              <span style={{fontSize:11,color:"#475569"}}>Show:</span>
+              {[{v:"today",l:"Today"},{v:"week",l:"Last 7 Days"},{v:"month",l:"Last 30 Days"},{v:"all",l:"All (90 days)"},{v:"custom",l:"Custom"}].map(f=>(
+                <button key={f.v} className="btn" onClick={()=>setDateFilter(f.v)}
+                  style={{padding:"4px 12px",fontSize:11,background:dateFilter===f.v?"linear-gradient(135deg,#2563eb,#1d4ed8)":"#1e2d3d",color:dateFilter===f.v?"#fff":"#94a3b8"}}>
+                  {f.l}
+                </button>
+              ))}
+              {dateFilter==="custom"&&(
+                <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
+                  <input type="date" value={customDateFrom} onChange={e=>setCustomDateFrom(e.target.value)} style={{background:"#0a1628",border:"1px solid #1e2d3d",borderRadius:7,padding:"4px 9px",fontSize:12,color:"#e2e8f0",fontFamily:"inherit"}}/>
+                  <span style={{color:"#475569",fontSize:11}}>to</span>
+                  <input type="date" value={customDateTo} onChange={e=>setCustomDateTo(e.target.value)} style={{background:"#0a1628",border:"1px solid #1e2d3d",borderRadius:7,padding:"4px 9px",fontSize:12,color:"#e2e8f0",fontFamily:"inherit"}}/>
+                </div>
+              )}
+            </div>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,flexWrap:"wrap",gap:8}}>
               <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
                 {Object.entries(STATUS_COLORS).map(([s,c])=>(
                   <span key={s} className="badge" style={{background:c.bg,color:c.text,padding:"4px 10px"}}>
-                    <span style={{width:5,height:5,borderRadius:"50%",background:c.dot}}/>{s} — {deliveries.filter(d=>d.status===s).length}
+                    <span style={{width:5,height:5,borderRadius:"50%",background:c.dot}}/>{s} — {filteredDeliveries.filter(d=>d.status===s).length}
                   </span>
                 ))}
               </div>
-              <button className="btn" onClick={()=>setEditingDelivery({id:"",customer:"",address:"",phone:"",items:[{qty:1,name:""}],delivery_window:"",assigned_to:1,status:"Scheduled",notes:"",floor:"1",elevator:false,removal_requested:false,transfer_scheduled:false,route_notes:"",stop_order:deliveries.length+1})} style={{background:"linear-gradient(135deg,#2563eb,#1d4ed8)",color:"#fff",padding:"7px 15px",fontSize:13}}>➕ Add Delivery</button>
+              <button className="btn" onClick={()=>setEditingDelivery({id:"",customer:"",address:"",phone:"",items:[{qty:1,name:""}],delivery_window:"",assigned_to:1,status:"Scheduled",notes:"",floor:"1",elevator:false,removal_requested:false,transfer_scheduled:false,route_notes:"",stop_order:deliveries.length+1,delivery_date:new Date().toISOString().split("T")[0],ticket_number:""})} style={{background:"linear-gradient(135deg,#2563eb,#1d4ed8)",color:"#fff",padding:"7px 15px",fontSize:13}}>➕ Add Delivery</button>
             </div>
             {editingDelivery&&(
               <div style={{...C.card,padding:"16px 18px",marginBottom:14,borderColor:"#3b82f6"}}>
                 <div style={{fontWeight:700,fontSize:14,color:"#f1f5f9",marginBottom:12}}>{editingDelivery.id?"✏️ Edit":"➕ New Delivery"}</div>
                 <div className="del-form-grid" style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:9,marginBottom:9}}>
-                  {[{l:"Customer",f:"customer",ph:"John Smith"},{l:"Address",f:"address",ph:"123 Main St"},{l:"Phone",f:"phone",ph:"505-555-0100"},{l:"Time Window",f:"delivery_window",ph:"9AM–11AM"},{l:"Floor",f:"floor",ph:"1"}].map(x=>(
+                  {[{l:"Ticket #",f:"ticket_number",ph:"e.g. 1042"},{l:"Customer",f:"customer",ph:"John Smith"},{l:"Address",f:"address",ph:"123 Main St"},{l:"Phone",f:"phone",ph:"505-555-0100"},{l:"Time Window",f:"delivery_window",ph:"9AM–11AM"},{l:"Floor",f:"floor",ph:"1"},{l:"Delivery Date",f:"delivery_date",ph:""}].map(x=>(
                     <div key={x.f}><div style={{fontSize:10,color:"#475569",marginBottom:3}}>{x.l}</div><input value={editingDelivery[x.f]||""} onChange={e=>setEditingDelivery(p=>({...p,[x.f]:e.target.value}))} placeholder={x.ph} style={C.inp}/></div>
                   ))}
                 </div>
@@ -941,11 +1173,11 @@ export default function App() {
                 </div>
               </div>
             )}
-            {deliveries.length===0?(
-              <div style={{...C.card,padding:40,textAlign:"center",color:"#475569"}}><div style={{fontSize:32,marginBottom:8}}>🚛</div><div>No deliveries yet. Click ➕ to add.</div></div>
+            {filteredDeliveries.length===0?(
+              <div style={{...C.card,padding:40,textAlign:"center",color:"#475569"}}><div style={{fontSize:32,marginBottom:8}}>🚛</div><div>{dateFilter==="today"?"No deliveries today.":"No deliveries for this period."}</div></div>
             ):(
               <div style={{display:"flex",flexDirection:"column",gap:10}}>
-                {[...deliveries].sort((a,b)=>(a.stop_order||0)-(b.stop_order||0)).map(d=>{
+                {[...filteredDeliveries].sort((a,b)=>(a.stop_order||0)-(b.stop_order||0)).map(d=>{
                   const emp=employees.find(e=>e.id===d.assigned_to);
                   const sc=STATUS_COLORS[d.status]||STATUS_COLORS["Scheduled"];
                   const dMsgs=messages.filter(m=>m.delivery_id===d.id);
@@ -960,7 +1192,10 @@ export default function App() {
                               {d.status}
                             </span>
                           </div>
-                          <div style={{fontWeight:700,fontSize:14,color:"#f1f5f9"}}>{d.customer}</div>
+                          <div style={{display:"flex",alignItems:"center",gap:8}}>
+                            <div style={{fontWeight:700,fontSize:14,color:"#f1f5f9"}}>{d.customer}</div>
+                            {d.ticket_number&&<span style={{fontSize:11,background:"#1e3a5f",color:"#60a5fa",borderRadius:5,padding:"2px 7px",fontWeight:700}}>#{d.ticket_number}</span>}
+                          </div>
                           <div style={{fontSize:11,color:"#64748b",marginTop:2}}>{d.address} · {d.phone}</div>
                           <div style={{display:"flex",gap:5,marginTop:6,flexWrap:"wrap"}}>
                             {d.removal_requested&&<span style={{fontSize:10,background:"#1c1500",color:"#f59e0b",borderRadius:4,padding:"2px 5px"}}>♻️ Removal</span>}
@@ -1176,7 +1411,7 @@ export default function App() {
                   </div>
                 </div>
               ):(
-                <iframe src={GOOGLE_SHEET_URL} width="100%" height="620" style={{border:0,display:"block"}} title="Inventory"/>
+                <iframe src={GOOGLE_SHEET_EMBED} width="100%" height="620" style={{border:0,display:"block"}} title="Inventory"/>
               )}
             </div>
           </div>
@@ -1237,6 +1472,35 @@ export default function App() {
                 </div>
               ))}
             </div>
+          </div>
+        )}
+
+        {/* INSPECTIONS */}
+        {tab==="inspections"&&(
+          <div className="fade">
+            <div style={{fontWeight:700,fontSize:15,color:"#f1f5f9",marginBottom:14}}>🔍 Truck Inspections</div>
+            {inspections.length===0?(
+              <div style={{...C.card,padding:40,textAlign:"center",color:"#475569"}}>
+                <div style={{fontSize:32,marginBottom:8}}>🚛</div>
+                <div>No inspections submitted yet.</div>
+                <div style={{fontSize:12,marginTop:6}}>Drivers submit these from their Inspections tab.</div>
+              </div>
+            ):(
+              <div style={{display:"flex",flexDirection:"column",gap:10}}>
+                {inspections.map(ins=>(
+                  <div key={ins.id} style={{...C.card,padding:"14px 16px"}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8,flexWrap:"wrap",gap:6}}>
+                      <div>
+                        <div style={{fontWeight:700,fontSize:13,color:"#f1f5f9"}}>{ins.emp_name}</div>
+                        <div style={{fontSize:11,color:"#475569"}}>{ins.inspection_date} · {new Date(ins.created_at).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}</div>
+                      </div>
+                      {ins.notes&&<div style={{fontSize:12,color:"#f59e0b",background:"#1c1500",borderRadius:6,padding:"4px 9px"}}>⚠️ {ins.notes}</div>}
+                    </div>
+                    {ins.photo_url&&<img src={ins.photo_url} alt="inspection" style={{width:"100%",borderRadius:8,maxHeight:280,objectFit:"cover"}}/>}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
