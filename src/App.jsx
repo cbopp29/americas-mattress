@@ -98,27 +98,30 @@ const GLOBAL_STYLES = `
   input,textarea,select{font-family:inherit;color:#e2e8f0}
   /* ── Mobile Polish ── */
   @media(max-width:640px){
-    /* Manager: stack all multi-col grids to single col */
+    /* Stack all multi-col grids */
     .del-form-grid, .del-form-3, .new-emp-grid, .prob-grid { grid-template-columns:1fr!important }
-    /* Manager: tasks sidebar goes horizontal scrollable row */
+    /* Tasks layout stacks vertically */
     .tasks-layout { grid-template-columns:1fr!important; display:flex!important; flex-direction:column!important }
-    .tasks-sidebar { display:grid!important; grid-template-columns:repeat(4,1fr)!important; overflow-x:unset!important; gap:6px!important }
+    .tasks-sidebar { display:grid!important; grid-template-columns:repeat(4,1fr)!important; gap:6px!important }
     .tasks-sidebar button { min-width:unset!important }
-    /* Manager: task add form stacks */
     .task-add-grid { grid-template-columns:1fr 1fr!important }
-    /* Manager: delivery card status buttons wrap */
-    .status-col { flex-direction:row!important; flex-wrap:wrap!important; gap:5px!important }
-    .status-col button { flex:1!important; min-width:80px!important }
-    /* Manager: nav text smaller */
-    .mgr-nav button { padding:10px 8px!important; font-size:11px!important }
-    /* Manager: header compact */
-    .mgr-header-date { display:none!important }
-    /* General: full width inputs on mobile */
-    .del-actions { flex-direction:column!important }
-    /* Delivery card stacks on mobile */
+    /* Nav compact */
+    .mgr-nav button { padding:8px 6px!important; font-size:10px!important }
+    /* Delivery card stacks */
     .del-card-inner { flex-direction:column!important }
     .del-status-btns { flex-direction:row!important; flex-wrap:wrap!important }
     .del-status-btns button { flex:1!important; min-width:80px!important }
+    /* Stats grid 3 col on mobile */
+    .stats-grid-mobile { grid-template-columns:repeat(3,1fr)!important }
+    /* Larger touch targets */
+    .btn { min-height:38px }
+    /* Full width cards on mobile */
+    .emp-grid-mobile { grid-template-columns:1fr!important }
+    /* Bigger text in inputs on mobile to prevent zoom */
+    input, select, textarea { font-size:16px!important }
+  }
+  @media(max-width:400px){
+    .mgr-nav button { padding:6px 4px!important; font-size:9px!important }
   }
 `;
 
@@ -178,7 +181,7 @@ function LoginScreen({ employees, onLogin }) {
 }
 
 // ─── DRIVER VIEW ──────────────────────────────────────────────────────────────
-function DriverView({ user, deliveries, customTasks, baseTasks, messages, problems, employees, onStatusUpdate, onLogout, onSendMessage, onLogProblem, onSaveDelivery }) {
+function DriverView({ user, deliveries, customTasks, baseTasks, messages, problems, employees, onStatusUpdate, onLogout, onSendMessage, onLogProblem, onSaveDelivery, onSaveSignature }) {
   const [tab, setTab] = useState("deliveries");
   const [openDel, setOpenDel] = useState(null);
   const [schedDay, setSchedDay] = useState(null);
@@ -190,6 +193,7 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
   const [probInput, setProbInput] = useState({ description:"", type:"customer" });
   const fileRef = React.useRef();
   const [uploadingFor, setUploadingFor] = useState(null);
+  const [signingDel, setSigningDel] = useState(null);
   const isEs = user.lang === "es";
   const today = todayDayName();
   const isDriver = user.role.toLowerCase().includes("driver");
@@ -320,7 +324,7 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
             )}
             <div style={{padding:"12px 16px",borderBottom:"1px solid #131f2e"}}>
               <div style={{fontSize:11,color:"#475569",textTransform:"uppercase",letterSpacing:".07em",marginBottom:8}}>{isEs?"Actualizar Estado":"Update Status"}</div>
-              <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:7}}>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:7,marginBottom:d.status!=="Delivered"?10:0}}>
                 {Object.keys(STATUS_COLORS).map(s=>(
                   <button key={s} className="btn" onClick={()=>onStatusUpdate(d.id,s)}
                     style={{background:d.status===s?STATUS_COLORS[s].bg:"#0a1628",color:d.status===s?STATUS_COLORS[s].text:"#475569",border:`1px solid ${d.status===s?STATUS_COLORS[s].dot:"#1e2d3d"}`,padding:"9px 4px",fontSize:11}}>
@@ -328,6 +332,17 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
                   </button>
                 ))}
               </div>
+              {!d.signature_url?(
+                <button className="btn" onClick={()=>setSigningDel(d)}
+                  style={{width:"100%",background:"linear-gradient(135deg,#059669,#047857)",color:"#fff",padding:"11px",fontSize:14,fontWeight:700}}>
+                  ✍️ {isEs?"Obtener Firma del Cliente":"Get Customer Signature"}
+                </button>
+              ):(
+                <div style={{background:"#052e16",borderRadius:8,padding:"8px 12px",display:"flex",alignItems:"center",gap:8}}>
+                  <span style={{fontSize:13,color:"#4ade80",fontWeight:600}}>✅ {isEs?"Firmado":"Signed"}</span>
+                  <span style={{fontSize:11,color:"#475569"}}>{new Date(d.signed_at).toLocaleString()}</span>
+                </div>
+              )}
             </div>
             <div style={{padding:"12px 16px",borderBottom:"1px solid #131f2e"}}>
               <div style={{fontSize:11,color:"#475569",textTransform:"uppercase",letterSpacing:".07em",marginBottom:8}}>{isEs?"Subir Foto":"Upload Photo"}</div>
@@ -362,6 +377,19 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
 
   return (
     <div style={{background:"#080d14",minHeight:"100vh",color:"#e2e8f0",fontFamily:"'DM Sans',sans-serif",maxWidth:640,margin:"0 auto"}}>
+      {signingDel&&(
+        <SignaturePad
+          delivery={signingDel}
+          user={user}
+          isEs={isEs}
+          onClose={()=>setSigningDel(null)}
+          onSigned={(url,at)=>{
+            onStatusUpdate(signingDel.id,"Delivered");
+            onSaveSignature(signingDel.id, url, at);
+            setSigningDel(null);
+          }}
+        />
+      )}
       <style>{GLOBAL_STYLES}</style>
       <div style={{background:"#0a1628",borderBottom:"1px solid #1e2d3d",padding:"10px 16px",display:"flex",alignItems:"center",justifyContent:"space-between",position:"sticky",top:0,zIndex:100}}>
         <div style={{display:"flex",alignItems:"center",gap:10}}>
@@ -825,6 +853,170 @@ function DriverInspectionUpload({ user, onUploaded, isEs }) {
 }
 
 // ─── ADD BASE TASK ROW ────────────────────────────────────────────────────────
+// ─── SIGNATURE PAD ────────────────────────────────────────────────────────────
+function SignaturePad({ delivery, user, onSigned, onClose, isEs }) {
+  const canvasRef = React.useRef(null);
+  const [drawing, setDrawing] = useState(false);
+  const [hasStrokes, setHasStrokes] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [printedName, setPrintedName] = useState("");
+
+  const itemList = (delivery.items||[]).map(i=>`${i.qty}x ${i.name}`).join(", ");
+  const signDate = new Date().toLocaleDateString("en-US",{weekday:"long",year:"numeric",month:"long",day:"numeric"});
+  const signTime = new Date().toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"});
+
+  const getPos = (e, canvas) => {
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    return { x: (clientX - rect.left) * scaleX, y: (clientY - rect.top) * scaleY };
+  };
+
+  const startDraw = (e) => {
+    e.preventDefault();
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext("2d");
+    const pos = getPos(e, canvas);
+    ctx.beginPath();
+    ctx.moveTo(pos.x, pos.y);
+    setDrawing(true);
+    setHasStrokes(true);
+  };
+
+  const draw = (e) => {
+    e.preventDefault();
+    if (!drawing) return;
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext("2d");
+    ctx.strokeStyle = "#1a1a2e";
+    ctx.lineWidth = 2.5;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    const pos = getPos(e, canvas);
+    ctx.lineTo(pos.x, pos.y);
+    ctx.stroke();
+  };
+
+  const endDraw = (e) => { e.preventDefault(); setDrawing(false); };
+
+  const clear = () => {
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext("2d");
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    setHasStrokes(false);
+  };
+
+  const save = async () => {
+    if (!hasStrokes || !printedName.trim()) return;
+    setSaving(true);
+    try {
+      const canvas = canvasRef.current;
+      canvas.toBlob(async (blob) => {
+        const path = `signatures/${delivery.id}/${Date.now()}.png`;
+        const { error } = await sb.storage.from("photos").upload(path, blob, { contentType:"image/png" });
+        if (!error) {
+          const url = sb.storage.from("photos").getPublicUrl(path).data.publicUrl;
+          const now = new Date().toISOString();
+          await sb.from("deliveries").update({ signature_url:url, signed_by:printedName.trim(), signed_at:now, status:"Delivered" }).eq("id", delivery.id);
+          const sigRecord = {
+            id: Date.now(),
+            ticket_number: delivery.ticket_number||"",
+            customer: delivery.customer,
+            address: delivery.address,
+            phone: delivery.phone,
+            delivery_date: delivery.delivery_date||new Date().toISOString().split("T")[0],
+            signed_by: printedName.trim(),
+            signed_at: now,
+            signature_url: url,
+            driver_name: user.name,
+            items: delivery.items||[],
+          };
+          await sb.from("signatures").insert(sigRecord);
+          onSigned(url, now);
+        }
+        setSaving(false);
+      }, "image/png");
+    } catch(e) { console.error(e); setSaving(false); }
+  };
+
+  const canSubmit = hasStrokes && printedName.trim().length > 1;
+
+  return (
+    <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.92)",zIndex:999,display:"flex",alignItems:"center",justifyContent:"center",padding:12,overflowY:"auto"}}>
+      <div style={{background:"#fff",borderRadius:16,padding:20,width:"100%",maxWidth:480,color:"#1a1a2e"}}>
+        {/* Header */}
+        <div style={{textAlign:"center",marginBottom:14,borderBottom:"2px solid #e5e7eb",paddingBottom:12}}>
+          <div style={{fontSize:18,fontWeight:800,color:"#1a1a2e",fontFamily:"sans-serif"}}>🛏 America's Mattress</div>
+          <div style={{fontSize:11,color:"#6b7280",marginTop:2}}>Delivery Confirmation — {signDate} {signTime}</div>
+        </div>
+
+        {/* Delivery details */}
+        <div style={{background:"#f9fafb",borderRadius:10,padding:"12px 14px",marginBottom:14,border:"1px solid #e5e7eb"}}>
+          <div style={{fontWeight:700,fontSize:14,color:"#1a1a2e",marginBottom:4}}>{delivery.customer}</div>
+          <div style={{fontSize:12,color:"#6b7280",marginBottom:2}}>{delivery.address}</div>
+          {delivery.ticket_number&&<div style={{fontSize:11,color:"#6b7280"}}>Order #{delivery.ticket_number}</div>}
+          <div style={{marginTop:8,fontSize:12,color:"#374151",fontWeight:600}}>Items Delivered:</div>
+          {(delivery.items||[]).map((item,i)=>(
+            <div key={i} style={{fontSize:12,color:"#374151",paddingLeft:8}}>• {item.qty}x {item.name}</div>
+          ))}
+        </div>
+
+        {/* Agreement text */}
+        <div style={{background:"#eff6ff",borderRadius:8,padding:"10px 12px",marginBottom:14,border:"1px solid #bfdbfe",fontSize:12,color:"#1e40af",lineHeight:1.6}}>
+          {isEs
+            ? `Al firmar a continuación, confirmo que recibí los artículos enumerados arriba en buenas condiciones en la dirección indicada el ${signDate}. Entregado por ${user.name} de America's Mattress.`
+            : `By signing below, I confirm that I received the items listed above in good condition at the address listed on ${signDate}. Delivered by ${user.name} from America's Mattress Albuquerque.`
+          }
+        </div>
+
+        {/* Printed name */}
+        <div style={{marginBottom:12}}>
+          <div style={{fontSize:12,fontWeight:600,color:"#374151",marginBottom:5}}>
+            {isEs?"Nombre en letra de molde (requerido):":"Print Your Full Name (required):"}
+          </div>
+          <input
+            value={printedName}
+            onChange={e=>setPrintedName(e.target.value)}
+            placeholder={isEs?"Su nombre completo":"Your full name"}
+            style={{width:"100%",border:"2px solid #d1d5db",borderRadius:8,padding:"10px 12px",fontSize:14,color:"#1a1a2e",fontFamily:"sans-serif",background:"#fff"}}
+          />
+        </div>
+
+        {/* Signature area */}
+        <div style={{marginBottom:12}}>
+          <div style={{fontSize:12,fontWeight:600,color:"#374151",marginBottom:5}}>
+            {isEs?"Firma (requerida):":"Signature (required):"}
+          </div>
+          <div style={{border:"2px solid #d1d5db",borderRadius:8,background:"#fafafa",cursor:"crosshair",touchAction:"none",position:"relative"}}>
+            <canvas ref={canvasRef} width={440} height={150}
+              style={{width:"100%",height:150,borderRadius:8,display:"block",touchAction:"none"}}
+              onMouseDown={startDraw} onMouseMove={draw} onMouseUp={endDraw} onMouseLeave={endDraw}
+              onTouchStart={startDraw} onTouchMove={draw} onTouchEnd={endDraw}/>
+            {!hasStrokes&&<div style={{position:"absolute",top:"50%",left:"50%",transform:"translate(-50%,-50%)",fontSize:12,color:"#9ca3af",pointerEvents:"none",whiteSpace:"nowrap"}}>{isEs?"Firme aquí":"Sign here"}</div>}
+          </div>
+          <div style={{borderTop:"2px solid #374151",marginTop:0,paddingTop:2,fontSize:10,color:"#9ca3af",textAlign:"center"}}>x</div>
+        </div>
+
+        {!printedName.trim()&&hasStrokes&&<div style={{fontSize:11,color:"#dc2626",marginBottom:8,textAlign:"center"}}>⚠️ {isEs?"Por favor ingrese su nombre":"Please enter your printed name"}</div>}
+
+        <div style={{display:"flex",gap:8}}>
+          <button className="btn" onClick={save} disabled={!canSubmit||saving}
+            style={{flex:1,background:canSubmit?"#059669":"#d1d5db",color:canSubmit?"#fff":"#9ca3af",padding:"13px",fontSize:14,fontWeight:700,borderRadius:10}}>
+            {saving?"⏳ Saving...":"✅ "+ (isEs?"Confirmar y Guardar":"Confirm & Save")}
+          </button>
+          <button className="btn" onClick={clear} style={{background:"#f3f4f6",color:"#6b7280",padding:"13px 14px",fontSize:13,borderRadius:10}}>🗑️</button>
+          <button className="btn" onClick={onClose} style={{background:"#fee2e2",color:"#dc2626",padding:"13px 14px",fontSize:13,borderRadius:10}}>✕</button>
+        </div>
+        <div style={{fontSize:10,color:"#9ca3af",textAlign:"center",marginTop:8}}>
+          {isEs?"Registrado permanentemente con marca de tiempo · America's Mattress Albuquerque":"Permanently recorded with timestamp · America's Mattress Albuquerque"}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function AddBaseTaskRow({ lang, setBaseTasks }) {
   const [t, setT] = useState({ text:"", priority:"high", category:"Delivery", days:["Mon","Tue","Wed","Fri","Sat"] });
   const add = () => {
@@ -886,6 +1078,9 @@ export default function App() {
   const [mgrTaskChecks, setMgrTaskChecks] = useState({});
   const [mgrSchedDay, setMgrSchedDay] = useState(null);
   const [csvText, setCsvText] = useState("");
+  const [pdfImporting, setPdfImporting] = useState(false);
+  const [pdfResult, setPdfResult] = useState(null);
+  const [signatures, setSignatures] = useState([]);
   const [csvPreview, setCsvPreview] = useState([]);
   const [csvImporting, setCsvImporting] = useState(false);
   const [csvDone, setCsvDone] = useState(false);
@@ -1075,6 +1270,10 @@ export default function App() {
       onSendMessage={(m)=>setMessages(prev=>[...prev,m])}
       onLogProblem={(p)=>setProblems(prev=>[...prev,p])}
       onSaveDelivery={saveDelivery}
+      onSaveSignature={(delId, url, at)=>{
+        setDeliveries(prev=>prev.map(d=>d.id===delId?{...d,signature_url:url,signed_at:at,status:"Delivered"}:d));
+        sb.from("signatures").select("*").order("signed_at",{ascending:false}).then(({data})=>{if(data)setSignatures(data);});
+      }}
     />
   );
 
@@ -1123,6 +1322,7 @@ export default function App() {
             {key:"mgr-schedule",label:"Schedule",icon:"📅"},
             {key:"mgr-prep",label:"Prep",icon:"📋"},
             {key:"import",label:"Import",icon:"📥"},
+            {key:"signatures",label:"Signatures",icon:"✍️"},
           ].map(t=>(
             <button key={t.key} className="btn" onClick={()=>setTab(t.key)}
               style={{padding:"12px 13px",fontSize:12,fontWeight:500,whiteSpace:"nowrap",color:tab===t.key?"#60a5fa":"#64748b",borderBottom:tab===t.key?"2px solid #3b82f6":"2px solid transparent",background:"none",borderRadius:0}}>
@@ -1943,8 +2143,110 @@ export default function App() {
         {/* CSV IMPORT */}
         {tab==="import"&&(
           <div className="fade">
-            <div style={{fontWeight:700,fontSize:15,color:"#f1f5f9",marginBottom:4}}>📥 Import Deliveries from CSV</div>
-            <div style={{fontSize:12,color:"#475569",marginBottom:16}}>Export your delivery list from EZ Process Pro as a CSV, then paste it here or upload the file.</div>
+            <div style={{fontWeight:700,fontSize:15,color:"#f1f5f9",marginBottom:4}}>📥 Import Deliveries</div>
+            <div style={{fontSize:12,color:"#475569",marginBottom:16}}>Upload a Pick List PDF from EZ Process Pro, or import from CSV.</div>
+
+            {/* PDF PICK LIST IMPORT */}
+            <div style={{...C.card,padding:"16px 18px",marginBottom:16,borderColor:"#1e3a5f"}}>
+              <div style={{fontWeight:700,fontSize:13,color:"#60a5fa",marginBottom:4}}>📄 Upload Pick List PDF</div>
+              <div style={{fontSize:12,color:"#475569",marginBottom:12}}>Upload any Pick List PDF from EZ Process Pro — AI reads it and auto-fills the delivery form.</div>
+              <input type="file" accept=".pdf" onChange={async(e)=>{
+                const file=e.target.files[0];
+                if(!file) return;
+                setPdfImporting(true);
+                setPdfResult(null);
+                try {
+                  const reader=new FileReader();
+                  reader.onload=async(ev)=>{
+                    const base64=ev.target.result.split(",")[1];
+                    const res=await fetch("https://api.anthropic.com/v1/messages",{
+                      method:"POST",
+                      headers:{"Content-Type":"application/json"},
+                      body:JSON.stringify({
+                        model:"claude-sonnet-4-20250514",
+                        max_tokens:1000,
+                        messages:[{
+                          role:"user",
+                          content:[
+                            {type:"document",source:{type:"base64",media_type:"application/pdf",data:base64}},
+                            {type:"text",text:`Extract delivery info from this Pick List PDF. Return ONLY valid JSON with these exact fields:
+{
+  "ticket_number": "sale number e.g. 30428",
+  "customer": "full customer name",
+  "address": "full street address including city state zip",
+  "phone": "phone number",
+  "delivery_date": "YYYY-MM-DD format",
+  "delivery_window": "time window if available or empty string",
+  "notes": "any special instructions",
+  "items": [{"qty": number, "name": "item description"}]
+}
+Return ONLY the JSON object, no other text.`}
+                          ]
+                        }]
+                      })
+                    });
+                    const data=await res.json();
+                    const text=data.content.map(b=>b.text||"").join("").trim();
+                    const parsed=JSON.parse(text.replace(/```json|```/g,"").trim());
+                    setPdfResult(parsed);
+                    setPdfImporting(false);
+                  };
+                  reader.readAsDataURL(file);
+                } catch(err) {
+                  console.error(err);
+                  setPdfImporting(false);
+                }
+              }} style={{...C.inp,padding:"8px",marginBottom:10}}/>
+              {pdfImporting&&<div style={{fontSize:13,color:"#60a5fa",padding:"10px 0"}}>⏳ Reading PDF with AI...</div>}
+              {pdfResult&&(
+                <div>
+                  <div style={{fontSize:12,color:"#22c55e",fontWeight:600,marginBottom:10}}>✅ PDF Read Successfully — Review &amp; Edit Before Saving</div>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
+                    {[{l:"Ticket #",f:"ticket_number"},{l:"Customer",f:"customer"},{l:"Address",f:"address"},{l:"Phone",f:"phone"},{l:"Date",f:"delivery_date"},{l:"Time Window",f:"delivery_window"},{l:"Notes",f:"notes"}].map(x=>(
+                      <div key={x.f}>
+                        <div style={{fontSize:10,color:"#475569",marginBottom:3}}>{x.l}</div>
+                        <input value={pdfResult[x.f]||""} onChange={e=>setPdfResult(p=>({...p,[x.f]:e.target.value}))}
+                          style={{...C.inp}} type={x.f==="delivery_date"?"date":"text"}/>
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{marginBottom:10}}>
+                    <div style={{fontSize:10,color:"#475569",marginBottom:5}}>Items</div>
+                    {(pdfResult.items||[]).map((item,idx)=>(
+                      <div key={idx} style={{display:"flex",gap:7,marginBottom:6}}>
+                        <input type="number" min="1" value={item.qty} onChange={e=>{const items=[...pdfResult.items];items[idx]={...items[idx],qty:Number(e.target.value)};setPdfResult(p=>({...p,items}));}} style={{...C.inp,width:60,textAlign:"center"}}/>
+                        <input value={item.name} onChange={e=>{const items=[...pdfResult.items];items[idx]={...items[idx],name:e.target.value};setPdfResult(p=>({...p,items}));}} style={{...C.inp,flex:1}}/>
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{marginBottom:10}}>
+                    <div style={{fontSize:10,color:"#475569",marginBottom:3}}>Assign Driver</div>
+                    <select onChange={e=>setPdfResult(p=>({...p,assigned_to:Number(e.target.value)}))} style={C.sel} defaultValue={1}>
+                      {employees.filter(e=>!e.is_manager).map(e=><option key={e.id} value={e.id}>{e.name}</option>)}
+                    </select>
+                  </div>
+                  <button className="btn" onClick={async()=>{
+                    const nid=`D-${String(deliveries.length+1).padStart(3,"0")}-${Date.now()}`;
+                    const newRow={
+                      id:nid,customer:pdfResult.customer,address:pdfResult.address,phone:pdfResult.phone,
+                      items:pdfResult.items||[],delivery_window:pdfResult.delivery_window||"",
+                      assigned_to:pdfResult.assigned_to||1,status:"Scheduled",
+                      notes:pdfResult.notes||"",floor:"1",elevator:false,
+                      removal_requested:false,transfer_scheduled:false,route_notes:"",
+                      stop_order:deliveries.length+1,delivery_date:pdfResult.delivery_date,
+                      ticket_number:pdfResult.ticket_number,helper_id:0,
+                    };
+                    await sb.from("deliveries").insert(newRow);
+                    setDeliveries(prev=>[...prev,newRow]);
+                    setPdfResult(null);
+                  }} style={{width:"100%",background:"linear-gradient(135deg,#059669,#047857)",color:"#fff",padding:"11px",fontSize:14,fontWeight:700}}>
+                    ✅ Add This Delivery
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <div style={{fontWeight:700,fontSize:13,color:"#f1f5f9",marginBottom:8}}>📊 Or Import from CSV</div>
 
             {/* Format guide */}
             <div style={{...C.card,padding:"14px 16px",marginBottom:16,borderColor:"#1e3a5f"}}>
@@ -2092,6 +2394,41 @@ export default function App() {
               }} style={{width:"100%",background:csvDone?"linear-gradient(135deg,#059669,#047857)":csvImporting?"#1e2d3d":"linear-gradient(135deg,#2563eb,#1d4ed8)",color:csvImporting?"#475569":"#fff",padding:"13px",fontSize:14,fontWeight:700}}>
                 {csvDone?"✅ Imported Successfully!":csvImporting?`⏳ Importing ${csvPreview.length} deliveries...`:`📥 Import ${csvPreview.length} Deliveries`}
               </button>
+            )}
+          </div>
+        )}
+
+        {/* SIGNATURES */}
+        {tab==="signatures"&&(
+          <div className="fade">
+            <div style={{fontWeight:700,fontSize:15,color:"#f1f5f9",marginBottom:4}}>✍️ Customer Signatures</div>
+            <div style={{fontSize:12,color:"#475569",marginBottom:16}}>All signatures are stored permanently and never deleted.</div>
+            {signatures.length===0?(
+              <div style={{...C.card,padding:40,textAlign:"center",color:"#475569"}}>
+                <div style={{fontSize:32,marginBottom:8}}>✍️</div>
+                <div>No signatures yet. Drivers collect signatures when marking deliveries complete.</div>
+              </div>
+            ):(
+              <div style={{display:"flex",flexDirection:"column",gap:10}}>
+                {signatures.map(sig=>(
+                  <div key={sig.id} style={{...C.card,padding:"14px 16px"}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8,flexWrap:"wrap",gap:6}}>
+                      <div>
+                        <div style={{fontWeight:700,fontSize:14,color:"#f1f5f9"}}>{sig.customer}</div>
+                        <div style={{fontSize:11,color:"#64748b"}}>{sig.address}</div>
+                        <div style={{display:"flex",gap:8,marginTop:4,flexWrap:"wrap"}}>
+                          {sig.ticket_number&&<span style={{fontSize:11,background:"#1e3a5f",color:"#60a5fa",borderRadius:4,padding:"2px 7px"}}>#{sig.ticket_number}</span>}
+                          <span style={{fontSize:11,color:"#475569"}}>{sig.driver_name}</span>
+                          <span style={{fontSize:11,color:"#475569"}}>{sig.delivery_date}</span>
+                          <span style={{fontSize:11,color:"#22c55e"}}>{new Date(sig.signed_at).toLocaleString()}</span>
+                        </div>
+                      </div>
+                      <span style={{fontSize:11,background:"#052e16",color:"#4ade80",borderRadius:6,padding:"3px 9px",fontWeight:600}}>✅ Signed</span>
+                    </div>
+                    {sig.signature_url&&<img src={sig.signature_url} alt="signature" style={{maxWidth:300,height:80,objectFit:"contain",background:"#fff",borderRadius:8,padding:8,display:"block"}}/>}
+                  </div>
+                ))}
+              </div>
             )}
           </div>
         )}
