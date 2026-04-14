@@ -1098,13 +1098,15 @@ export default function App() {
     async function load() {
       setLoading(true);
       try {
-        const [eR,dR,ctR,nR,pR,mR] = await Promise.all([
+        const [eR,dR,ctR,nR,pR,mR,sigR,insR] = await Promise.all([
           sb.from("employees").select("*"),
           sb.from("deliveries").select("*"),
           sb.from("custom_tasks").select("*"),
           sb.from("notes").select("*"),
           sb.from("problems").select("*"),
           sb.from("messages").select("*").order("created_at",{ascending:true}),
+          sb.from("signatures").select("*").order("signed_at",{ascending:false}),
+          sb.from("inspections").select("*").order("created_at",{ascending:false}),
         ]);
         if (eR.data&&eR.data.length>0) setEmployees(eR.data);
         else { await sb.from("employees").upsert(INITIAL_EMPLOYEES); }
@@ -1113,6 +1115,8 @@ export default function App() {
         if (nR.data) { const g={}; nR.data.forEach(n=>{if(!g[n.emp_id])g[n.emp_id]=[];g[n.emp_id].push(n);}); setNotes(g); }
         if (pR.data) setProblems(pR.data);
         if (mR.data) setMessages(mR.data);
+        if (sigR.data) setSignatures(sigR.data);
+        if (insR.data) setInspections(insR.data);
       } catch(e) { console.error(e); }
       setLoading(false);
     }
@@ -2163,24 +2167,13 @@ export default function App() {
                       method:"POST",
                       headers:{"Content-Type":"application/json"},
                       body:JSON.stringify({
-                        model:"claude-sonnet-4-20250514",
-                        max_tokens:1000,
+                        model:"claude-haiku-4-5-20251001",
+                        max_tokens:400,
                         messages:[{
                           role:"user",
                           content:[
                             {type:"document",source:{type:"base64",media_type:"application/pdf",data:base64}},
-                            {type:"text",text:`Extract delivery info from this Pick List PDF. Return ONLY valid JSON with these exact fields:
-{
-  "ticket_number": "sale number e.g. 30428",
-  "customer": "full customer name",
-  "address": "full street address including city state zip",
-  "phone": "phone number",
-  "delivery_date": "YYYY-MM-DD format",
-  "delivery_window": "time window if available or empty string",
-  "notes": "any special instructions",
-  "items": [{"qty": number, "name": "item description"}]
-}
-Return ONLY the JSON object, no other text.`}
+                            {type:"text",text:`Extract from this pick list PDF. Return ONLY JSON: {"ticket_number":"","customer":"","address":"full address city state zip","phone":"","delivery_date":"YYYY-MM-DD","delivery_window":"","notes":"","items":[{"qty":1,"name":""}]}`}
                           ]
                         }]
                       })
