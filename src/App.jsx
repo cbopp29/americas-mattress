@@ -178,9 +178,14 @@ function LoginScreen({ employees, onLogin }) {
 }
 
 // ─── DRIVER VIEW ──────────────────────────────────────────────────────────────
-function DriverView({ user, deliveries, customTasks, baseTasks, messages, problems, employees, onStatusUpdate, onLogout, onSendMessage, onLogProblem }) {
+function DriverView({ user, deliveries, customTasks, baseTasks, messages, problems, employees, onStatusUpdate, onLogout, onSendMessage, onLogProblem, onSaveDelivery }) {
   const [tab, setTab] = useState("deliveries");
   const [openDel, setOpenDel] = useState(null);
+  const [schedDay, setSchedDay] = useState(null);
+  const [taskChecks, setTaskChecks] = useState({});
+  const [addingDelivery, setAddingDelivery] = useState(false);
+  const [newDel, setNewDel] = useState({id:"",customer:"",address:"",phone:"",items:[{qty:1,name:""}],delivery_window:"",assigned_to:user.id,status:"Scheduled",notes:"",floor:"1",elevator:false,removal_requested:false,transfer_scheduled:false,route_notes:"",stop_order:1,delivery_date:new Date().toISOString().split("T")[0],ticket_number:""});
+  const isDriver = user.role.toLowerCase().includes("driver");
   const [msgInput, setMsgInput] = useState("");
   const [probInput, setProbInput] = useState({ description:"", type:"customer" });
   const fileRef = useRef();
@@ -276,6 +281,8 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
           {key:"inventory",label:isEs?"Inventario":"Inventory",icon:"📦"},
           {key:"sms",label:"SMS",icon:"📱"},
           {key:"inspection",label:isEs?"Inspección":"Inspect",icon:"🔍"},
+          {key:"schedule",label:isEs?"Horario":"Schedule",icon:"📅"},
+          {key:"prep",label:isEs?"Prep":"Prep",icon:"📋"},
         ].map(t=>(
           <button key={t.key} className="btn" onClick={()=>setTab(t.key)}
             style={{flex:1,padding:"12px 4px",fontSize:12,fontWeight:600,color:tab===t.key?"#60a5fa":"#64748b",borderBottom:tab===t.key?"2px solid #3b82f6":"2px solid transparent",background:"none",borderRadius:0,textAlign:"center"}}>
@@ -287,7 +294,57 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
       <div style={{padding:14}}>
 
         {/* DELIVERIES TAB */}
-        {tab==="deliveries"&&(myDeliveries.length===0?(
+        {tab==="deliveries"&&(<div>
+          {/* Driver add delivery */}
+          {isDriver&&(
+            <div style={{marginBottom:12}}>
+              {!addingDelivery?(
+                <button className="btn" onClick={()=>setAddingDelivery(true)}
+                  style={{width:"100%",background:"linear-gradient(135deg,#2563eb,#1d4ed8)",color:"#fff",padding:"11px",fontSize:14,fontWeight:700}}>
+                  ➕ {isEs?"Añadir Entrega":"Add Delivery"}
+                </button>
+              ):(
+                <div style={{...cardStyle,padding:14,borderColor:"#3b82f6"}}>
+                  <div style={{fontWeight:700,fontSize:14,color:"#f1f5f9",marginBottom:12}}>➕ {isEs?"Nueva Entrega":"New Delivery"}</div>
+                  {[{l:isEs?"Ticket #":"Ticket #",f:"ticket_number",ph:"e.g. 1042",tp:"text"},{l:isEs?"Cliente":"Customer",f:"customer",ph:"John Smith",tp:"text"},{l:isEs?"Dirección":"Address",f:"address",ph:"123 Main St",tp:"text"},{l:isEs?"Teléfono":"Phone",f:"phone",ph:"505-555-0100",tp:"text"},{l:isEs?"Ventana de Tiempo":"Time Window",f:"delivery_window",ph:"9AM-11AM",tp:"text"},{l:isEs?"Piso":"Floor",f:"floor",ph:"1",tp:"text"},{l:isEs?"Fecha de Entrega":"Delivery Date",f:"delivery_date",ph:"",tp:"date"}].map(x=>(
+                    <div key={x.f} style={{marginBottom:9}}>
+                      <div style={{fontSize:11,color:"#475569",marginBottom:3}}>{x.l}</div>
+                      <input type={x.tp||"text"} value={newDel[x.f]||""} onChange={e=>setNewDel(p=>({...p,[x.f]:e.target.value}))} placeholder={x.ph} style={{...inputStyle,colorScheme:"dark"}}/>
+                    </div>
+                  ))}
+                  <div style={{marginBottom:9}}>
+                    <div style={{fontSize:11,color:"#475569",marginBottom:5}}>{isEs?"Artículos":"Items"}</div>
+                    {(newDel.items||[{qty:1,name:""}]).map((item,idx)=>(
+                      <div key={idx} style={{display:"flex",gap:7,marginBottom:7}}>
+                        <input type="number" min="1" value={item.qty} onChange={e=>{const items=[...(newDel.items||[])];items[idx]={...items[idx],qty:Number(e.target.value)};setNewDel(p=>({...p,items}));}} style={{...inputStyle,width:60,textAlign:"center"}}/>
+                        <input value={item.name} onChange={e=>{const items=[...(newDel.items||[])];items[idx]={...items[idx],name:e.target.value};setNewDel(p=>({...p,items}));}} placeholder={isEs?"Nombre del artículo":"Item name"} style={{...inputStyle,flex:1}}/>
+                        {(newDel.items||[]).length>1&&<button className="btn" onClick={()=>setNewDel(p=>({...p,items:p.items.filter((_,i)=>i!==idx)}))} style={{background:"#2d0a0a",color:"#f87171",padding:"7px 9px",fontSize:12}}>✕</button>}
+                      </div>
+                    ))}
+                    <button className="btn" onClick={()=>setNewDel(p=>({...p,items:[...(p.items||[]),{qty:1,name:""}]}))} style={{background:"#1e2d3d",color:"#60a5fa",padding:"5px 11px",fontSize:11}}>➕ {isEs?"Añadir Artículo":"Add Item"}</button>
+                  </div>
+                  <div style={{marginBottom:9}}>
+                    <div style={{fontSize:11,color:"#475569",marginBottom:3}}>{isEs?"Notas de Ruta":"Route Notes"}</div>
+                    <textarea value={newDel.route_notes||""} onChange={e=>setNewDel(p=>({...p,route_notes:e.target.value}))} placeholder={isEs?"Direcciones, código de acceso...":"Directions, gate codes..."} rows={2} style={{...inputStyle,resize:"vertical"}}/>
+                  </div>
+                  <div style={{display:"flex",gap:14,marginBottom:12,flexWrap:"wrap"}}>
+                    {[{l:isEs?"Elevador":"Elevator",f:"elevator"},{l:isEs?"Retiro de Colchón":"Old Mattress Removal",f:"removal_requested"}].map(x=>(
+                      <label key={x.f} style={{display:"flex",alignItems:"center",gap:6,cursor:"pointer",fontSize:13,color:"#94a3b8"}}>
+                        <input type="checkbox" checked={!!newDel[x.f]} onChange={e=>setNewDel(p=>({...p,[x.f]:e.target.checked}))} style={{width:16,height:16}}/>{x.l}
+                      </label>
+                    ))}
+                  </div>
+                  <div style={{display:"flex",gap:8}}>
+                    <button className="btn" onClick={async()=>{await onSaveDelivery(newDel);setAddingDelivery(false);setNewDel({id:"",customer:"",address:"",phone:"",items:[{qty:1,name:""}],delivery_window:"",assigned_to:user.id,status:"Scheduled",notes:"",floor:"1",elevator:false,removal_requested:false,transfer_scheduled:false,route_notes:"",stop_order:1,delivery_date:new Date().toISOString().split("T")[0],ticket_number:""});}} style={{flex:1,background:"linear-gradient(135deg,#2563eb,#1d4ed8)",color:"#fff",padding:"11px",fontSize:14,fontWeight:700}}>
+                      💾 {isEs?"Guardar":"Save Delivery"}
+                    </button>
+                    <button className="btn" onClick={()=>setAddingDelivery(false)} style={{background:"#1e2d3d",color:"#94a3b8",padding:"11px 16px",fontSize:13}}>Cancel</button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+          {myDeliveries.length===0?(
           <div style={{...cardStyle,padding:40,textAlign:"center",color:"#475569",marginTop:16}}>
             <div style={{fontSize:36,marginBottom:8}}>🚛</div>
             <div>{isEs?"No hay entregas asignadas hoy.":"No deliveries assigned today."}</div>
@@ -389,7 +446,8 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
               </div>
             );
           })
-        ))}
+        )}
+        </div>)}
 
         {/* TASKS TAB */}
         {tab==="tasks"&&(cats.length===0?(
@@ -563,6 +621,173 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
           </div>
         )}
 
+        {/* SCHEDULE TAB */}
+        {tab==="schedule"&&(()=>{
+          const days = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+          const dayFull = {Mon:"Monday",Tue:"Tuesday",Wed:"Wednesday",Thu:"Thursday",Fri:"Friday",Sat:"Saturday",Sun:"Sunday"};
+          return(
+            <div>
+              <div style={{fontWeight:700,fontSize:15,color:"#f1f5f9",marginBottom:12}}>📅 {isEs?"Horario Semanal":"Weekly Team Schedule"}</div>
+              {/* Day selector */}
+              <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:14}}>
+                {days.map(d=>(
+                  <button key={d} className="btn" onClick={()=>setSchedDay(schedDay===d?null:d)}
+                    style={{padding:"7px 13px",fontSize:12,fontWeight:600,background:schedDay===d?"linear-gradient(135deg,#2563eb,#1d4ed8)":"#1e2d3d",color:schedDay===d?"#fff":"#94a3b8",border:`1px solid ${schedDay===d?"#3b82f6":"#1e2d3d"}`}}>
+                    {d}
+                  </button>
+                ))}
+              </div>
+              {/* Team schedule grid */}
+              {days.filter(d=>!schedDay||d===schedDay).map(day=>{
+                const working = employees.filter(e=>e.is_manager||(e.workdays||[]).includes(day));
+                const offToday = employees.filter(e=>!e.is_manager&&!(e.workdays||[]).includes(day));
+                const dayDels = deliveries.filter(d=>d.delivery_date===new Date().toISOString().split("T")[0]||!d.delivery_date);
+                return(
+                  <div key={day} style={{...cardStyle,marginBottom:10,overflow:"hidden"}}>
+                    <div style={{padding:"10px 16px",background:"#0a1628",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                      <div style={{fontWeight:700,fontSize:14,color:"#f1f5f9"}}>{dayFull[day]}</div>
+                      <span style={{fontSize:11,color:"#22c55e"}}>{working.length} working</span>
+                    </div>
+                    <div style={{padding:"10px 14px"}}>
+                      <div style={{display:"flex",gap:7,flexWrap:"wrap",marginBottom:8}}>
+                        {working.map(emp=>(
+                          <div key={emp.id} style={{display:"flex",alignItems:"center",gap:6,background:"#0c1f38",borderRadius:8,padding:"6px 10px",border:"1px solid #1e3a5f"}}>
+                            <div style={{width:26,height:26,borderRadius:"50%",background:avatarBg(emp),display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:700,color:"#fff"}}>{emp.avatar}</div>
+                            <div>
+                              <div style={{fontSize:12,fontWeight:600,color:"#f1f5f9"}}>{emp.name}{emp.is_manager?" 👑":""}</div>
+                              <div style={{fontSize:10,color:"#475569"}}>{emp.role}</div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                      {offToday.length>0&&(
+                        <div style={{fontSize:11,color:"#475569"}}>
+                          Off: {offToday.map(e=>e.name).join(", ")}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })()}
+
+        {/* PREP TAB */}
+        {tab==="prep"&&(()=>{
+          const tomorrow = new Date();
+          tomorrow.setDate(tomorrow.getDate()+1);
+          const prepDate = tomorrow.toISOString().split("T")[0];
+          const tomorrowDay = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][tomorrow.getDay()];
+          const prepDels = deliveries.filter(d=>d.delivery_date===prepDate);
+          // Group all items for pulling
+          const allItems = {};
+          prepDels.forEach(d=>{
+            (d.items||[]).forEach(item=>{
+              const key = item.name.trim();
+              if(!allItems[key]) allItems[key]=0;
+              allItems[key]+=item.qty;
+            });
+          });
+          const removalDels = prepDels.filter(d=>d.removal_requested);
+          const prepTasks = [
+            ...(isEs ? baseTasks.es : baseTasks.en).filter(t=>t.days.includes(tomorrowDay)||t.days.includes("All")),
+            ...(customTasks[user.id]||[]).filter(t=>t.day===tomorrowDay||t.day==="All"),
+          ];
+          return(
+            <div>
+              <div style={{fontWeight:700,fontSize:15,color:"#f1f5f9",marginBottom:4}}>📋 {isEs?"Preparación para Mañana":"Tomorrow's Prep"}</div>
+              <div style={{fontSize:12,color:"#475569",marginBottom:14}}>{tomorrow.toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"})}</div>
+
+              {/* Pull list */}
+              <div style={{...cardStyle,marginBottom:12,overflow:"hidden"}}>
+                <div style={{padding:"10px 16px",background:"#0a1628",fontSize:11,fontWeight:700,letterSpacing:".08em",color:"#60a5fa",textTransform:"uppercase"}}>
+                  📦 {isEs?"Lista de Productos a Recoger":"Product Pull List"} ({prepDels.length} {isEs?"entregas":"deliveries"})
+                </div>
+                {Object.keys(allItems).length===0?(
+                  <div style={{padding:"20px 16px",color:"#475569",fontSize:13,textAlign:"center"}}>{isEs?"No hay entregas para este día.":"No deliveries scheduled for this day yet."}</div>
+                ):(
+                  Object.entries(allItems).map(([name,qty],i)=>(
+                    <div key={name} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"11px 16px",borderTop:i>0?"1px solid #131f2e":"none"}}>
+                      <div style={{fontSize:14,color:"#e2e8f0",fontWeight:500}}>{name}</div>
+                      <span style={{background:"#1e3a5f",color:"#60a5fa",borderRadius:8,padding:"4px 12px",fontSize:14,fontWeight:700}}>{qty}x</span>
+                    </div>
+                  ))
+                )}
+                {removalDels.length>0&&(
+                  <div style={{padding:"10px 16px",borderTop:"1px solid #131f2e",background:"#1c1500"}}>
+                    <div style={{fontSize:11,color:"#f59e0b",fontWeight:600}}>♻️ {removalDels.length} {isEs?"retiros programados":"removal(s) scheduled"} — {isEs?"preparar espacio en almacén":"clear warehouse space"}</div>
+                  </div>
+                )}
+              </div>
+
+              {/* Tomorrow's deliveries */}
+              <div style={{...cardStyle,marginBottom:12,overflow:"hidden"}}>
+                <div style={{padding:"10px 16px",background:"#0a1628",fontSize:11,fontWeight:700,letterSpacing:".08em",color:"#475569",textTransform:"uppercase"}}>
+                  🚛 {isEs?"Entregas de Mañana":"Tomorrow's Delivery Schedule"}
+                </div>
+                {prepDels.length===0?(
+                  <div style={{padding:"20px 16px",color:"#475569",fontSize:13,textAlign:"center"}}>{isEs?"No hay entregas aún.":"No deliveries scheduled yet."}</div>
+                ):(
+                  [...prepDels].sort((a,b)=>(a.stop_order||0)-(b.stop_order||0)).map((d,i)=>{
+                    const emp=employees.find(e=>e.id===d.assigned_to);
+                    return(
+                      <div key={d.id} style={{padding:"11px 16px",borderTop:i>0?"1px solid #131f2e":"none"}}>
+                        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:4}}>
+                          <div style={{display:"flex",alignItems:"center",gap:7}}>
+                            <span style={{fontSize:10,color:"#64748b",fontFamily:"monospace"}}>#{d.stop_order}</span>
+                            <div style={{fontWeight:600,fontSize:13,color:"#f1f5f9"}}>{d.customer}</div>
+                            {d.ticket_number&&<span style={{fontSize:10,background:"#1e3a5f",color:"#60a5fa",borderRadius:4,padding:"1px 6px"}}>#{d.ticket_number}</span>}
+                          </div>
+                          <div style={{fontSize:11,color:"#a78bfa"}}>{d.delivery_window}</div>
+                        </div>
+                        <div style={{fontSize:12,color:"#64748b",marginBottom:4}}>{d.address} · {emp?.name}</div>
+                        <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+                          {(d.items||[]).map((item,ii)=>(
+                            <span key={ii} style={{fontSize:11,background:"#1e2d3d",color:"#94a3b8",borderRadius:5,padding:"2px 7px"}}>{item.qty}x {item.name}</span>
+                          ))}
+                          {d.removal_requested&&<span style={{fontSize:11,background:"#1c1500",color:"#f59e0b",borderRadius:5,padding:"2px 7px"}}>♻️ Removal</span>}
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+
+              {/* Checkable task list */}
+              <div style={{...cardStyle,overflow:"hidden"}}>
+                <div style={{padding:"10px 16px",background:"#0a1628",fontSize:11,fontWeight:700,letterSpacing:".08em",color:"#475569",textTransform:"uppercase"}}>
+                  ✅ {isEs?"Lista de Tareas para Mañana":"Tomorrow's Task Checklist"}
+                </div>
+                {prepTasks.length===0?(
+                  <div style={{padding:"20px 16px",color:"#475569",fontSize:13,textAlign:"center"}}>{isEs?"No hay tareas.":"No tasks."}</div>
+                ):(
+                  prepTasks.map((task,i)=>{
+                    const checkKey = `${user.id}-${prepDate}-${task.id}`;
+                    const checked = !!taskChecks[checkKey];
+                    return(
+                      <div key={task.id||i} onClick={()=>setTaskChecks(prev=>({...prev,[checkKey]:!prev[checkKey]}))}
+                        style={{display:"flex",alignItems:"flex-start",gap:12,padding:"13px 16px",borderTop:i>0?"1px solid #131f2e":"none",cursor:"pointer",background:checked?"#052e16":"transparent",transition:"background .2s"}}>
+                        <div style={{width:20,height:20,borderRadius:5,border:`2px solid ${checked?"#22c55e":"#334155"}`,background:checked?"#22c55e":"transparent",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,marginTop:1}}>
+                          {checked&&<span style={{color:"#fff",fontSize:13,fontWeight:700}}>✓</span>}
+                        </div>
+                        <div style={{flex:1}}>
+                          <div style={{fontSize:13,color:checked?"#4ade80":"#e2e8f0",textDecoration:checked?"line-through":"none",transition:"all .2s"}}>{task.text}</div>
+                          <div style={{fontSize:10,color:"#475569",marginTop:2}}>{task.category}</div>
+                        </div>
+                        <div style={{width:6,height:6,borderRadius:"50%",background:task.priority==="high"?"#ef4444":task.priority==="med"?"#f59e0b":"#475569",marginTop:6,flexShrink:0}}/>
+                      </div>
+                    );
+                  })
+                )}
+                <div style={{padding:"10px 16px",borderTop:"1px solid #131f2e",background:"#0a1628",fontSize:11,color:"#475569"}}>
+                  {prepTasks.filter((_,i)=>!!taskChecks[`${user.id}-${prepDate}-${prepTasks[i]?.id}`]).length}/{prepTasks.length} {isEs?"completadas":"completed"} · {isEs?"Conner puede revisar tu progreso":"Conner can review your progress"}
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+
       </div>
     </div>
   );
@@ -686,6 +911,7 @@ export default function App() {
   const [editBaseTaskVal, setEditBaseTaskVal] = useState("");
   const [newTaskInput, setNewTaskInput] = useState({ text:"", priority:"high", category:"Delivery", day:"All" });
   const [teamMsg, setTeamMsg] = useState("");
+  const [mgrTaskChecks, setMgrTaskChecks] = useState({});
   const [todayDate] = useState(new Date().toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"}));
   const [dateFilter, setDateFilter] = useState("today");
   const [inspections, setInspections] = useState([]);
@@ -870,6 +1096,7 @@ export default function App() {
       onStatusUpdate={updStatus} onLogout={()=>setCurrentUser(null)}
       onSendMessage={(m)=>setMessages(prev=>[...prev,m])}
       onLogProblem={(p)=>setProblems(prev=>[...prev,p])}
+      onSaveDelivery={saveDelivery}
     />
   );
 
@@ -1061,6 +1288,12 @@ export default function App() {
                                       <div style={{fontSize:12,color:"#e2e8f0"}}>{task.text}</div>
                                     )}
                                   </div>
+                                  <div style={{display:"flex",alignItems:"center",gap:6}}>
+                                    <div onClick={()=>{const k=`mgr-${selectedEmployee}-${selectedDay}-${task.id||i}`;setMgrTaskChecks(prev=>({...prev,[k]:!prev[k]}));}}
+                                      style={{width:18,height:18,borderRadius:4,border:`2px solid ${mgrTaskChecks[`mgr-${selectedEmployee}-${selectedDay}-${task.id||i}`]?"#22c55e":"#334155"}`,background:mgrTaskChecks[`mgr-${selectedEmployee}-${selectedDay}-${task.id||i}`]?"#22c55e":"transparent",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",flexShrink:0}}>
+                                      {mgrTaskChecks[`mgr-${selectedEmployee}-${selectedDay}-${task.id||i}`]&&<span style={{color:"#fff",fontSize:11,fontWeight:700}}>✓</span>}
+                                    </div>
+                                  </div>
                                   {String(task.id||"").startsWith("ct")&&(
                                     <div style={{display:"flex",gap:4}}>
                                       <button className="btn" onClick={()=>{setEditingTask(task.id);setEditTaskVal(task.text);}} style={{background:"#1e2d3d",color:"#60a5fa",padding:"3px 7px",fontSize:10}}>Edit</button>
@@ -1138,8 +1371,8 @@ export default function App() {
               <div style={{...C.card,padding:"16px 18px",marginBottom:14,borderColor:"#3b82f6"}}>
                 <div style={{fontWeight:700,fontSize:14,color:"#f1f5f9",marginBottom:12}}>{editingDelivery.id?"✏️ Edit":"➕ New Delivery"}</div>
                 <div className="del-form-grid" style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:9,marginBottom:9}}>
-                  {[{l:"Ticket #",f:"ticket_number",ph:"e.g. 1042"},{l:"Customer",f:"customer",ph:"John Smith"},{l:"Address",f:"address",ph:"123 Main St"},{l:"Phone",f:"phone",ph:"505-555-0100"},{l:"Time Window",f:"delivery_window",ph:"9AM–11AM"},{l:"Floor",f:"floor",ph:"1"},{l:"Delivery Date",f:"delivery_date",ph:""}].map(x=>(
-                    <div key={x.f}><div style={{fontSize:10,color:"#475569",marginBottom:3}}>{x.l}</div><input value={editingDelivery[x.f]||""} onChange={e=>setEditingDelivery(p=>({...p,[x.f]:e.target.value}))} placeholder={x.ph} style={C.inp}/></div>
+                  {[{l:"Ticket #",f:"ticket_number",ph:"e.g. 1042"},{l:"Customer",f:"customer",ph:"John Smith"},{l:"Address",f:"address",ph:"123 Main St"},{l:"Phone",f:"phone",ph:"505-555-0100"},{l:"Time Window",f:"delivery_window",ph:"9AM–11AM"},{l:"Floor",f:"floor",ph:"1"},{l:"Delivery Date",f:"delivery_date",ph:"",type:"date"}].map(x=>(
+                    <div key={x.f}><div style={{fontSize:10,color:"#475569",marginBottom:3}}>{x.l}</div><input type={x.type||"text"} value={editingDelivery[x.f]||""} onChange={e=>setEditingDelivery(p=>({...p,[x.f]:e.target.value}))} placeholder={x.ph} style={{...C.inp,colorScheme:"dark"}}/></div>
                   ))}
                 </div>
                 <div style={{marginBottom:9}}>
