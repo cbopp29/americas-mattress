@@ -1,21 +1,12 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
+import { createClient } from "@supabase/supabase-js";
 
-// ── Persistent state hook — saves to localStorage automatically ──────────────
-function useLocalStorage(key, defaultValue) {
-  const [value, setValue] = useState(() => {
-    try {
-      const stored = localStorage.getItem(key);
-      return stored ? JSON.parse(stored) : defaultValue;
-    } catch { return defaultValue; }
-  });
-  useEffect(() => {
-    try { localStorage.setItem(key, JSON.stringify(value)); } catch {}
-  }, [key, value]);
-  return [value, setValue];
-}
+const SUPABASE_URL = "https://nmlhuufmvvqvbyoebrwe.supabase.co";
+const SUPABASE_KEY = "sb_publishable_TRQCQpgnv0NDRt7eIE6t-Q_fEINezez";
+const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 const INITIAL_EMPLOYEES = [
-  { id: 0, name: "Conner",        role: "Manager",       avatar: "CO", lang: "en", workdays: ["Mon","Tue","Wed","Thu","Fri","Sat"], isManager: true },
+  { id: 0, name: "Conner",        role: "Manager",       avatar: "CO", lang: "en", workdays: ["Mon","Tue","Wed","Thu","Fri","Sat"], is_manager: true },
   { id: 1, name: "Frank Solís",   role: "Driver",        avatar: "FS", lang: "en", workdays: ["Mon","Tue","Wed","Fri"] },
   { id: 2, name: "Max Applegate", role: "Driver",        avatar: "MA", lang: "en", workdays: ["Mon","Tue","Wed","Fri"] },
   { id: 3, name: "Chris Mullis",  role: "Driver",        avatar: "CM", lang: "en", workdays: ["Mon","Tue","Wed","Fri"] },
@@ -84,10 +75,10 @@ const STATUS_COLORS = {
 };
 
 const ROLES = ["Driver","Helper","Driver/Helper","Coordinator","Loader","Manager","Warehouse","Other"];
-const EMPTY_DEL = { id:"", customer:"", address:"", phone:"", items:[{qty:1, name:""}], window:"", assignedTo:1, status:"Scheduled", notes:"", floor:"1", elevator:false, removalRequested:false, transferScheduled:false, routeNotes:"", stopOrder:1 };
+const EMPTY_DEL = { id:"", customer:"", address:"", phone:"", items:[{qty:1,name:""}], delivery_window:"", assigned_to:1, status:"Scheduled", notes:"", floor:"1", elevator:false, removal_requested:false, transfer_scheduled:false, route_notes:"", stop_order:1 };
 
 const todayDayName = () => ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][new Date().getDay()];
-const avatarBg = (emp) => emp?.isManager ? "linear-gradient(135deg,#7c3aed,#4f46e5)" : emp?.lang==="es" ? "linear-gradient(135deg,#059669,#047857)" : "linear-gradient(135deg,#1d4ed8,#0ea5e9)";
+const avatarBg = (emp) => emp?.is_manager ? "linear-gradient(135deg,#7c3aed,#4f46e5)" : emp?.lang==="es" ? "linear-gradient(135deg,#059669,#047857)" : "linear-gradient(135deg,#1d4ed8,#0ea5e9)";
 
 function AddBaseTaskRow({ lang, setBaseTasks, S }) {
   const [t, setT] = useState({ text:"", priority:"high", category:"Delivery", days:["Mon","Tue","Wed","Fri","Sat"] });
@@ -97,14 +88,14 @@ function AddBaseTaskRow({ lang, setBaseTasks, S }) {
     setT({ text:"", priority:"high", category:"Delivery", days:["Mon","Tue","Wed","Fri","Sat"] });
   };
   return (
-    <div style={{ ...S.card, padding:"16px 20px", borderColor:"#1e3a5f" }}>
+    <div style={{ ...{background:"#0f1923",border:"1px solid #1e2d3d",borderRadius:12}, padding:"16px 20px", borderColor:"#1e3a5f" }}>
       <div style={{ fontSize:12, color:"#60a5fa", fontWeight:600, marginBottom:12 }}>➕ Add {lang==="en"?"English":"Spanish"} Template Task</div>
       <div style={{ display:"grid", gridTemplateColumns:"1fr 100px 130px", gap:10, marginBottom:10 }}>
-        <input value={t.text} onChange={e=>setT(p=>({...p,text:e.target.value}))} placeholder="Task description..." style={S.input} />
-        <select value={t.priority} onChange={e=>setT(p=>({...p,priority:e.target.value}))} style={S.select}>
+        <input value={t.text} onChange={e=>setT(p=>({...p,text:e.target.value}))} placeholder="Task description..." style={{background:"#0a1628",border:"1px solid #1e2d3d",borderRadius:8,padding:"9px 13px",fontSize:13,color:"#e2e8f0",width:"100%"}} />
+        <select value={t.priority} onChange={e=>setT(p=>({...p,priority:e.target.value}))} style={{background:"#0a1628",border:"1px solid #1e2d3d",borderRadius:8,padding:"9px 12px",fontSize:13,color:"#e2e8f0",width:"100%"}}>
           <option value="high">High</option><option value="med">Medium</option><option value="low">Low</option>
         </select>
-        <input value={t.category} onChange={e=>setT(p=>({...p,category:e.target.value}))} placeholder="Category" style={S.input} />
+        <input value={t.category} onChange={e=>setT(p=>({...p,category:e.target.value}))} placeholder="Category" style={{background:"#0a1628",border:"1px solid #1e2d3d",borderRadius:8,padding:"9px 13px",fontSize:13,color:"#e2e8f0",width:"100%"}} />
       </div>
       <div style={{ display:"flex", gap:6, marginBottom:12, flexWrap:"wrap" }}>
         {ALL_DAYS.map(d=>(
@@ -122,13 +113,16 @@ function AddBaseTaskRow({ lang, setBaseTasks, S }) {
 
 export default function App() {
   const [tab, setTab] = useState("dashboard");
-  const [employees, setEmployees] = useLocalStorage("am_employees", INITIAL_EMPLOYEES);
-  const [deliveries, setDeliveries] = useLocalStorage("am_deliveries", []);
-  const [baseTasks, setBaseTasks] = useLocalStorage("am_basetasks", { en: BASE_TASKS_EN, es: BASE_TASKS_ES });
-  const [customTasks, setCustomTasks] = useLocalStorage("am_customtasks", {});
-  const [notes, setNotes] = useLocalStorage("am_notes", {});
-  const [problems, setProblems] = useLocalStorage("am_problems", []);
-  const [schedules, setSchedules] = useLocalStorage("am_schedules", {});
+  const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
+
+  const [employees, setEmployees] = useState(INITIAL_EMPLOYEES);
+  const [deliveries, setDeliveries] = useState([]);
+  const [customTasks, setCustomTasks] = useState({});
+  const [notes, setNotes] = useState({});
+  const [problems, setProblems] = useState([]);
+  const [baseTasks, setBaseTasks] = useState({ en: BASE_TASKS_EN, es: BASE_TASKS_ES });
+
   const [aiTasks, setAiTasks] = useState({});
   const [generatingFor, setGeneratingFor] = useState(null);
   const [selectedEmployee, setSelectedEmployee] = useState(null);
@@ -147,11 +141,71 @@ export default function App() {
   const [editBaseTaskVal, setEditBaseTaskVal] = useState("");
   const [newTaskInput, setNewTaskInput] = useState({ text:"", priority:"high", category:"Delivery", day:"All" });
   const [aiPrompt, setAiPrompt] = useState("");
-  const [mapDelivery, setMapDelivery] = useState(null);
   const [todayDate] = useState(new Date().toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"}));
 
-  const getEmpDeliveries = (empId) => deliveries.filter(d=>d.assignedTo===empId);
-  const workingOn = (emp, day) => emp.isManager || emp.workdays.includes(day);
+  const S = {
+    card: { background:"#0f1923", border:"1px solid #1e2d3d", borderRadius:12 },
+    input: { background:"#0a1628", border:"1px solid #1e2d3d", borderRadius:8, padding:"9px 13px", fontSize:13, color:"#e2e8f0", width:"100%" },
+    select: { background:"#0a1628", border:"1px solid #1e2d3d", borderRadius:8, padding:"9px 12px", fontSize:13, color:"#e2e8f0", width:"100%" },
+    label: { fontSize:10, fontWeight:700, letterSpacing:"0.1em", color:"#475569", textTransform:"uppercase", marginBottom:10, display:"block" },
+  };
+
+  // ── Load all data from Supabase on mount ────────────────────────────────────
+  useEffect(() => {
+    async function loadAll() {
+      setLoading(true);
+      try {
+        const [empRes, delRes, ctRes, notesRes, probRes] = await Promise.all([
+          sb.from("employees").select("*"),
+          sb.from("deliveries").select("*"),
+          sb.from("custom_tasks").select("*"),
+          sb.from("notes").select("*"),
+          sb.from("problems").select("*"),
+        ]);
+        if (empRes.data && empRes.data.length > 0) setEmployees(empRes.data);
+        else {
+          // seed employees on first load
+          await sb.from("employees").upsert(INITIAL_EMPLOYEES.map(e => ({...e, is_manager: e.isManager||false})));
+        }
+        if (delRes.data) setDeliveries(delRes.data);
+        if (ctRes.data) {
+          const grouped = {};
+          ctRes.data.forEach(t => {
+            if (!grouped[t.emp_id]) grouped[t.emp_id] = [];
+            grouped[t.emp_id].push(t);
+          });
+          setCustomTasks(grouped);
+        }
+        if (notesRes.data) {
+          const grouped = {};
+          notesRes.data.forEach(n => {
+            if (!grouped[n.emp_id]) grouped[n.emp_id] = [];
+            grouped[n.emp_id].push(n);
+          });
+          setNotes(grouped);
+        }
+        if (probRes.data) setProblems(probRes.data);
+      } catch(e) { console.error(e); }
+      setLoading(false);
+    }
+    loadAll();
+
+    // Real-time subscriptions
+    const delSub = sb.channel("deliveries-changes")
+      .on("postgres_changes", {event:"*", schema:"public", table:"deliveries"}, () => {
+        sb.from("deliveries").select("*").then(({data}) => { if(data) setDeliveries(data); });
+      }).subscribe();
+
+    const probSub = sb.channel("problems-changes")
+      .on("postgres_changes", {event:"*", schema:"public", table:"problems"}, () => {
+        sb.from("problems").select("*").then(({data}) => { if(data) setProblems(data); });
+      }).subscribe();
+
+    return () => { sb.removeChannel(delSub); sb.removeChannel(probSub); };
+  }, []);
+
+  const getEmpDeliveries = (empId) => deliveries.filter(d=>d.assigned_to===empId);
+  const workingOn = (emp, day) => emp.is_manager || emp.isManager || (emp.workdays||[]).includes(day);
 
   const getTasksForEmpDay = (empId, day) => {
     const emp = employees.find(e=>e.id===empId);
@@ -168,10 +222,9 @@ export default function App() {
     const emp = employees.find(e=>e.id===empId);
     const empDeliveries = getEmpDeliveries(empId);
     const isEs = emp.lang==="es";
-    const prompt = `You are an operations manager at America's Mattress. Generate up to 5 ADDITIONAL tasks (no payment tasks, no duplicates of standard SOP tasks) for ${emp.name}, a ${emp.role}, on ${selectedDay}.
-Deliveries today: ${empDeliveries.map(d=>`${d.customer} (${d.item}, ${d.window}${d.floor!=="1"?`, floor ${d.floor}`:""}${d.removalRequested?", removal":""}${d.notes?", "+d.notes:""})`).join("; ")||"none"}.
-${aiPrompt?"Context: "+aiPrompt:""}
-${isEs?"Write ALL tasks in Spanish.":""}
+    const prompt = `You are an operations manager at America's Mattress. Generate up to 5 ADDITIONAL tasks (no payment tasks) for ${emp.name}, a ${emp.role}, on ${selectedDay}.
+Deliveries: ${empDeliveries.map(d=>`${d.customer} (${(d.items||[]).map(i=>`${i.qty}x ${i.name}`).join(", ")}, ${d.delivery_window}${d.floor!=="1"?`, floor ${d.floor}`:""}${d.removal_requested?", removal":""})`).join("; ")||"none"}.
+${aiPrompt?"Context: "+aiPrompt:""}${isEs?"\nWrite ALL tasks in Spanish.":""}
 Return ONLY a JSON array. Each: { "task": string, "duration": string, "priority": "high"|"med"|"low", "category": string }. Pure JSON only.`;
     try {
       const res = await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:600,messages:[{role:"user",content:prompt}]})});
@@ -183,61 +236,108 @@ Return ONLY a JSON array. Each: { "task": string, "duration": string, "priority"
     setGeneratingFor(null);
   };
 
-  const saveDelivery = (d) => {
+  // ── Delivery CRUD with Supabase ─────────────────────────────────────────────
+  const saveDelivery = async (d) => {
+    setSyncing(true);
+    const row = {
+      customer: d.customer, address: d.address, phone: d.phone,
+      items: d.items||[], delivery_window: d.delivery_window||d.window||"",
+      assigned_to: d.assigned_to||d.assignedTo||1, status: d.status,
+      notes: d.notes||"", floor: d.floor||"1",
+      elevator: !!d.elevator, removal_requested: !!d.removal_requested||!!d.removalRequested,
+      transfer_scheduled: !!d.transfer_scheduled||!!d.transferScheduled,
+      route_notes: d.route_notes||d.routeNotes||"", stop_order: d.stop_order||d.stopOrder||1,
+    };
     if (!d.id) {
-      setDeliveries(prev=>[...prev,{...d,id:`D-${String(prev.length+1).padStart(3,"0")}`}]);
+      const newId = `D-${String(deliveries.length+1).padStart(3,"0")}-${Date.now()}`;
+      await sb.from("deliveries").insert({...row, id:newId});
+      setDeliveries(prev=>[...prev,{...row,id:newId}]);
     } else {
-      setDeliveries(prev=>prev.map(x=>x.id===d.id?d:x));
+      await sb.from("deliveries").update(row).eq("id",d.id);
+      setDeliveries(prev=>prev.map(x=>x.id===d.id?{...row,id:d.id}:x));
     }
+    setSyncing(false);
     setEditingDelivery(null);
   };
 
-  const addCustomTask = (empId) => {
+  const deleteDelivery = async (id) => {
+    await sb.from("deliveries").delete().eq("id",id);
+    setDeliveries(prev=>prev.filter(d=>d.id!==id));
+  };
+
+  const updateStatus = async (id, status) => {
+    await sb.from("deliveries").update({status}).eq("id",id);
+    setDeliveries(prev=>prev.map(d=>d.id===id?{...d,status}:d));
+  };
+
+  // ── Custom tasks with Supabase ──────────────────────────────────────────────
+  const addCustomTask = async (empId) => {
     if (!newTaskInput.text.trim()) return;
-    setCustomTasks(prev=>({...prev,[empId]:[...(prev[empId]||[]),{id:`ct-${empId}-${Date.now()}`,text:newTaskInput.text.trim(),priority:newTaskInput.priority,category:newTaskInput.category,day:newTaskInput.day}]}));
+    const task = { id:`ct-${empId}-${Date.now()}`, emp_id:empId, text:newTaskInput.text.trim(), priority:newTaskInput.priority, category:newTaskInput.category, day:newTaskInput.day };
+    await sb.from("custom_tasks").insert(task);
+    setCustomTasks(prev=>({...prev,[empId]:[...(prev[empId]||[]),task]}));
     setNewTaskInput({text:"",priority:"high",category:"Delivery",day:"All"});
   };
 
-  const addNote = (empId) => {
+  const deleteCustomTask = async (empId, taskId) => {
+    await sb.from("custom_tasks").delete().eq("id",taskId);
+    setCustomTasks(prev=>({...prev,[empId]:(prev[empId]||[]).filter(t=>t.id!==taskId)}));
+  };
+
+  // ── Notes with Supabase ─────────────────────────────────────────────────────
+  const addNote = async (empId) => {
     if (!noteInput.trim()) return;
     const ts = new Date().toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"});
-    setNotes(prev=>({...prev,[empId]:[...(prev[empId]||[]),{text:noteInput.trim(),time:ts,id:Date.now()}]}));
+    const note = { id: Date.now(), emp_id: empId, text: noteInput.trim(), time: ts };
+    await sb.from("notes").insert(note);
+    setNotes(prev=>({...prev,[empId]:[...(prev[empId]||[]),note]}));
     setNoteInput("");
   };
 
-  const logProblem = () => {
+  // ── Problems with Supabase ──────────────────────────────────────────────────
+  const logProblem = async () => {
     if (!problemInput.description.trim()||!problemInput.empId) return;
     const emp = employees.find(e=>e.id===Number(problemInput.empId));
-    setProblems(prev=>[...prev,{id:Date.now(),empName:emp?.name,description:problemInput.description,type:problemInput.type,escalationStep:0,time:new Date().toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}),resolved:false}]);
+    const problem = { id:Date.now(), emp_name:emp?.name, description:problemInput.description, type:problemInput.type, escalation_step:0, time:new Date().toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}), resolved:false };
+    await sb.from("problems").insert(problem);
+    setProblems(prev=>[...prev,problem]);
     setProblemInput({empId:"",description:"",type:"customer"});
   };
 
-  const escalateProblem = (id) => setProblems(prev=>prev.map(p=>{
-    if(p.id!==id) return p;
-    const chain=ESCALATION[p.type];
-    const next=Math.min(p.escalationStep+1,chain.length-1);
-    return {...p,escalationStep:next,resolved:next===chain.length-1};
-  }));
+  const escalateProblem = async (id) => {
+    const p = problems.find(x=>x.id===id);
+    if (!p) return;
+    const chain = ESCALATION[p.type];
+    const next = Math.min(p.escalation_step+1,chain.length-1);
+    const resolved = next===chain.length-1;
+    await sb.from("problems").update({escalation_step:next,resolved}).eq("id",id);
+    setProblems(prev=>prev.map(x=>x.id===id?{...x,escalation_step:next,resolved}:x));
+  };
 
+  // ── SMS ─────────────────────────────────────────────────────────────────────
   const generateSMS = async (delivery) => {
     setSendingMsg(delivery.id);
+    const itemStr = (delivery.items||[]).map(i=>`${i.qty}x ${i.name}`).join(", ");
     try {
-      const res = await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:200,messages:[{role:"user",content:`Write a short friendly SMS under 160 chars for America's Mattress. No payment info. Customer: ${delivery.customer}, Item: ${delivery.item}, Window: ${delivery.window}, Status: ${delivery.status}. Return ONLY the SMS text.`}]})});
+      const res = await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:200,messages:[{role:"user",content:`Write a short friendly SMS under 160 chars for America's Mattress. No payment info. Customer: ${delivery.customer}, Items: ${itemStr}, Window: ${delivery.delivery_window||delivery.window}, Status: ${delivery.status}. Return ONLY the SMS text.`}]})});
       const data = await res.json();
       setCustomerMsg(prev=>({...prev,[delivery.id]:data.content.map(b=>b.text||"").join("").trim()}));
     } catch {
-      setCustomerMsg(prev=>({...prev,[delivery.id]:`Hi ${delivery.customer.split(" ")[0]}! Your ${delivery.item} is scheduled for ${delivery.window}. We'll call 30 min before arrival! – America's Mattress`}));
+      setCustomerMsg(prev=>({...prev,[delivery.id]:`Hi ${delivery.customer.split(" ")[0]}! Your delivery is scheduled for ${delivery.delivery_window||delivery.window}. We'll call 30 min before arrival! – America's Mattress`}));
     }
     setSendingMsg(null);
     setMsgSent(prev=>({...prev,[delivery.id]:true}));
     setTimeout(()=>setMsgSent(prev=>({...prev,[delivery.id]:false})),3000);
   };
 
-  const addEmployee = () => {
+  // ── Add Employee ────────────────────────────────────────────────────────────
+  const addEmployee = async () => {
     if (!newEmp.name.trim()) return;
     const initials = newEmp.name.trim().split(" ").map(w=>w[0].toUpperCase()).join("").slice(0,2);
     const nextId = Math.max(...employees.map(e=>e.id))+1;
-    setEmployees(prev=>[...prev,{id:nextId,name:newEmp.name.trim(),role:newEmp.role,avatar:initials,lang:newEmp.lang,workdays:newEmp.workdays}]);
+    const emp = {id:nextId,name:newEmp.name.trim(),role:newEmp.role,avatar:initials,lang:newEmp.lang,workdays:newEmp.workdays,is_manager:false};
+    await sb.from("employees").insert(emp);
+    setEmployees(prev=>[...prev,emp]);
     setNewEmp({name:"",role:"Driver",lang:"en",workdays:["Mon","Tue","Wed","Fri"]});
   };
 
@@ -249,12 +349,13 @@ Return ONLY a JSON array. Each: { "task": string, "duration": string, "priority"
     issues:deliveries.filter(d=>d.status==="Issue"||d.status==="Rescheduled").length,
   };
 
-  const S = {
-    card: { background:"#0f1923", border:"1px solid #1e2d3d", borderRadius:12 },
-    input: { background:"#0a1628", border:"1px solid #1e2d3d", borderRadius:8, padding:"9px 13px", fontSize:13, color:"#e2e8f0", width:"100%" },
-    select: { background:"#0a1628", border:"1px solid #1e2d3d", borderRadius:8, padding:"9px 12px", fontSize:13, color:"#e2e8f0", width:"100%" },
-    label: { fontSize:10, fontWeight:700, letterSpacing:"0.1em", color:"#475569", textTransform:"uppercase", marginBottom:10, display:"block" },
-  };
+  if (loading) return (
+    <div style={{background:"#080d14",minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:16}}>
+      <div style={{fontSize:40}}>🛏</div>
+      <div style={{color:"#60a5fa",fontSize:16,fontFamily:"sans-serif"}}>Loading America's Mattress Operations...</div>
+      <div style={{color:"#475569",fontSize:13,fontFamily:"sans-serif"}}>Connecting to database...</div>
+    </div>
+  );
 
   return (
     <div style={{fontFamily:"'DM Sans','Segoe UI',sans-serif",background:"#080d14",minHeight:"100vh",color:"#e2e8f0"}}>
@@ -281,7 +382,7 @@ Return ONLY a JSON array. Each: { "task": string, "duration": string, "priority"
             <div style={{width:38,height:38,background:"linear-gradient(135deg,#2563eb,#1d4ed8)",borderRadius:10,display:"flex",alignItems:"center",justifyContent:"center",fontSize:20}}>🛏</div>
             <div>
               <div style={{fontWeight:800,fontSize:15,color:"#f1f5f9"}}>America's Mattress</div>
-              <div style={{fontSize:11,color:"#475569",fontFamily:"'DM Mono',monospace"}}>Operations Hub</div>
+              <div style={{fontSize:11,color:"#475569",fontFamily:"'DM Mono',monospace"}}>Operations Hub {syncing?"· Saving...":"· Live"}</div>
             </div>
           </div>
           <div style={{display:"flex",alignItems:"center",gap:12}}>
@@ -348,7 +449,7 @@ Return ONLY a JSON array. Each: { "task": string, "duration": string, "priority"
                     <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
                       <div style={{width:36,height:36,borderRadius:"50%",background:avatarBg(emp),display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:700,color:"#fff",flexShrink:0}}>{emp.avatar}</div>
                       <div>
-                        <div style={{fontWeight:600,fontSize:13,color:"#f1f5f9"}}>{emp.name}{emp.isManager?" 👑":""}{emp.lang==="es"?" 🇲🇽":""}</div>
+                        <div style={{fontWeight:600,fontSize:13,color:"#f1f5f9"}}>{emp.name}{(emp.is_manager||emp.isManager)?" 👑":""}{emp.lang==="es"?" 🇲🇽":""}</div>
                         <div style={{fontSize:10,color:working?"#22c55e":"#475569"}}>{working?"Working":"Off"}</div>
                       </div>
                     </div>
@@ -367,17 +468,17 @@ Return ONLY a JSON array. Each: { "task": string, "duration": string, "priority"
             </div>
             {deliveries.length>0&&(
               <div style={{...S.card,overflow:"hidden"}}>
-                {[...deliveries].sort((a,b)=>a.stopOrder-b.stopOrder).map((d,i)=>{
-                  const emp=employees.find(e=>e.id===d.assignedTo);
+                {[...deliveries].sort((a,b)=>(a.stop_order||0)-(b.stop_order||0)).map((d,i)=>{
+                  const emp=employees.find(e=>e.id===d.assigned_to);
                   const sc=STATUS_COLORS[d.status]||STATUS_COLORS["Scheduled"];
                   return(
                     <div key={d.id} style={{display:"flex",alignItems:"center",padding:"12px 20px",borderBottom:i<deliveries.length-1?"1px solid #131f2e":"none",gap:12,flexWrap:"wrap"}}>
-                      <span style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:"#64748b",width:28}}>#{d.stopOrder}</span>
+                      <span style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:"#64748b",width:28}}>#{d.stop_order}</span>
                       <div style={{flex:1,minWidth:140}}>
                         <div style={{fontWeight:600,fontSize:13,color:"#e2e8f0"}}>{d.customer}</div>
-                        <div style={{fontSize:11,color:"#475569"}}>{d.item} · {d.address}</div>
+                        <div style={{fontSize:11,color:"#475569"}}>{(d.items||[]).map(i=>`${i.qty}x ${i.name}`).join(", ")} · {d.address}</div>
                       </div>
-                      <div style={{fontSize:11,color:"#64748b",width:80}}>{d.window}</div>
+                      <div style={{fontSize:11,color:"#64748b",width:80}}>{d.delivery_window||d.window}</div>
                       <div style={{fontSize:11,color:"#64748b",width:90}}>{emp?.name}</div>
                       <span className="badge" style={{background:sc.bg,color:sc.text}}>
                         <span style={{width:6,height:6,borderRadius:"50%",background:sc.dot,...(d.status==="In Transit"?{animation:"pulse 2s infinite"}:{})}}/>
@@ -412,14 +513,13 @@ Return ONLY a JSON array. Each: { "task": string, "duration": string, "priority"
                       style={{...S.card,padding:"10px 13px",textAlign:"left",display:"flex",alignItems:"center",gap:10,opacity:working?1:0.4,borderColor:selectedEmployee===emp.id?"#3b82f6":"#1e2d3d",background:selectedEmployee===emp.id?"#0c1f38":"#0f1923"}}>
                       <div style={{width:30,height:30,borderRadius:"50%",background:avatarBg(emp),display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,color:"#fff",flexShrink:0}}>{emp.avatar}</div>
                       <div style={{flex:1}}>
-                        <div style={{fontWeight:600,fontSize:12,color:"#f1f5f9"}}>{emp.name}{emp.isManager?" 👑":""}{emp.lang==="es"?" 🇲🇽":""}</div>
+                        <div style={{fontWeight:600,fontSize:12,color:"#f1f5f9"}}>{emp.name}{(emp.is_manager||emp.isManager)?" 👑":""}{emp.lang==="es"?" 🇲🇽":""}</div>
                         <div style={{fontSize:10,color:working?"#22c55e":"#475569"}}>{working?"Working":"Off"} · {emp.role}</div>
                       </div>
                     </button>
                   );
                 })}
               </div>
-
               <div>
                 {!selectedEmployee?(
                   <div style={{...S.card,padding:48,textAlign:"center",color:"#475569"}}>
@@ -437,7 +537,7 @@ Return ONLY a JSON array. Each: { "task": string, "duration": string, "priority"
                     <div>
                       <div style={{...S.card,padding:"16px 22px",marginBottom:14,display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:10}}>
                         <div>
-                          <div style={{fontWeight:700,fontSize:17,color:"#f1f5f9"}}>{emp.name} — {selectedDay}{emp.isManager?" 👑":""}</div>
+                          <div style={{fontWeight:700,fontSize:17,color:"#f1f5f9"}}>{emp.name} — {selectedDay}{(emp.is_manager||emp.isManager)?" 👑":""}</div>
                           <div style={{fontSize:12,color:"#475569",marginTop:2}}>{emp.role} · {allTasks.length} tasks · {getEmpDeliveries(emp.id).length} deliveries</div>
                         </div>
                         <button className="btn" onClick={()=>generateAiTasks(selectedEmployee)} disabled={generatingFor===selectedEmployee}
@@ -445,13 +545,11 @@ Return ONLY a JSON array. Each: { "task": string, "duration": string, "priority"
                           {generatingFor===selectedEmployee?"⏳ Generating...":"🤖 AI Add-ons (optional)"}
                         </button>
                       </div>
-
                       {!workingOn(emp,selectedDay)&&(
                         <div style={{...S.card,padding:"12px 20px",marginBottom:14,borderColor:"#1c1500"}}>
                           <span style={{fontSize:13,color:"#f59e0b"}}>⚠️ {emp.name} is not scheduled to work on {selectedDay}.</span>
                         </div>
                       )}
-
                       {cats.length>0&&(
                         <div style={{...S.card,marginBottom:14}}>
                           {cats.map(cat=>(
@@ -463,20 +561,22 @@ Return ONLY a JSON array. Each: { "task": string, "duration": string, "priority"
                                   <div style={{flex:1}}>
                                     {editingTask&&editingTask===task.id?(
                                       <div style={{display:"flex",gap:8}}>
-                                        <input value={editTaskVal} onChange={e=>setEditTaskVal(e.target.value)}
-                                          style={{flex:1,background:"#0a1628",border:"1px solid #3b82f6",borderRadius:6,padding:"6px 10px",fontSize:13,color:"#e2e8f0"}}/>
-                                        <button className="btn" onClick={()=>{setCustomTasks(prev=>({...prev,[emp.id]:(prev[emp.id]||[]).map(t=>t.id===task.id?{...t,text:editTaskVal}:t)}));setEditingTask(null);}}
-                                          style={{background:"#1d4ed8",color:"#fff",padding:"5px 12px",fontSize:12}}>Save</button>
+                                        <input value={editTaskVal} onChange={e=>setEditTaskVal(e.target.value)} style={{flex:1,background:"#0a1628",border:"1px solid #3b82f6",borderRadius:6,padding:"6px 10px",fontSize:13,color:"#e2e8f0"}}/>
+                                        <button className="btn" onClick={async()=>{
+                                          await sb.from("custom_tasks").update({text:editTaskVal}).eq("id",task.id);
+                                          setCustomTasks(prev=>({...prev,[emp.id]:(prev[emp.id]||[]).map(t=>t.id===task.id?{...t,text:editTaskVal}:t)}));
+                                          setEditingTask(null);
+                                        }} style={{background:"#1d4ed8",color:"#fff",padding:"5px 12px",fontSize:12}}>Save</button>
                                         <button className="btn" onClick={()=>setEditingTask(null)} style={{background:"#1e2d3d",color:"#94a3b8",padding:"5px 10px",fontSize:12}}>✕</button>
                                       </div>
                                     ):(
                                       <div style={{fontSize:13,color:"#e2e8f0",fontWeight:500}}>{task.text}{task.duration&&<span style={{color:"#475569",fontSize:11,marginLeft:8}}>~{task.duration}</span>}</div>
                                     )}
                                   </div>
-                                  {task.id&&task.id.startsWith("ct")&&(
+                                  {task.id&&task.id.startsWith&&task.id.startsWith("ct")&&(
                                     <div style={{display:"flex",gap:5,flexShrink:0}}>
                                       <button className="btn" onClick={()=>{setEditingTask(task.id);setEditTaskVal(task.text);}} style={{background:"#1e2d3d",color:"#60a5fa",padding:"3px 8px",fontSize:11}}>Edit</button>
-                                      <button className="btn" onClick={()=>setCustomTasks(prev=>({...prev,[emp.id]:(prev[emp.id]||[]).filter(t=>t.id!==task.id)}))} style={{background:"#2d0a0a",color:"#f87171",padding:"3px 8px",fontSize:11}}>✕</button>
+                                      <button className="btn" onClick={()=>deleteCustomTask(emp.id,task.id)} style={{background:"#2d0a0a",color:"#f87171",padding:"3px 8px",fontSize:11}}>✕</button>
                                     </div>
                                   )}
                                 </div>
@@ -485,7 +585,6 @@ Return ONLY a JSON array. Each: { "task": string, "duration": string, "priority"
                           ))}
                         </div>
                       )}
-
                       <div style={{...S.card,padding:"16px 22px",marginBottom:14}}>
                         <div style={{fontWeight:600,fontSize:13,color:"#f1f5f9",marginBottom:12}}>➕ Add Task for {emp.name}</div>
                         <div style={{display:"grid",gridTemplateColumns:"1fr 100px 130px 90px",gap:10,marginBottom:10}}>
@@ -503,10 +602,9 @@ Return ONLY a JSON array. Each: { "task": string, "duration": string, "priority"
                         </div>
                         <div style={{display:"flex",gap:10,alignItems:"center"}}>
                           <button className="btn" onClick={()=>addCustomTask(emp.id)} style={{background:"linear-gradient(135deg,#2563eb,#1d4ed8)",color:"#fff",padding:"8px 18px",fontSize:13}}>➕ Add Task</button>
-                          <input value={aiPrompt} onChange={e=>setAiPrompt(e.target.value)} placeholder="AI context (optional, for 🤖 button above)..." style={{flex:1,...S.input}}/>
+                          <input value={aiPrompt} onChange={e=>setAiPrompt(e.target.value)} placeholder="AI context (optional)..." style={{flex:1,...S.input}}/>
                         </div>
                       </div>
-
                       <div style={{...S.card,padding:"16px 22px"}}>
                         <div style={{fontWeight:600,fontSize:13,color:"#f1f5f9",marginBottom:10}}>💬 {isEs?"Notas del Gerente":"Manager Notes"}</div>
                         {empNotes.map(n=>(
@@ -541,7 +639,7 @@ Return ONLY a JSON array. Each: { "task": string, "duration": string, "priority"
                   </span>
                 ))}
               </div>
-              <button className="btn" onClick={()=>setEditingDelivery({...EMPTY_DEL,stopOrder:deliveries.length+1})}
+              <button className="btn" onClick={()=>setEditingDelivery({...EMPTY_DEL,stop_order:deliveries.length+1})}
                 style={{background:"linear-gradient(135deg,#2563eb,#1d4ed8)",color:"#fff",padding:"9px 18px",fontSize:13}}>
                 ➕ Add Customer / Delivery
               </button>
@@ -551,25 +649,21 @@ Return ONLY a JSON array. Each: { "task": string, "duration": string, "priority"
               <div style={{...S.card,padding:"22px 26px",marginBottom:20,borderColor:"#3b82f6"}}>
                 <div style={{fontWeight:700,fontSize:15,color:"#f1f5f9",marginBottom:18}}>{editingDelivery.id?"✏️ Edit Delivery":"➕ Add New Customer Delivery"}</div>
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12,marginBottom:12}}>
-                  {[{label:"Customer Name",field:"customer",ph:"John Smith"},{label:"Address",field:"address",ph:"123 Main St"},{label:"Phone",field:"phone",ph:"555-0100"},{label:"Time Window",field:"window",ph:"9AM–11AM"},{label:"Floor #",field:"floor",ph:"1"}].map(f=>(
+                  {[{label:"Customer Name",field:"customer",ph:"John Smith"},{label:"Address",field:"address",ph:"123 Main St"},{label:"Phone",field:"phone",ph:"555-0100"},{label:"Time Window",field:"delivery_window",ph:"9AM–11AM"},{label:"Floor #",field:"floor",ph:"1"}].map(f=>(
                     <div key={f.field}>
                       <div style={{fontSize:11,color:"#475569",marginBottom:5}}>{f.label}</div>
                       <input value={editingDelivery[f.field]||""} onChange={e=>setEditingDelivery(p=>({...p,[f.field]:e.target.value}))} placeholder={f.ph} style={S.input}/>
                     </div>
                   ))}
                 </div>
-
-                {/* Items list */}
                 <div style={{marginBottom:14}}>
                   <div style={{fontSize:11,color:"#475569",marginBottom:8}}>Items Being Delivered</div>
                   {(editingDelivery.items||[{qty:1,name:""}]).map((item,idx)=>(
                     <div key={idx} style={{display:"flex",gap:8,marginBottom:8,alignItems:"center"}}>
-                      <div style={{width:70,flexShrink:0}}>
-                        <input type="number" min="1" value={item.qty} onChange={e=>{const items=[...(editingDelivery.items||[])];items[idx]={...items[idx],qty:Number(e.target.value)};setEditingDelivery(p=>({...p,items}));}}
-                          placeholder="Qty" style={{...S.input,textAlign:"center"}}/>
-                      </div>
+                      <input type="number" min="1" value={item.qty} onChange={e=>{const items=[...(editingDelivery.items||[])];items[idx]={...items[idx],qty:Number(e.target.value)};setEditingDelivery(p=>({...p,items}));}}
+                        placeholder="Qty" style={{...S.input,width:70,textAlign:"center"}}/>
                       <input value={item.name} onChange={e=>{const items=[...(editingDelivery.items||[])];items[idx]={...items[idx],name:e.target.value};setEditingDelivery(p=>({...p,items}));}}
-                        placeholder="Item name (e.g. Queen Memory Foam, Bed Frame)" style={{...S.input,flex:1}}/>
+                        placeholder="e.g. Queen Memory Foam, Bed Frame" style={{...S.input,flex:1}}/>
                       {(editingDelivery.items||[]).length>1&&(
                         <button className="btn" onClick={()=>setEditingDelivery(p=>({...p,items:p.items.filter((_,i)=>i!==idx)}))}
                           style={{background:"#2d0a0a",color:"#f87171",padding:"7px 10px",fontSize:12,flexShrink:0}}>✕</button>
@@ -581,12 +675,11 @@ Return ONLY a JSON array. Each: { "task": string, "duration": string, "priority"
                     ➕ Add Another Item
                   </button>
                 </div>
-
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12,marginBottom:12}}>
                   <div>
                     <div style={{fontSize:11,color:"#475569",marginBottom:5}}>Assigned Driver</div>
-                    <select value={editingDelivery.assignedTo} onChange={e=>setEditingDelivery(p=>({...p,assignedTo:Number(e.target.value)}))} style={S.select}>
-                      {employees.filter(e=>!e.isManager).map(e=><option key={e.id} value={e.id}>{e.name}</option>)}
+                    <select value={editingDelivery.assigned_to||editingDelivery.assignedTo||1} onChange={e=>setEditingDelivery(p=>({...p,assigned_to:Number(e.target.value)}))} style={S.select}>
+                      {employees.filter(e=>!e.is_manager&&!e.isManager).map(e=><option key={e.id} value={e.id}>{e.name}</option>)}
                     </select>
                   </div>
                   <div>
@@ -597,20 +690,20 @@ Return ONLY a JSON array. Each: { "task": string, "duration": string, "priority"
                   </div>
                   <div>
                     <div style={{fontSize:11,color:"#475569",marginBottom:5}}>Stop # (Route Order)</div>
-                    <input type="number" value={editingDelivery.stopOrder||1} onChange={e=>setEditingDelivery(p=>({...p,stopOrder:Number(e.target.value)}))} style={S.input}/>
+                    <input type="number" value={editingDelivery.stop_order||1} onChange={e=>setEditingDelivery(p=>({...p,stop_order:Number(e.target.value)}))} style={S.input}/>
                   </div>
                 </div>
                 <div style={{marginBottom:12}}>
-                  <div style={{fontSize:11,color:"#475569",marginBottom:5}}>Route Notes (directions, gate codes, parking, landmarks)</div>
-                  <textarea value={editingDelivery.routeNotes||""} onChange={e=>setEditingDelivery(p=>({...p,routeNotes:e.target.value}))}
-                    placeholder="e.g. Take I-40 East exit 167. Gate code 1234. Park in back. Call 5 min before." rows={3} style={{...S.input,resize:"vertical"}}/>
+                  <div style={{fontSize:11,color:"#475569",marginBottom:5}}>Route Notes (directions, gate codes, parking)</div>
+                  <textarea value={editingDelivery.route_notes||""} onChange={e=>setEditingDelivery(p=>({...p,route_notes:e.target.value}))}
+                    placeholder="e.g. Take I-40 East exit 167. Gate code 1234. Park in back." rows={3} style={{...S.input,resize:"vertical"}}/>
                 </div>
                 <div style={{marginBottom:14}}>
                   <div style={{fontSize:11,color:"#475569",marginBottom:5}}>Delivery Notes</div>
-                  <input value={editingDelivery.notes||""} onChange={e=>setEditingDelivery(p=>({...p,notes:e.target.value}))} placeholder="e.g. 3rd floor no elevator, tight hallway" style={S.input}/>
+                  <input value={editingDelivery.notes||""} onChange={e=>setEditingDelivery(p=>({...p,notes:e.target.value}))} placeholder="e.g. 3rd floor no elevator" style={S.input}/>
                 </div>
                 <div style={{display:"flex",gap:20,marginBottom:16,flexWrap:"wrap"}}>
-                  {[{label:"Elevator Access",field:"elevator"},{label:"Old Mattress Removal",field:"removalRequested"},{label:"Transfer Scheduled",field:"transferScheduled"}].map(f=>(
+                  {[{label:"Elevator",field:"elevator"},{label:"Old Mattress Removal",field:"removal_requested"},{label:"Transfer Scheduled",field:"transfer_scheduled"}].map(f=>(
                     <label key={f.field} style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",fontSize:13,color:"#94a3b8"}}>
                       <input type="checkbox" checked={!!editingDelivery[f.field]} onChange={e=>setEditingDelivery(p=>({...p,[f.field]:e.target.checked}))} style={{width:16,height:16}}/>
                       {f.label}
@@ -632,16 +725,16 @@ Return ONLY a JSON array. Each: { "task": string, "duration": string, "priority"
               </div>
             ):(
               <div style={{display:"flex",flexDirection:"column",gap:12}}>
-                {[...deliveries].sort((a,b)=>a.stopOrder-b.stopOrder).map(d=>{
-                  const emp=employees.find(e=>e.id===d.assignedTo);
+                {[...deliveries].sort((a,b)=>(a.stop_order||0)-(b.stop_order||0)).map(d=>{
+                  const emp=employees.find(e=>e.id===d.assigned_to);
                   const sc=STATUS_COLORS[d.status]||STATUS_COLORS["Scheduled"];
-                  const itemList = d.items && d.items.length>0 ? d.items : (d.item ? [{qty:1,name:d.item}] : []);
+                  const itemList=d.items&&d.items.length>0?d.items:(d.item?[{qty:1,name:d.item}]:[]);
                   return(
                     <div key={d.id} style={{...S.card,padding:"18px 22px"}}>
                       <div style={{display:"flex",gap:18,flexWrap:"wrap"}}>
                         <div style={{flex:1,minWidth:180}}>
                           <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:5}}>
-                            <span style={{fontFamily:"'DM Mono',monospace",fontSize:11,color:"#64748b"}}>Stop #{d.stopOrder}</span>
+                            <span style={{fontFamily:"'DM Mono',monospace",fontSize:11,color:"#64748b"}}>Stop #{d.stop_order}</span>
                             <span className="badge" style={{background:sc.bg,color:sc.text}}>
                               <span style={{width:5,height:5,borderRadius:"50%",background:sc.dot,...(d.status==="In Transit"?{animation:"pulse 2s infinite"}:{})}}/>
                               {d.status}
@@ -651,13 +744,11 @@ Return ONLY a JSON array. Each: { "task": string, "duration": string, "priority"
                           <div style={{fontSize:12,color:"#64748b",marginTop:2}}>{d.address}</div>
                           <div style={{fontSize:12,color:"#64748b"}}>{d.phone}</div>
                           <div style={{display:"flex",gap:6,marginTop:8,flexWrap:"wrap"}}>
-                            {d.removalRequested&&<span style={{fontSize:10,background:"#1c1500",color:"#f59e0b",borderRadius:4,padding:"2px 6px"}}>♻️ Removal</span>}
-                            {d.transferScheduled&&<span style={{fontSize:10,background:"#1a0a2e",color:"#c084fc",borderRadius:4,padding:"2px 6px"}}>🔄 Transfer</span>}
-                            {d.floor!=="1"&&<span style={{fontSize:10,background:"#0a1628",color:"#60a5fa",borderRadius:4,padding:"2px 6px"}}>{d.elevator?"🛗 Elevator":`🪜 Floor ${d.floor}`}</span>}
+                            {d.removal_requested&&<span style={{fontSize:10,background:"#1c1500",color:"#f59e0b",borderRadius:4,padding:"2px 6px"}}>♻️ Removal</span>}
+                            {d.transfer_scheduled&&<span style={{fontSize:10,background:"#1a0a2e",color:"#c084fc",borderRadius:4,padding:"2px 6px"}}>🔄 Transfer</span>}
+                            {d.floor&&d.floor!=="1"&&<span style={{fontSize:10,background:"#0a1628",color:"#60a5fa",borderRadius:4,padding:"2px 6px"}}>{d.elevator?"🛗 Elevator":`🪜 Floor ${d.floor}`}</span>}
                           </div>
                         </div>
-
-                        {/* Items */}
                         <div style={{minWidth:160}}>
                           <div style={{fontSize:10,color:"#475569",marginBottom:6,textTransform:"uppercase",letterSpacing:".06em"}}>Items</div>
                           {itemList.map((item,i)=>(
@@ -667,39 +758,34 @@ Return ONLY a JSON array. Each: { "task": string, "duration": string, "priority"
                             </div>
                           ))}
                           <div style={{fontSize:10,color:"#475569",marginTop:10,marginBottom:3,textTransform:"uppercase",letterSpacing:".06em"}}>Window</div>
-                          <div style={{fontWeight:500,color:"#60a5fa",fontSize:13}}>{d.window}</div>
+                          <div style={{fontWeight:500,color:"#60a5fa",fontSize:13}}>{d.delivery_window||d.window}</div>
                           <div style={{fontSize:10,color:"#475569",marginTop:8,marginBottom:3,textTransform:"uppercase",letterSpacing:".06em"}}>Driver</div>
                           <div style={{fontWeight:600,color:"#e2e8f0",fontSize:13}}>{emp?.name}</div>
                           {d.notes&&<div style={{fontSize:10,color:"#f59e0b",marginTop:8,background:"#1c1500",borderRadius:5,padding:"3px 7px"}}>⚠️ {d.notes}</div>}
                         </div>
-
-                        {/* Route notes */}
-                        {d.routeNotes&&(
+                        {d.route_notes&&(
                           <div style={{minWidth:180,flex:1}}>
                             <div style={{fontSize:10,color:"#475569",marginBottom:5,textTransform:"uppercase",letterSpacing:".06em"}}>🗺 Route Notes</div>
-                            <div style={{fontSize:12,color:"#94a3b8",lineHeight:1.6,background:"#0a1628",borderRadius:8,padding:"10px 12px"}}>{d.routeNotes}</div>
+                            <div style={{fontSize:12,color:"#94a3b8",lineHeight:1.6,background:"#0a1628",borderRadius:8,padding:"10px 12px"}}>{d.route_notes}</div>
                           </div>
                         )}
-
                         <div style={{display:"flex",flexDirection:"column",gap:5,minWidth:115}}>
                           <div style={{fontSize:10,color:"#475569",textTransform:"uppercase",letterSpacing:".06em",marginBottom:2}}>Status</div>
                           {Object.keys(STATUS_COLORS).map(s=>(
-                            <button key={s} className="btn" onClick={()=>setDeliveries(prev=>prev.map(x=>x.id===d.id?{...x,status:s}:x))}
+                            <button key={s} className="btn" onClick={()=>updateStatus(d.id,s)}
                               style={{background:d.status===s?STATUS_COLORS[s].bg:"#0a1628",color:d.status===s?STATUS_COLORS[s].text:"#475569",border:`1px solid ${d.status===s?STATUS_COLORS[s].dot:"#1e2d3d"}`,padding:"4px 8px",fontSize:10,textAlign:"left"}}>
                               {s}
                             </button>
                           ))}
                           <div style={{display:"flex",gap:5,marginTop:4}}>
-                            <button className="btn" onClick={()=>setEditingDelivery({...d,items:d.items||[{qty:1,name:d.item||""}]})} style={{background:"#1e2d3d",color:"#60a5fa",padding:"5px 8px",fontSize:11,flex:1}}>✏️ Edit</button>
-                            <button className="btn" onClick={()=>setDeliveries(prev=>prev.filter(x=>x.id!==d.id))} style={{background:"#2d0a0a",color:"#f87171",padding:"5px 8px",fontSize:11}}>✕</button>
+                            <button className="btn" onClick={()=>setEditingDelivery({...d,items:d.items||[{qty:1,name:""}]})} style={{background:"#1e2d3d",color:"#60a5fa",padding:"5px 8px",fontSize:11,flex:1}}>✏️ Edit</button>
+                            <button className="btn" onClick={()=>deleteDelivery(d.id)} style={{background:"#2d0a0a",color:"#f87171",padding:"5px 8px",fontSize:11}}>✕</button>
                           </div>
                         </div>
                       </div>
-
-                      {/* Map — always shown when address exists */}
                       {d.address&&(
                         <div style={{marginTop:14,borderRadius:10,overflow:"hidden",border:"1px solid #1e2d3d"}}>
-                          <iframe title={`map-${d.id}`} width="100%" height="220" style={{border:0,display:"block"}} loading="lazy"
+                          <iframe title={`map-${d.id}`} width="100%" height="200" style={{border:0,display:"block"}} loading="lazy"
                             src={`https://maps.google.com/maps?q=${encodeURIComponent(d.address)}&output=embed&z=15`}/>
                         </div>
                       )}
@@ -756,13 +842,13 @@ Return ONLY a JSON array. Each: { "task": string, "duration": string, "priority"
               <div style={{display:"flex",flexDirection:"column",gap:12}}>
                 {problems.map(p=>{
                   const chain=ESCALATION[p.type];
-                  const nextLevel=chain[p.escalationStep+1];
+                  const nextLevel=chain[(p.escalation_step||0)+1];
                   return(
                     <div key={p.id} style={{...S.card,padding:"18px 22px",borderColor:p.resolved?"#1e3a20":"#3d1515"}}>
                       <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10,flexWrap:"wrap",gap:10}}>
                         <div>
                           <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}>
-                            <span style={{fontWeight:700,fontSize:14,color:"#f1f5f9"}}>{p.empName}</span>
+                            <span style={{fontWeight:700,fontSize:14,color:"#f1f5f9"}}>{p.emp_name}</span>
                             <span className="badge" style={{background:p.type==="customer"?"#0c2340":"#1a0a2e",color:p.type==="customer"?"#60a5fa":"#c084fc"}}>{p.type==="customer"?"👤 Customer":"📦 Product"}</span>
                             {p.resolved&&<span className="badge" style={{background:"#052e16",color:"#4ade80"}}>✅ Resolved</span>}
                           </div>
@@ -775,9 +861,9 @@ Return ONLY a JSON array. Each: { "task": string, "duration": string, "priority"
                       </div>
                       <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
                         {chain.map((step,i)=>(
-                          <div key={i} style={{display:"flex",alignItems:"center",gap:5,background:i<=p.escalationStep?(i===p.escalationStep?"#0c2340":"#052e16"):"#0a1628",borderRadius:6,padding:"5px 10px",border:`1px solid ${i===p.escalationStep?"#3b82f6":"#1e2d3d"}`}}>
-                            <span style={{width:6,height:6,borderRadius:"50%",background:i<p.escalationStep?"#22c55e":i===p.escalationStep?"#3b82f6":"#334155"}}/>
-                            <span style={{fontSize:11,color:i<=p.escalationStep?"#e2e8f0":"#475569"}}>{step}</span>
+                          <div key={i} style={{display:"flex",alignItems:"center",gap:5,background:i<=(p.escalation_step||0)?(i===(p.escalation_step||0)?"#0c2340":"#052e16"):"#0a1628",borderRadius:6,padding:"5px 10px",border:`1px solid ${i===(p.escalation_step||0)?"#3b82f6":"#1e2d3d"}`}}>
+                            <span style={{width:6,height:6,borderRadius:"50%",background:i<(p.escalation_step||0)?"#22c55e":i===(p.escalation_step||0)?"#3b82f6":"#334155"}}/>
+                            <span style={{fontSize:11,color:i<=(p.escalation_step||0)?"#e2e8f0":"#475569"}}>{step}</span>
                           </div>
                         ))}
                       </div>
@@ -793,7 +879,7 @@ Return ONLY a JSON array. Each: { "task": string, "duration": string, "priority"
         {tab==="comms"&&(
           <div className="fade-in">
             {deliveries.length===0?(
-              <div style={{...S.card,padding:48,textAlign:"center",color:"#475569"}}><div style={{fontSize:32,marginBottom:8}}>💬</div><div>Add deliveries first to send customer messages.</div></div>
+              <div style={{...S.card,padding:48,textAlign:"center",color:"#475569"}}><div style={{fontSize:32,marginBottom:8}}>💬</div><div>Add deliveries first.</div></div>
             ):(
               <div style={{display:"flex",flexDirection:"column",gap:12}}>
                 {deliveries.map(d=>{
@@ -805,7 +891,7 @@ Return ONLY a JSON array. Each: { "task": string, "duration": string, "priority"
                       <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12,flexWrap:"wrap",gap:10}}>
                         <div>
                           <div style={{fontWeight:700,fontSize:14,color:"#f1f5f9"}}>{d.customer}</div>
-                          <div style={{fontSize:11,color:"#64748b"}}>{d.phone} · {d.item} · {d.window}</div>
+                          <div style={{fontSize:11,color:"#64748b"}}>{d.phone} · {(d.items||[]).map(i=>`${i.qty}x ${i.name}`).join(", ")} · {d.delivery_window||d.window}</div>
                         </div>
                         <div style={{display:"flex",alignItems:"center",gap:8}}>
                           <span className="badge" style={{background:sc.bg,color:sc.text}}><span style={{width:5,height:5,borderRadius:"50%",background:sc.dot}}/>{d.status}</span>
@@ -865,18 +951,18 @@ Return ONLY a JSON array. Each: { "task": string, "duration": string, "priority"
                 <div key={emp.id} style={{...S.card,padding:"18px 22px",display:"flex",alignItems:"flex-start",gap:14}}>
                   <div style={{width:44,height:44,borderRadius:"50%",background:avatarBg(emp),display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,fontWeight:800,color:"#fff",flexShrink:0}}>{emp.avatar}</div>
                   <div style={{flex:1}}>
-                    <div style={{fontWeight:700,fontSize:15,color:"#f1f5f9"}}>{emp.name}{emp.isManager?" 👑":""}{emp.lang==="es"?" 🇲🇽":""}</div>
+                    <div style={{fontWeight:700,fontSize:15,color:"#f1f5f9"}}>{emp.name}{(emp.is_manager||emp.isManager)?" 👑":""}{emp.lang==="es"?" 🇲🇽":""}</div>
                     <div style={{fontSize:12,color:"#64748b",marginTop:2}}>{emp.role}</div>
                     <div style={{display:"flex",gap:5,marginTop:8,flexWrap:"wrap"}}>
-                      {emp.workdays.map(d=><span key={d} style={{fontSize:10,background:"#0c2340",color:"#60a5fa",borderRadius:4,padding:"2px 7px",fontWeight:600}}>{d}</span>)}
+                      {(emp.workdays||[]).map(d=><span key={d} style={{fontSize:10,background:"#0c2340",color:"#60a5fa",borderRadius:4,padding:"2px 7px",fontWeight:600}}>{d}</span>)}
                     </div>
                   </div>
-                  {!emp.isManager?(
+                  {!(emp.is_manager||emp.isManager)?(
                     confirmDelete===emp.id?(
                       <div style={{display:"flex",flexDirection:"column",gap:6,alignItems:"flex-end"}}>
                         <div style={{fontSize:11,color:"#f87171"}}>Remove?</div>
                         <div style={{display:"flex",gap:6}}>
-                          <button className="btn" onClick={()=>{setEmployees(p=>p.filter(e=>e.id!==emp.id));setConfirmDelete(null);}} style={{background:"#dc2626",color:"#fff",padding:"5px 12px",fontSize:11}}>Yes</button>
+                          <button className="btn" onClick={async()=>{await sb.from("employees").delete().eq("id",emp.id);setEmployees(p=>p.filter(e=>e.id!==emp.id));setConfirmDelete(null);}} style={{background:"#dc2626",color:"#fff",padding:"5px 12px",fontSize:11}}>Yes</button>
                           <button className="btn" onClick={()=>setConfirmDelete(null)} style={{background:"#1e2d3d",color:"#94a3b8",padding:"5px 12px",fontSize:11}}>Cancel</button>
                         </div>
                       </div>
@@ -895,10 +981,10 @@ Return ONLY a JSON array. Each: { "task": string, "duration": string, "priority"
         {/* EDIT TASK TEMPLATES */}
         {tab==="basetasks"&&(
           <div className="fade-in">
-            <div style={{marginBottom:16,fontSize:13,color:"#94a3b8"}}>These tasks automatically appear on every employee's list on the matching days. Edit, delete, or add new ones here. Changes take effect immediately.</div>
+            <div style={{marginBottom:16,fontSize:13,color:"#94a3b8"}}>These tasks appear on every employee's list on the matching days. Edit, delete, or add new ones here.</div>
             {["en","es"].map(lang=>(
               <div key={lang} style={{marginBottom:28}}>
-                <div style={{...S.label}}>{lang==="en"?"🇺🇸 English Templates (all staff except Ricky & Alberto)":"🇲🇽 Spanish Templates (Ricky Torres & Alberto)"}</div>
+                <div style={{...S.label}}>{lang==="en"?"🇺🇸 English Templates":"🇲🇽 Spanish Templates (Ricky & Alberto)"}</div>
                 <div style={{...S.card,overflow:"hidden",marginBottom:12}}>
                   {baseTasks[lang].map((task,i)=>(
                     <div key={task.id} style={{display:"flex",alignItems:"flex-start",gap:12,padding:"12px 20px",borderBottom:i<baseTasks[lang].length-1?"1px solid #0f1923":"none"}}>
