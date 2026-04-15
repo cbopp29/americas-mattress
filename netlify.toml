@@ -1,3 +1,7 @@
 [build]
-  command = "chmod -R 755 node_modules/.bin && npm run build"
+  command = "npm run build"
   publish = "build"
+  functions = "netlify/functions"
+
+[functions]
+  directory = "netlify/functions"
