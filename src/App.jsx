@@ -441,8 +441,10 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
                           .replace("{date}",d.delivery_date||"today")
                           .replace("{window}",d.delivery_window||"your scheduled window")
                           .replace("{review_link}",GOOGLE_REVIEW_LINK||"");
-                        const r = await sendSMS(d.phone, msg);
-                        alert(r?.ok?"✅ SMS sent to "+d.phone:"❌ SMS failed — check Twilio credentials");
+                        let ph = (d.phone||"").replace(/\D/g,"");
+                        if(ph.length===10) ph="+1"+ph; else if(ph.length===11) ph="+"+ph; else ph="+1"+ph;
+                        const r = await sendSMS(ph, msg);
+                        if(r?.ok) alert("✅ SMS sent!"); else alert("❌ SMS failed: "+(r?.error||"check Twilio"));
                       }} style={{width:"100%",background:btn.bg,color:"#fff",padding:"10px",fontSize:12,fontWeight:600}}>
                         {btn.label}
                       </button>
@@ -1926,6 +1928,11 @@ export default function App() {
 
   const sendCustomerSMS = async (delivery, type) => {
     if (!delivery.phone) return { ok: false, error: "No phone number" };
+    // Format phone to E.164 (+1XXXXXXXXXX)
+    let phone = delivery.phone.replace(/\D/g,"");
+    if (phone.length===10) phone = "+1"+phone;
+    else if (phone.length===11&&phone.startsWith("1")) phone = "+"+phone;
+    else phone = "+"+phone;
     const name = delivery.customer.split(" ")[0];
     const items = (delivery.items||[]).map(i=>i.name).join(", ");
     let body = smsTemplates[type] || "";
@@ -1934,7 +1941,7 @@ export default function App() {
                .replace("{window}", delivery.delivery_window||"your scheduled window")
                .replace("{items}", items)
                .replace("{review_link}", GOOGLE_REVIEW_LINK||"");
-    const result = await sendSMS(delivery.phone, body);
+    const result = await sendSMS(phone, body);
     return result;
   };
 
@@ -2439,11 +2446,13 @@ export default function App() {
                         {/* SMS Buttons */}
                         <button className="btn" onClick={async()=>{
                           const r=await sendCustomerSMS(d,"confirmed");
-                          alert(r?.preview?"SMS Preview sent (Twilio not configured yet)":"SMS sent to "+d.phone+"!");
+                          if(r?.ok) alert("✅ Confirmation SMS sent to "+d.phone);
+                          else alert("❌ SMS failed: "+(r?.error||"unknown error"));
                         }} style={{background:"#0c2340",color:"#60a5fa",padding:"6px 11px",fontSize:11}}>📱 Confirm SMS</button>
                         <button className="btn" onClick={async()=>{
                           const r=await sendCustomerSMS(d,"delivered");
-                          alert(r?.preview?"SMS Preview sent":"SMS sent!");
+                          if(r?.ok) alert("✅ Delivered SMS sent to "+d.phone);
+                          else alert("❌ SMS failed: "+(r?.error||"unknown error"));
                         }} style={{background:"#052e16",color:"#4ade80",padding:"6px 11px",fontSize:11}}>📱 Delivered SMS</button>
                         {d.signature_url&&<span style={{fontSize:11,background:"#052e16",color:"#4ade80",borderRadius:5,padding:"3px 8px"}}>✅ Signed</span>}
                       </div>
