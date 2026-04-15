@@ -7,6 +7,43 @@ const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 const ALL_DAYS = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
 const ROLES = ["Driver","Helper","Driver/Helper","Coordinator","Loader","Manager","Warehouse","Other"];
+// ─── SMS CONFIG (Conner-only, inactive until owner approves) ─────────────────
+const SMS_ENABLED = true; // ACTIVE — Twilio connected
+const TWILIO_ACCOUNT_SID = "AC0169331dd3d135800b4ebeea56b2c533"; // replace with your SID
+const TWILIO_AUTH_TOKEN = "0ed24a0bc2862a15d725b958644fedc0"; // replace with your token
+const TWILIO_PHONE = "+15059855709"; // replace with your 505 number e.g. +15055551234
+const GOOGLE_REVIEW_LINK = "https://share.google/FPhPsBEOVAtNaVbD7"; // replace with your Google review URL
+
+// Send SMS via Twilio
+async function sendSMS(to, body) {
+  if (!SMS_ENABLED || !TWILIO_ACCOUNT_SID || TWILIO_ACCOUNT_SID === "YOUR_TWILIO_SID") {
+    console.log("SMS (preview):", to, body);
+    return { ok: true, preview: true };
+  }
+  try {
+    const res = await fetch(
+      `https://api.twilio.com/2010-04-01/Accounts/${TWILIO_ACCOUNT_SID}/Messages.json`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          "Authorization": "Basic " + btoa(TWILIO_ACCOUNT_SID + ":" + TWILIO_AUTH_TOKEN),
+        },
+        body: new URLSearchParams({ From: TWILIO_PHONE, To: to, Body: body }).toString(),
+      }
+    );
+    return res;
+  } catch(e) { console.error("SMS error:", e); return { ok: false }; }
+}
+
+// SMS Templates — Conner edits these
+const DEFAULT_SMS_TEMPLATES = {
+  confirmed: "Hi {name}! Your delivery from America's Mattress is scheduled for {date} between {window}. We'll call when we're on our way! Questions? Call us.",
+  enroute: "Hi {name}! Your America's Mattress driver is about 30 minutes away with your {items}. Please make sure someone is home!",
+  delivered: "Hi {name}! Your delivery is complete. Thank you for choosing America's Mattress Albuquerque! We'd love your feedback: {review_link}",
+  rescheduled: "Hi {name}! We need to reschedule your delivery. Please call us to confirm a new time. Sorry for the inconvenience! - America's Mattress",
+};
+
 const GOOGLE_SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRUFm-Pdfi79zd08mVvDwkGRli6obO0R9d1JGJQLU6jQBKBtTmUdfOGn6TZ3QH0FA/pubhtml";
 const GOOGLE_SHEET_EMBED = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRUFm-Pdfi79zd08mVvDwkGRli6obO0R9d1JGJQLU6jQBKBtTmUdfOGn6TZ3QH0FA/pubhtml?widget=true&headers=false";
 
@@ -98,27 +135,26 @@ const GLOBAL_STYLES = `
   input,textarea,select{font-family:inherit;color:#e2e8f0}
   /* ── Mobile Polish ── */
   @media(max-width:640px){
-    /* Stack all multi-col grids */
-    .del-form-grid, .del-form-3, .new-emp-grid, .prob-grid { grid-template-columns:1fr!important }
-    /* Tasks layout stacks vertically */
-    .tasks-layout { grid-template-columns:1fr!important; display:flex!important; flex-direction:column!important }
+    /* Stack ALL grids to single column */
+    [style*="grid-template-columns"] { grid-template-columns:1fr!important }
+    /* Exception: status buttons stay 3-col */
+    .status-grid { grid-template-columns:repeat(3,1fr)!important }
+    /* Exception: stats stay 3-col */
+    .stats-grid { grid-template-columns:repeat(3,1fr)!important }
+    /* Tasks layout stacks */
+    .tasks-layout { display:flex!important; flex-direction:column!important }
     .tasks-sidebar { display:grid!important; grid-template-columns:repeat(4,1fr)!important; gap:6px!important }
-    .tasks-sidebar button { min-width:unset!important }
-    .task-add-grid { grid-template-columns:1fr 1fr!important }
-    /* Nav compact */
-    .mgr-nav button { padding:8px 6px!important; font-size:10px!important }
-    /* Delivery card stacks */
-    .del-card-inner { flex-direction:column!important }
-    .del-status-btns { flex-direction:row!important; flex-wrap:wrap!important }
-    .del-status-btns button { flex:1!important; min-width:80px!important }
-    /* Stats grid 3 col on mobile */
-    .stats-grid-mobile { grid-template-columns:repeat(3,1fr)!important }
+    /* Nav compact - no overflow */
+    .mgr-nav { flex-wrap:wrap!important; min-width:unset!important }
+    .mgr-nav button { padding:8px 6px!important; font-size:10px!important; flex-shrink:0!important }
+    /* All flex rows wrap */
+    [style*="display:"flex""] { flex-wrap:wrap!important }
     /* Larger touch targets */
-    .btn { min-height:38px }
-    /* Full width cards on mobile */
-    .emp-grid-mobile { grid-template-columns:1fr!important }
-    /* Bigger text in inputs on mobile to prevent zoom */
+    .btn { min-height:44px!important }
+    /* Prevent iOS zoom on input focus */
     input, select, textarea { font-size:16px!important }
+    /* Full padding on mobile */
+    .mobile-pad { padding:12px!important }
   }
   @media(max-width:400px){
     .mgr-nav button { padding:6px 4px!important; font-size:9px!important }
@@ -181,7 +217,7 @@ function LoginScreen({ employees, onLogin }) {
 }
 
 // ─── DRIVER VIEW ──────────────────────────────────────────────────────────────
-function DriverView({ user, deliveries, customTasks, baseTasks, messages, problems, employees, onStatusUpdate, onLogout, onSendMessage, onLogProblem, onSaveDelivery, onSaveSignature }) {
+function DriverView({ user, deliveries, customTasks, baseTasks, messages, problems, employees, onStatusUpdate, onLogout, onSendMessage, onLogProblem, onSaveDelivery, onSaveSignature, smsTemplates }) {
   const [tab, setTab] = useState("deliveries");
   const [openDel, setOpenDel] = useState(null);
   const [schedDay, setSchedDay] = useState(null);
@@ -194,6 +230,12 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
   const fileRef = React.useRef();
   const [uploadingFor, setUploadingFor] = useState(null);
   const [signingDel, setSigningDel] = useState(null);
+  const [liabilityDel, setLiabilityDel] = useState(null);
+  const [liabilityType, setLiabilityType] = useState('headboard');
+  const [warrantyDel, setWarrantyDel] = useState(null);
+  const [trackingActive, setTrackingActive] = useState(false);
+  const [trackingInterval, setTrackingInterval] = useState(null);
+  const [deliveryDetails, setDeliveryDetails] = useState({});
   const isEs = user.lang === "es";
   const today = todayDayName();
   const isDriver = user.role.toLowerCase().includes("driver");
@@ -256,6 +298,30 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
     try { await sb.from("problems").insert(p); } catch(e) {}
     onLogProblem(p);
     setProbInput({ description:"", type:"customer" });
+  };
+
+  // Live GPS tracking
+  const startTracking = () => {
+    if (!navigator.geolocation) return;
+    setTrackingActive(true);
+    const interval = setInterval(() => {
+      navigator.geolocation.getCurrentPosition(pos => {
+        const loc = { lat: pos.coords.latitude, lng: pos.coords.longitude, ts: Date.now() };
+        sb.from("employees").update({ last_location: loc }).eq("id", user.id).then(()=>{});
+      }, null, { enableHighAccuracy: true });
+    }, 15000);
+    setTrackingInterval(interval);
+  };
+
+  const stopTracking = () => {
+    if (trackingInterval) clearInterval(trackingInterval);
+    setTrackingInterval(null);
+    setTrackingActive(false);
+  };
+
+  const updateDeliveryDetail = async (delId, field, value) => {
+    setDeliveryDetails(prev => ({ ...prev, [delId]: { ...(prev[delId]||{}), [field]: value } }));
+    await sb.from("deliveries").update({ [field]: value }).eq("id", delId);
   };
 
   const cardStyle = {background:"#0f1923",border:"1px solid #1e2d3d",borderRadius:12};
@@ -322,6 +388,19 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
                 </a>
               </div>
             )}
+            <div style={{padding:"10px 16px",borderBottom:"1px solid #131f2e"}}>
+              <div style={{fontSize:11,color:"#475569",textTransform:"uppercase",letterSpacing:".07em",marginBottom:7}}>{isEs?"Formularios de Responsabilidad":"Liability Forms"}</div>
+              <div style={{display:"flex",gap:7,flexWrap:"wrap"}}>
+                <button className="btn" onClick={()=>{setLiabilityType("headboard");setLiabilityDel(d);}}
+                  style={{flex:1,background:"#1e3a5f",color:"#60a5fa",padding:"9px 8px",fontSize:12,fontWeight:600}}>
+                  🔧 {isEs?"Perforar Cabecera":"Headboard Drilling"}
+                </button>
+                <button className="btn" onClick={()=>{setLiabilityType("furniture");setLiabilityDel(d);}}
+                  style={{flex:1,background:"#1e1038",color:"#c084fc",padding:"9px 8px",fontSize:12,fontWeight:600}}>
+                  🛋️ {isEs?"Mover Muebles":"Move Furniture"}
+                </button>
+              </div>
+            </div>
             <div style={{padding:"12px 16px",borderBottom:"1px solid #131f2e"}}>
               <div style={{fontSize:11,color:"#475569",textTransform:"uppercase",letterSpacing:".07em",marginBottom:8}}>{isEs?"Actualizar Estado":"Update Status"}</div>
               <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:7,marginBottom:d.status!=="Delivered"?10:0}}>
@@ -332,15 +411,75 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
                   </button>
                 ))}
               </div>
+              {SMS_ENABLED&&d.phone&&(
+                <button className="btn" onClick={async()=>{
+                  const name=d.customer.split(" ")[0];
+                  const items=(d.items||[]).map(i=>i.name).join(", ");
+                  const msg=(smsTemplates?.enroute||"Hi {name}! Your driver is about 30 min away with your {items}. Please be home!")
+                    .replace("{name}",name).replace("{items}",items);
+                  const r = await sendSMS(d.phone, msg);
+                  alert(r?.preview?"SMS Preview: "+msg:"✅ SMS sent to "+d.phone);
+                }} style={{width:"100%",background:"linear-gradient(135deg,#0ea5e9,#0284c7)",color:"#fff",padding:"11px",fontSize:13,fontWeight:700,marginBottom:8}}>
+                  💬 {isEs?"Notificar Cliente (30 min)":"Notify Customer — 30 Min Away"}
+                </button>
+              )}
               {!d.signature_url?(
                 <button className="btn" onClick={()=>setSigningDel(d)}
                   style={{width:"100%",background:"linear-gradient(135deg,#059669,#047857)",color:"#fff",padding:"11px",fontSize:14,fontWeight:700}}>
                   ✍️ {isEs?"Obtener Firma del Cliente":"Get Customer Signature"}
                 </button>
               ):(
-                <div style={{background:"#052e16",borderRadius:8,padding:"8px 12px",display:"flex",alignItems:"center",gap:8}}>
-                  <span style={{fontSize:13,color:"#4ade80",fontWeight:600}}>✅ {isEs?"Firmado":"Signed"}</span>
-                  <span style={{fontSize:11,color:"#475569"}}>{new Date(d.signed_at).toLocaleString()}</span>
+                <div>
+                  <div style={{background:"#052e16",borderRadius:8,padding:"8px 12px",display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+                    <span style={{fontSize:13,color:"#4ade80",fontWeight:600}}>✅ {isEs?"Firmado":"Signed"}</span>
+                    <span style={{fontSize:11,color:"#475569"}}>{new Date(d.signed_at).toLocaleString()}</span>
+                  </div>
+                  <button className="btn" onClick={()=>{
+                    // Generate delivery record as printable HTML page
+                    const items = (d.items||[]).map(i=>`<li>${i.qty}x ${i.name}</li>`).join("");
+                    const checks = d.checklist||{};
+                    const html = `<!DOCTYPE html><html><head><title>Delivery Record #${d.ticket_number||d.id}</title>
+                    <style>body{font-family:Arial,sans-serif;max-width:600px;margin:40px auto;padding:20px;color:#111}
+                    h1{font-size:20px;margin-bottom:4px}h2{font-size:15px;color:#444;margin:16px 0 6px}
+                    .logo{font-size:24px;font-weight:800;margin-bottom:4px}.sub{color:#666;font-size:12px;margin-bottom:20px}
+                    table{width:100%;border-collapse:collapse}td,th{padding:8px;border:1px solid #ddd;font-size:13px}
+                    th{background:#f5f5f5}.sig{border:1px solid #999;padding:6px;margin-top:8px}
+                    img{max-width:300px;height:80px;object-fit:contain}.footer{font-size:10px;color:#999;margin-top:30px;text-align:center}
+                    </style></head><body>
+                    <div class="logo">🛏 America's Mattress</div>
+                    <div class="sub">Albuquerque, NM · Delivery Record</div>
+                    <h2>Delivery Information</h2>
+                    <table><tr><th>Customer</th><td>${d.customer}</td></tr>
+                    <tr><th>Address</th><td>${d.address}</td></tr>
+                    <tr><th>Phone</th><td>${d.phone||"—"}</td></tr>
+                    <tr><th>Ticket #</th><td>${d.ticket_number||"—"}</td></tr>
+                    <tr><th>Date</th><td>${d.delivery_date||"—"}</td></tr>
+                    <tr><th>Driver</th><td>${user.name}</td></tr>
+                    <tr><th>Time In</th><td>${d.driver_time_in||"—"}</td></tr>
+                    <tr><th>Time Out</th><td>${d.driver_time_out||"—"}</td></tr>
+                    <tr><th>Mileage</th><td>${d.mileage_start||"—"} → ${d.mileage_end||"—"}</td></tr>
+                    <tr><th>Haul Offs</th><td>${d.haul_off_count||0}</td></tr>
+                    <tr><th>Manufacturer</th><td>${d.manufacturer||"—"}</td></tr>
+                    <tr><th>Piece #</th><td>${d.piece_number||"—"}</td></tr></table>
+                    <h2>Items Delivered</h2><ul>${items}</ul>
+                    <h2>Customer Checklist</h2>
+                    <table><tr><th>Item</th><th>Response</th></tr>
+                    <tr><td>Bed in correct spot</td><td>${checks.correct_spot||"—"}</td></tr>
+                    <tr><td>Correct height</td><td>${checks.correct_height||"—"}</td></tr>
+                    <tr><td>All questions answered</td><td>${checks.questions_answered||"—"}</td></tr>
+                    <tr><td>Adjustable base explained</td><td>${checks.adjustable_explained||"—"}</td></tr></table>
+                    <h2>Customer Signature</h2>
+                    <div class="sig">${d.signature_url?`<img src="${d.signature_url}" alt="signature"/>`:"No signature"}</div>
+                    <p style="font-size:12px">Signed by: ${d.signed_by||"—"} · ${d.signed_at?new Date(d.signed_at).toLocaleString():"—"}</p>
+                    <div class="footer">America's Mattress Albuquerque · Generated ${new Date().toLocaleString()}</div>
+                    </body></html>`;
+                    const w = window.open("","_blank");
+                    w.document.write(html);
+                    w.document.close();
+                    w.print();
+                  }} style={{width:"100%",background:"#1e3a5f",color:"#60a5fa",padding:"9px",fontSize:12,fontWeight:600}}>
+                    📄 {isEs?"Guardar Registro de Entrega":"Save / Print Delivery Record"}
+                  </button>
                 </div>
               )}
             </div>
@@ -369,6 +508,89 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
                 <button className="btn" onClick={()=>sendMsg(d.id)} style={{background:"linear-gradient(135deg,#2563eb,#1d4ed8)",color:"#fff",padding:"10px 16px",fontSize:14,fontWeight:600,flexShrink:0}}>Send</button>
               </div>
             </div>
+
+            {/* DELIVERY DETAILS — Time, Mileage, Haul Offs, Manufacturer */}
+            <div style={{padding:"12px 16px",borderTop:"1px solid #1e2d3d"}}>
+              <div style={{fontSize:11,color:"#475569",textTransform:"uppercase",letterSpacing:".07em",marginBottom:10}}>📋 {isEs?"Detalles de Entrega":"Delivery Details"}</div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
+                <div>
+                  <div style={{fontSize:10,color:"#475569",marginBottom:3}}>{isEs?"Hora de Entrada":"Time In"}</div>
+                  <input type="time" defaultValue={d.driver_time_in||""} onBlur={e=>updateDeliveryDetail(d.id,"driver_time_in",e.target.value)}
+                    style={{...inputStyle,colorScheme:"dark"}}/>
+                </div>
+                <div>
+                  <div style={{fontSize:10,color:"#475569",marginBottom:3}}>{isEs?"Hora de Salida":"Time Out"}</div>
+                  <input type="time" defaultValue={d.driver_time_out||""} onBlur={e=>updateDeliveryDetail(d.id,"driver_time_out",e.target.value)}
+                    style={{...inputStyle,colorScheme:"dark"}}/>
+                </div>
+                <div>
+                  <div style={{fontSize:10,color:"#475569",marginBottom:3}}>{isEs?"Millaje Inicio":"Mileage Start"}</div>
+                  <input type="number" defaultValue={d.mileage_start||""} onBlur={e=>updateDeliveryDetail(d.id,"mileage_start",Number(e.target.value))}
+                    placeholder="e.g. 45230" style={inputStyle}/>
+                </div>
+                <div>
+                  <div style={{fontSize:10,color:"#475569",marginBottom:3}}>{isEs?"Millaje Final":"Mileage End"}</div>
+                  <input type="number" defaultValue={d.mileage_end||""} onBlur={e=>updateDeliveryDetail(d.id,"mileage_end",Number(e.target.value))}
+                    placeholder="e.g. 45267" style={inputStyle}/>
+                </div>
+                <div>
+                  <div style={{fontSize:10,color:"#475569",marginBottom:3}}>{isEs?"# Retiros":"# Haul Offs"}</div>
+                  <input type="number" min="0" defaultValue={d.haul_off_count||0} onBlur={e=>updateDeliveryDetail(d.id,"haul_off_count",Number(e.target.value))}
+                    style={inputStyle}/>
+                </div>
+                <div>
+                  <div style={{fontSize:10,color:"#475569",marginBottom:3}}>{isEs?"Fabricante":"Manufacturer"}</div>
+                  <input defaultValue={d.manufacturer||""} onBlur={e=>updateDeliveryDetail(d.id,"manufacturer",e.target.value)}
+                    placeholder="e.g. Serta" style={inputStyle}/>
+                </div>
+              </div>
+              <div style={{marginBottom:10}}>
+                <div style={{fontSize:10,color:"#475569",marginBottom:3}}>{isEs?"# de Pieza":"Piece #"}</div>
+                <input defaultValue={d.piece_number||""} onBlur={e=>updateDeliveryDetail(d.id,"piece_number",e.target.value)}
+                  placeholder="e.g. 500943363-1060" style={inputStyle}/>
+              </div>
+            </div>
+
+            {/* CUSTOMER CHECKLIST */}
+            <div style={{padding:"12px 16px",borderTop:"1px solid #1e2d3d"}}>
+              <div style={{fontSize:11,color:"#475569",textTransform:"uppercase",letterSpacing:".07em",marginBottom:10}}>✅ {isEs?"Lista de Verificación":"Customer Checklist"}</div>
+              {(()=>{
+                const checks = d.checklist || {};
+                const questions = [
+                  {key:"correct_spot",label:isEs?"¿Cama en el lugar correcto?":"Bed in correct spot?"},
+                  {key:"correct_height",label:isEs?"¿Altura correcta?":"Correct height?"},
+                  {key:"questions_answered",label:isEs?"¿Preguntas respondidas?":"All questions answered?"},
+                  {key:"adjustable_explained",label:isEs?"¿Base ajustable explicada?":"Adjustable base operations explained?"},
+                ];
+                return questions.map(q=>(
+                  <div key={q.key} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"8px 0",borderBottom:"1px solid #131f2e"}}>
+                    <span style={{fontSize:13,color:"#e2e8f0",flex:1}}>{q.label}</span>
+                    <div style={{display:"flex",gap:6}}>
+                      {["Yes","No","N/A"].map(v=>(
+                        <button key={v} className="btn" onClick={async()=>{
+                          const newChecks={...checks,[q.key]:v};
+                          await updateDeliveryDetail(d.id,"checklist",newChecks);
+                        }} style={{padding:"5px 10px",fontSize:11,background:checks[q.key]===v?(v==="Yes"?"#052e16":v==="No"?"#2d0a0a":"#1e2d3d"):"#0a1628",color:checks[q.key]===v?(v==="Yes"?"#4ade80":v==="No"?"#f87171":"#94a3b8"):"#475569",border:`1px solid ${checks[q.key]===v?(v==="Yes"?"#22c55e":v==="No"?"#ef4444":"#334155"):"#1e2d3d"}`}}>
+                          {v}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ));
+              })()}
+            </div>
+
+            {/* WARRANTY INSPECTION */}
+            <div style={{padding:"12px 16px",borderTop:"1px solid #1e2d3d"}}>
+              <div style={{fontSize:11,color:"#f59e0b",textTransform:"uppercase",letterSpacing:".07em",marginBottom:8}}>🔍 {isEs?"Inspección de Garantía":"Warranty Inspection"}</div>
+              <button className="btn" onClick={()=>setWarrantyDel(d)}
+                style={{width:"100%",background:"linear-gradient(135deg,#d97706,#b45309)",color:"#fff",padding:"10px",fontSize:13,fontWeight:600}}>
+                📸 {isEs?"Abrir Inspector de Garantía":"Open Warranty Inspector"}
+              </button>
+              {d.warranty_photos&&Object.keys(d.warranty_photos).length>0&&(
+                <div style={{fontSize:11,color:"#4ade80",marginTop:6}}>✅ {Object.keys(d.warranty_photos).length} warranty photos saved</div>
+              )}
+            </div>
           </div>
         )}
       </div>
@@ -377,6 +599,41 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
 
   return (
     <div style={{background:"#080d14",minHeight:"100vh",color:"#e2e8f0",fontFamily:"'DM Sans',sans-serif",maxWidth:640,margin:"0 auto"}}>
+      {liabilityDel&&(
+        <LiabilityPad
+          delivery={liabilityDel}
+          user={user}
+          formType={liabilityType}
+          isEs={isEs}
+          onClose={()=>setLiabilityDel(null)}
+          onSigned={(record)=>{
+            setLiabilityDel(null);
+          }}
+        />
+      )}
+      {/* Live tracking toggle bar */}
+      <div style={{background:trackingActive?"#052e16":"#0a1628",borderBottom:"1px solid #1e2d3d",padding:"8px 16px",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+        <div style={{fontSize:11,color:trackingActive?"#4ade80":"#475569"}}>
+          {trackingActive?"📍 Tracking Active — Customer can see your location":"📍 Tracking Off"}
+        </div>
+        <button className="btn" onClick={trackingActive?stopTracking:startTracking}
+          style={{background:trackingActive?"#dc2626":"#059669",color:"#fff",padding:"5px 12px",fontSize:11,fontWeight:600}}>
+          {trackingActive?"Stop Tracking":"Start Tracking"}
+        </button>
+      </div>
+
+      {warrantyDel&&(
+        <WarrantyInspector
+          delivery={warrantyDel}
+          user={user}
+          onClose={()=>setWarrantyDel(null)}
+          onSaved={(photos)=>{
+            updateDeliveryDetail(warrantyDel.id,"warranty_photos",photos);
+            setWarrantyDel(null);
+          }}
+          isEs={isEs}
+        />
+      )}
       {signingDel&&(
         <SignaturePad
           delivery={signingDel}
@@ -852,7 +1109,330 @@ function DriverInspectionUpload({ user, onUploaded, isEs }) {
   );
 }
 
+// ─── WARRANTY INSPECTOR ──────────────────────────────────────────────────────
+function WarrantyInspector({ delivery, user, onClose, onSaved, isEs }) {
+  const [photos, setPhotos] = useState(delivery.warranty_photos||{});
+  const [uploading, setUploading] = useState(null);
+  const fileRefs = {
+    flat: React.useRef(), angle: React.useRef(), closeup: React.useRef(),
+    foundation: React.useRef(), frame: React.useRef(), lawtag: React.useRef()
+  };
+
+  const STEPS = [
+    {key:"flat", label:"1. Flat Broomstick Across Mattress", desc:"Place broomstick flat across mattress surface", icon:"🧹"},
+    {key:"angle", label:"2. Far Angle — Tape Measure Into Dip", desc:"Far angle shot measuring dip. DO NOT measure in quilting", icon:"📏"},
+    {key:"closeup", label:"3. Close Up of Tape Measure", desc:"Close up showing measurement clearly", icon:"🔍"},
+    {key:"foundation", label:"4. Foundation — Broomstick & Tape Measure", desc:"Foundation with flat broomstick and tape measure", icon:"🛏"},
+    {key:"frame", label:"5. Frame Underneath", desc:"Photo of frame underneath the foundation", icon:"🔩"},
+    {key:"lawtag", label:"6. Law Tag", desc:"Clear photo of the law tag", icon:"🏷️"},
+  ];
+
+  const compressPhoto = (file) => new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const img = new Image();
+      img.onload = () => {
+        const MAX=1200; let w=img.width,h=img.height;
+        if(w>MAX){h=Math.round(h*MAX/w);w=MAX;}
+        const canvas=document.createElement("canvas"); canvas.width=w; canvas.height=h;
+        canvas.getContext("2d").drawImage(img,0,0,w,h);
+        canvas.toBlob((blob)=>resolve(blob),"image/jpeg",0.85);
+      };
+      img.src=ev.target.result;
+    };
+    reader.readAsDataURL(file);
+  });
+
+  const handleUpload = async (e, key) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    setUploading(key);
+    try {
+      const compressed = await compressPhoto(file);
+      const path = `warranty/${delivery.id}/${key}-${Date.now()}.jpg`;
+      const { error } = await sb.storage.from("photos").upload(path, compressed, {contentType:"image/jpeg"});
+      if (!error) {
+        const url = sb.storage.from("photos").getPublicUrl(path).data.publicUrl;
+        const newPhotos = { ...photos, [key]: url };
+        setPhotos(newPhotos);
+        await sb.from("deliveries").update({ warranty_photos: newPhotos }).eq("id", delivery.id);
+      }
+    } catch(e) { console.error(e); }
+    setUploading(null);
+  };
+
+  const allDone = STEPS.every(s => photos[s.key]);
+  const completed = STEPS.filter(s => photos[s.key]).length;
+
+  return (
+    <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"#080d14",zIndex:999,overflowY:"auto",fontFamily:"'DM Sans',sans-serif"}}>
+      <div style={{background:"#0a1628",padding:"12px 16px",display:"flex",alignItems:"center",justifyContent:"space-between",position:"sticky",top:0,zIndex:10,borderBottom:"1px solid #1e2d3d"}}>
+        <div>
+          <div style={{fontWeight:700,fontSize:14,color:"#f1f5f9"}}>🔍 Warranty Inspection</div>
+          <div style={{fontSize:11,color:"#475569"}}>{delivery.customer} · {completed}/{STEPS.length} photos</div>
+        </div>
+        <div style={{display:"flex",gap:8,alignItems:"center"}}>
+          {allDone&&(
+            <button className="btn" onClick={()=>onSaved(photos)} style={{background:"linear-gradient(135deg,#059669,#047857)",color:"#fff",padding:"7px 14px",fontSize:12,fontWeight:700}}>
+              ✅ Save & Close
+            </button>
+          )}
+          <button className="btn" onClick={onClose} style={{background:"#1e2d3d",color:"#94a3b8",padding:"7px 12px",fontSize:12}}>✕</button>
+        </div>
+      </div>
+
+      {/* Progress */}
+      <div style={{padding:"10px 16px",background:"#0a1628",borderBottom:"1px solid #1e2d3d"}}>
+        <div style={{height:6,background:"#1e2d3d",borderRadius:3,overflow:"hidden"}}>
+          <div style={{height:"100%",width:`${(completed/STEPS.length)*100}%`,background:"linear-gradient(90deg,#f59e0b,#22c55e)",borderRadius:3,transition:"width .3s"}}/>
+        </div>
+        <div style={{fontSize:11,color:"#475569",marginTop:4,textAlign:"right"}}>{completed} of {STEPS.length} photos taken</div>
+      </div>
+
+      <div style={{padding:14}}>
+        {/* Important note */}
+        <div style={{background:"#1c1500",border:"1px solid #f59e0b",borderRadius:10,padding:"10px 14px",marginBottom:14}}>
+          <div style={{fontSize:12,color:"#f59e0b",fontWeight:600,marginBottom:4}}>⚠️ Important</div>
+          <div style={{fontSize:12,color:"#fbbf24",lineHeight:1.5}}>Step 2: Measure into the DIP only. DO NOT measure in the quilting. This is critical for warranty claims.</div>
+        </div>
+
+        {STEPS.map((step,i)=>(
+          <div key={step.key} style={{background:"#0f1923",border:`1px solid ${photos[step.key]?"#22c55e":"#1e2d3d"}`,borderRadius:12,marginBottom:12,overflow:"hidden"}}>
+            <div style={{padding:"12px 16px",display:"flex",alignItems:"center",gap:12}}>
+              <div style={{width:32,height:32,borderRadius:"50%",background:photos[step.key]?"#052e16":"#1e2d3d",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,flexShrink:0}}>
+                {photos[step.key]?"✅":step.icon}
+              </div>
+              <div style={{flex:1}}>
+                <div style={{fontWeight:600,fontSize:13,color:"#f1f5f9"}}>{step.label}</div>
+                <div style={{fontSize:11,color:"#475569",marginTop:2}}>{step.desc}</div>
+              </div>
+            </div>
+            {photos[step.key]?(
+              <div style={{padding:"0 14px 12px"}}>
+                <img src={photos[step.key]} alt={step.label} style={{width:"100%",borderRadius:8,maxHeight:200,objectFit:"cover"}}/>
+                <button className="btn" onClick={()=>fileRefs[step.key].current.click()} style={{width:"100%",background:"#1e2d3d",color:"#60a5fa",padding:"8px",fontSize:12,marginTop:8}}>
+                  🔄 Retake Photo
+                </button>
+              </div>
+            ):(
+              <div style={{padding:"0 14px 12px"}}>
+                <button className="btn" onClick={()=>fileRefs[step.key].current.click()} disabled={uploading===step.key}
+                  style={{width:"100%",background:"linear-gradient(135deg,#d97706,#b45309)",color:"#fff",padding:"12px",fontSize:14,fontWeight:700}}>
+                  {uploading===step.key?"⏳ Uploading...":"📷 Take Photo"}
+                </button>
+              </div>
+            )}
+            <input ref={fileRefs[step.key]} type="file" accept="image/*" capture="environment"
+              onChange={e=>handleUpload(e,step.key)} style={{display:"none"}}/>
+          </div>
+        ))}
+
+        {allDone&&(
+          <button className="btn" onClick={()=>onSaved(photos)} style={{width:"100%",background:"linear-gradient(135deg,#059669,#047857)",color:"#fff",padding:"14px",fontSize:15,fontWeight:700,borderRadius:12}}>
+            ✅ All Photos Saved — Complete Warranty Inspection
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── TRAINING SIGN PAD ───────────────────────────────────────────────────────
+function TrainingSignPad({ emp, session, onSigned, onClose }) {
+  const canvasRef = React.useRef(null);
+  const [drawing, setDrawing] = useState(false);
+  const [hasStrokes, setHasStrokes] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  const getPos = (e, canvas) => {
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    return { x: (clientX - rect.left) * scaleX, y: (clientY - rect.top) * scaleY };
+  };
+  const startDraw=(e)=>{e.preventDefault();const c=canvasRef.current;const ctx=c.getContext("2d");const pos=getPos(e,c);ctx.beginPath();ctx.moveTo(pos.x,pos.y);setDrawing(true);setHasStrokes(true);};
+  const draw=(e)=>{e.preventDefault();if(!drawing)return;const c=canvasRef.current;const ctx=c.getContext("2d");ctx.strokeStyle="#1a1a2e";ctx.lineWidth=2.5;ctx.lineCap="round";ctx.lineJoin="round";const pos=getPos(e,c);ctx.lineTo(pos.x,pos.y);ctx.stroke();};
+  const endDraw=(e)=>{e.preventDefault();setDrawing(false);};
+  const clear=()=>{canvasRef.current.getContext("2d").clearRect(0,0,canvasRef.current.width,canvasRef.current.height);setHasStrokes(false);};
+
+  const save = async () => {
+    if (!hasStrokes) return;
+    setSaving(true);
+    try {
+      canvasRef.current.toBlob(async(blob)=>{
+        const path = `trainings/${session.id}/${emp.id}-${Date.now()}.png`;
+        const { error } = await sb.storage.from("photos").upload(path, blob, {contentType:"image/png"});
+        if (!error) {
+          const url = sb.storage.from("photos").getPublicUrl(path).data.publicUrl;
+          onSigned(url);
+        }
+        setSaving(false);
+      }, "image/png");
+    } catch(e) { console.error(e); setSaving(false); }
+  };
+
+  const signDate = new Date().toLocaleDateString("en-US",{weekday:"long",year:"numeric",month:"long",day:"numeric"});
+  const topics = session.topics||[];
+
+  return (
+    <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.92)",zIndex:999,display:"flex",alignItems:"center",justifyContent:"center",padding:12,overflowY:"auto"}}>
+      <div style={{background:"#fff",borderRadius:16,padding:20,width:"100%",maxWidth:480,color:"#1a1a2e"}}>
+        <div style={{textAlign:"center",marginBottom:12,borderBottom:"2px solid #e5e7eb",paddingBottom:10}}>
+          <div style={{fontSize:16,fontWeight:800}}>🛏 America's Mattress</div>
+          <div style={{fontSize:13,fontWeight:700,color:"#2563eb",marginTop:2}}>Training Sign-In</div>
+          <div style={{fontSize:11,color:"#6b7280",marginTop:2}}>{signDate}</div>
+        </div>
+        <div style={{background:"#f9fafb",borderRadius:8,padding:"10px 12px",marginBottom:12,border:"1px solid #e5e7eb"}}>
+          <div style={{fontWeight:700,fontSize:14,color:"#1a1a2e",marginBottom:4}}>{session.title}</div>
+          {topics.length>0&&(
+            <div>
+              <div style={{fontSize:11,fontWeight:600,color:"#374151",marginBottom:4}}>Topics covered:</div>
+              {topics.map((t,i)=><div key={i} style={{fontSize:12,color:"#6b7280",paddingLeft:8}}>• {t}</div>)}
+            </div>
+          )}
+        </div>
+        <div style={{background:"#eff6ff",borderRadius:8,padding:"10px 12px",marginBottom:12,border:"1px solid #bfdbfe",fontSize:12,color:"#1e40af",lineHeight:1.6}}>
+          I, <strong>{emp.name}</strong>, confirm that I attended and participated in the above training session on {signDate} at America's Mattress Albuquerque.
+        </div>
+        <div style={{marginBottom:10}}>
+          <div style={{fontSize:12,fontWeight:600,color:"#374151",marginBottom:5}}>Signature:</div>
+          <div style={{border:"2px solid #d1d5db",borderRadius:8,background:"#fafafa",cursor:"crosshair",touchAction:"none",position:"relative"}}>
+            <canvas ref={canvasRef} width={440} height={130} style={{width:"100%",height:130,borderRadius:8,display:"block",touchAction:"none"}}
+              onMouseDown={startDraw} onMouseMove={draw} onMouseUp={endDraw} onMouseLeave={endDraw}
+              onTouchStart={startDraw} onTouchMove={draw} onTouchEnd={endDraw}/>
+            {!hasStrokes&&<div style={{position:"absolute",top:"50%",left:"50%",transform:"translate(-50%,-50%)",fontSize:12,color:"#9ca3af",pointerEvents:"none",whiteSpace:"nowrap"}}>Sign here</div>}
+          </div>
+          <div style={{borderTop:"2px solid #374151",paddingTop:2,fontSize:10,color:"#9ca3af",textAlign:"center"}}>x — {emp.name}</div>
+        </div>
+        <div style={{display:"flex",gap:8}}>
+          <button className="btn" onClick={save} disabled={!hasStrokes||saving}
+            style={{flex:1,background:hasStrokes?"#059669":"#d1d5db",color:hasStrokes?"#fff":"#9ca3af",padding:"13px",fontSize:14,fontWeight:700,borderRadius:10}}>
+            {saving?"⏳ Saving...":"✅ Sign Training Log"}
+          </button>
+          <button className="btn" onClick={clear} style={{background:"#f3f4f6",color:"#6b7280",padding:"13px 14px",borderRadius:10}}>🗑️</button>
+          <button className="btn" onClick={onClose} style={{background:"#fee2e2",color:"#dc2626",padding:"13px 14px",borderRadius:10}}>✕</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── ADD BASE TASK ROW ────────────────────────────────────────────────────────
+// ─── LIABILITY FORM PAD ──────────────────────────────────────────────────────
+function LiabilityPad({ delivery, user, formType, onSigned, onClose, isEs }) {
+  const canvasRef = React.useRef(null);
+  const [drawing, setDrawing] = useState(false);
+  const [hasStrokes, setHasStrokes] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [printedName, setPrintedName] = useState("");
+  const [details, setDetails] = useState("");
+
+  const getPos = (e, canvas) => {
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    return { x: (clientX - rect.left) * scaleX, y: (clientY - rect.top) * scaleY };
+  };
+  const startDraw=(e)=>{e.preventDefault();const canvas=canvasRef.current;const ctx=canvas.getContext("2d");const pos=getPos(e,canvas);ctx.beginPath();ctx.moveTo(pos.x,pos.y);setDrawing(true);setHasStrokes(true);};
+  const draw=(e)=>{e.preventDefault();if(!drawing)return;const canvas=canvasRef.current;const ctx=canvas.getContext("2d");ctx.strokeStyle="#1a1a2e";ctx.lineWidth=2.5;ctx.lineCap="round";ctx.lineJoin="round";const pos=getPos(e,canvas);ctx.lineTo(pos.x,pos.y);ctx.stroke();};
+  const endDraw=(e)=>{e.preventDefault();setDrawing(false);};
+  const clear=()=>{const canvas=canvasRef.current;canvas.getContext("2d").clearRect(0,0,canvas.width,canvas.height);setHasStrokes(false);};
+
+  const save = async () => {
+    if (!hasStrokes || !printedName.trim()) return;
+    setSaving(true);
+    try {
+      const canvas = canvasRef.current;
+      canvas.toBlob(async (blob) => {
+        const path = `liability/${delivery.id}/${formType}-${Date.now()}.png`;
+        const { error } = await sb.storage.from("photos").upload(path, blob, { contentType:"image/png" });
+        if (!error) {
+          const url = sb.storage.from("photos").getPublicUrl(path).data.publicUrl;
+          const record = {
+            id: Date.now(),
+            form_type: formType,
+            customer: delivery.customer,
+            address: delivery.address,
+            delivery_id: delivery.id,
+            ticket_number: delivery.ticket_number||"",
+            driver_name: user.name,
+            details: details.trim(),
+            signature_url: url,
+            printed_name: printedName.trim(),
+            signed_at: new Date().toISOString(),
+          };
+          await sb.from("liability_forms").insert(record);
+          onSigned(record);
+        }
+        setSaving(false);
+      }, "image/png");
+    } catch(e) { console.error(e); setSaving(false); }
+  };
+
+  const isHeadboard = formType === "headboard";
+  const canSubmit = hasStrokes && printedName.trim().length > 1;
+  const signDate = new Date().toLocaleDateString("en-US",{weekday:"long",year:"numeric",month:"long",day:"numeric"});
+
+  return (
+    <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.92)",zIndex:999,display:"flex",alignItems:"center",justifyContent:"center",padding:12,overflowY:"auto"}}>
+      <div style={{background:"#fff",borderRadius:16,padding:20,width:"100%",maxWidth:480,color:"#1a1a2e"}}>
+        <div style={{textAlign:"center",marginBottom:12,borderBottom:"2px solid #e5e7eb",paddingBottom:10}}>
+          <div style={{fontSize:16,fontWeight:800,color:"#1a1a2e"}}>🛏 America's Mattress</div>
+          <div style={{fontSize:13,fontWeight:700,color:isHeadboard?"#2563eb":"#7c3aed",marginTop:2}}>
+            {isHeadboard?"🔧 Headboard Drilling Authorization":"🛋️ Furniture Moving Authorization"}
+          </div>
+          <div style={{fontSize:11,color:"#6b7280",marginTop:2}}>{signDate}</div>
+        </div>
+        <div style={{background:"#f9fafb",borderRadius:8,padding:"10px 12px",marginBottom:12,border:"1px solid #e5e7eb",fontSize:12,color:"#374151"}}>
+          <div style={{fontWeight:700,marginBottom:2}}>{delivery.customer}</div>
+          <div style={{color:"#6b7280"}}>{delivery.address}</div>
+          {delivery.ticket_number&&<div style={{color:"#6b7280"}}>Order #{delivery.ticket_number}</div>}
+        </div>
+        <div style={{background:"#eff6ff",borderRadius:8,padding:"10px 12px",marginBottom:12,border:"1px solid #bfdbfe",fontSize:12,color:"#1e40af",lineHeight:1.6}}>
+          {isHeadboard
+            ? `I, the undersigned, authorize America's Mattress Albuquerque to drill into my headboard for bed frame assembly on ${signDate}. I understand this is permanent and America's Mattress is not liable for any damage resulting from this authorized drilling.`
+            : `I, the undersigned, authorize America's Mattress Albuquerque to move existing furniture in my home to complete today's delivery on ${signDate}. I understand America's Mattress will take reasonable care but is not liable for any pre-existing damage or damage resulting from this authorized furniture moving.`
+          }
+        </div>
+        <div style={{marginBottom:10}}>
+          <div style={{fontSize:12,fontWeight:600,color:"#374151",marginBottom:5}}>
+            {isEs?"Detalles adicionales (opcional):":"Additional details (optional):"}
+          </div>
+          <input value={details} onChange={e=>setDetails(e.target.value)} placeholder={isHeadboard?"e.g. King headboard, bedroom 1":"e.g. Moving dresser and nightstands"} style={{width:"100%",border:"1.5px solid #d1d5db",borderRadius:7,padding:"9px 11px",fontSize:14,color:"#1a1a2e",fontFamily:"sans-serif"}}/>
+        </div>
+        <div style={{marginBottom:10}}>
+          <div style={{fontSize:12,fontWeight:600,color:"#374151",marginBottom:5}}>{isEs?"Nombre en letra de molde:":"Print Full Name (required):"}</div>
+          <input value={printedName} onChange={e=>setPrintedName(e.target.value)} placeholder={isEs?"Su nombre completo":"Your full name"} style={{width:"100%",border:"2px solid #d1d5db",borderRadius:8,padding:"10px 12px",fontSize:14,color:"#1a1a2e",fontFamily:"sans-serif"}}/>
+        </div>
+        <div style={{marginBottom:10}}>
+          <div style={{fontSize:12,fontWeight:600,color:"#374151",marginBottom:5}}>{isEs?"Firma:":"Signature (required):"}</div>
+          <div style={{border:"2px solid #d1d5db",borderRadius:8,background:"#fafafa",cursor:"crosshair",touchAction:"none",position:"relative"}}>
+            <canvas ref={canvasRef} width={440} height={130} style={{width:"100%",height:130,borderRadius:8,display:"block",touchAction:"none"}}
+              onMouseDown={startDraw} onMouseMove={draw} onMouseUp={endDraw} onMouseLeave={endDraw}
+              onTouchStart={startDraw} onTouchMove={draw} onTouchEnd={endDraw}/>
+            {!hasStrokes&&<div style={{position:"absolute",top:"50%",left:"50%",transform:"translate(-50%,-50%)",fontSize:12,color:"#9ca3af",pointerEvents:"none",whiteSpace:"nowrap"}}>Sign here</div>}
+          </div>
+          <div style={{borderTop:"2px solid #374151",paddingTop:2,fontSize:10,color:"#9ca3af",textAlign:"center"}}>x</div>
+        </div>
+        {!printedName.trim()&&hasStrokes&&<div style={{fontSize:11,color:"#dc2626",marginBottom:8,textAlign:"center"}}>⚠️ Please enter your printed name</div>}
+        <div style={{display:"flex",gap:8}}>
+          <button className="btn" onClick={save} disabled={!canSubmit||saving}
+            style={{flex:1,background:canSubmit?"#059669":"#d1d5db",color:canSubmit?"#fff":"#9ca3af",padding:"13px",fontSize:14,fontWeight:700,borderRadius:10}}>
+            {saving?"⏳ Saving...":"✅ Sign & Authorize"}
+          </button>
+          <button className="btn" onClick={clear} style={{background:"#f3f4f6",color:"#6b7280",padding:"13px 14px",fontSize:13,borderRadius:10}}>🗑️</button>
+          <button className="btn" onClick={onClose} style={{background:"#fee2e2",color:"#dc2626",padding:"13px 14px",fontSize:13,borderRadius:10}}>✕</button>
+        </div>
+        <div style={{fontSize:10,color:"#9ca3af",textAlign:"center",marginTop:8}}>Permanently recorded · America's Mattress Albuquerque</div>
+      </div>
+    </div>
+  );
+}
+
 // ─── SIGNATURE PAD ────────────────────────────────────────────────────────────
 function SignaturePad({ delivery, user, onSigned, onClose, isEs }) {
   const canvasRef = React.useRef(null);
@@ -1081,6 +1661,26 @@ export default function App() {
   const [pdfImporting, setPdfImporting] = useState(false);
   const [pdfResult, setPdfResult] = useState(null);
   const [signatures, setSignatures] = useState([]);
+  const [trainings, setTrainings] = useState([]);
+  const [completions, setCompletions] = useState([]);
+  const [liabilityForms, setLiabilityForms] = useState([]);
+  const [smsTemplates, setSmsTemplates] = useState(DEFAULT_SMS_TEMPLATES);
+  const [editingTemplate, setEditingTemplate] = useState(null);
+  const [editTemplateVal, setEditTemplateVal] = useState("");
+  const [trackingEnabled, setTrackingEnabled] = useState(false);
+  const [showLiabilityPad, setShowLiabilityPad] = useState(null);
+  const [driverMode, setDriverMode] = useState(false);
+  const [smsReplies, setSmsReplies] = useState([]);
+  const [offlineQueue, setOfflineQueue] = useState([]);
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [sigSearch, setSigSearch] = useState("");
+  const [trainingSession, setTrainingSession] = useState(null);
+  const [trainingSigningEmp, setTrainingSigningEmp] = useState(null);
+  const [trainingSubTab, setTrainingSubTab] = useState("log");
+  const [editingFile, setEditingFile] = useState(null);
+  const [newFileTitle, setNewFileTitle] = useState("");
+  const [newFileContent, setNewFileContent] = useState("");
+  const [newFileCategory, setNewFileCategory] = useState("New Hire");
   const [csvPreview, setCsvPreview] = useState([]);
   const [csvImporting, setCsvImporting] = useState(false);
   const [csvDone, setCsvDone] = useState(false);
@@ -1098,7 +1698,7 @@ export default function App() {
     async function load() {
       setLoading(true);
       try {
-        const [eR,dR,ctR,nR,pR,mR,sigR,insR] = await Promise.all([
+        const [eR,dR,ctR,nR,pR,mR,sigR,insR,trR,tcR,lfR] = await Promise.all([
           sb.from("employees").select("*"),
           sb.from("deliveries").select("*"),
           sb.from("custom_tasks").select("*"),
@@ -1107,6 +1707,9 @@ export default function App() {
           sb.from("messages").select("*").order("created_at",{ascending:true}),
           sb.from("signatures").select("*").order("signed_at",{ascending:false}),
           sb.from("inspections").select("*").order("created_at",{ascending:false}),
+          sb.from("trainings").select("*").order("created_at",{ascending:false}),
+          sb.from("training_completions").select("*"),
+          sb.from("liability_forms").select("*").order("signed_at",{ascending:false}),
         ]);
         if (eR.data&&eR.data.length>0) setEmployees(eR.data);
         else { await sb.from("employees").upsert(INITIAL_EMPLOYEES); }
@@ -1117,6 +1720,9 @@ export default function App() {
         if (mR.data) setMessages(mR.data);
         if (sigR.data) setSignatures(sigR.data);
         if (insR.data) setInspections(insR.data);
+        if (trR.data) setTrainings(trR.data);
+        if (tcR.data) setCompletions(tcR.data);
+        if (lfR.data) setLiabilityForms(lfR.data);
       } catch(e) { console.error(e); }
       setLoading(false);
     }
@@ -1124,7 +1730,12 @@ export default function App() {
     const ds = sb.channel("d-ch").on("postgres_changes",{event:"*",schema:"public",table:"deliveries"},()=>{sb.from("deliveries").select("*").then(({data})=>{if(data)setDeliveries(data);});}).subscribe();
     const ms = sb.channel("m-ch").on("postgres_changes",{event:"INSERT",schema:"public",table:"messages"},(p)=>{setMessages(prev=>[...prev,p.new]);}).subscribe();
     const ps = sb.channel("p-ch").on("postgres_changes",{event:"*",schema:"public",table:"problems"},()=>{sb.from("problems").select("*").then(({data})=>{if(data)setProblems(data);});}).subscribe();
-    return ()=>{sb.removeChannel(ds);sb.removeChannel(ms);sb.removeChannel(ps);};
+    // Online/offline detection
+    const goOnline = () => setIsOnline(true);
+    const goOffline = () => setIsOnline(false);
+    window.addEventListener('online', goOnline);
+    window.addEventListener('offline', goOffline);
+    return ()=>{sb.removeChannel(ds);sb.removeChannel(ms);sb.removeChannel(ps);window.removeEventListener('online',goOnline);window.removeEventListener('offline',goOffline);};
   },[]);
 
   const getEmpDels = (id) => deliveries.filter(d=>d.assigned_to===id);
@@ -1207,6 +1818,20 @@ export default function App() {
     setTimeout(()=>setMsgSent(prev=>({...prev,[d.id]:false})),3000);
   };
 
+  const sendCustomerSMS = async (delivery, type) => {
+    if (!delivery.phone) return { ok: false, error: "No phone number" };
+    const name = delivery.customer.split(" ")[0];
+    const items = (delivery.items||[]).map(i=>i.name).join(", ");
+    let body = smsTemplates[type] || "";
+    body = body.replace("{name}", name)
+               .replace("{date}", delivery.delivery_date||"today")
+               .replace("{window}", delivery.delivery_window||"your scheduled window")
+               .replace("{items}", items)
+               .replace("{review_link}", GOOGLE_REVIEW_LINK||"");
+    const result = await sendSMS(delivery.phone, body);
+    return result;
+  };
+
   const sendTeamMsg = async () => {
     if (!teamMsg.trim()) return;
     const m = { id:Date.now(), sender_id:0, sender_name:"Conner", text:teamMsg.trim(), delivery_id:null, photo_url:null, created_at:new Date().toISOString() };
@@ -1266,6 +1891,28 @@ export default function App() {
 
   if (!currentUser) return <LoginScreen employees={employees} onLogin={setCurrentUser}/>;
 
+  if (driverMode) return (
+    <div>
+      <div style={{background:"#7c3aed",padding:"8px 16px",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+        <span style={{color:"#fff",fontSize:12,fontWeight:600}}>👑 Conner — Driver Mode</span>
+        <button className="btn" onClick={()=>setDriverMode(false)} style={{background:"rgba(255,255,255,0.2)",color:"#fff",padding:"5px 12px",fontSize:12}}>← Back to Manager</button>
+      </div>
+      <DriverView
+        user={currentUser} deliveries={deliveries} customTasks={customTasks} baseTasks={baseTasks}
+        messages={messages} problems={problems} employees={employees}
+        onStatusUpdate={updStatus} onLogout={()=>setCurrentUser(null)}
+        onSendMessage={(m)=>setMessages(prev=>[...prev,m])}
+        onLogProblem={(p)=>setProblems(prev=>[...prev,p])}
+        onSaveDelivery={saveDelivery}
+        smsTemplates={smsTemplates}
+        onSaveSignature={(delId, url, at)=>{
+          setDeliveries(prev=>prev.map(d=>d.id===delId?{...d,signature_url:url,signed_at:at,status:"Delivered"}:d));
+          sb.from("signatures").select("*").order("signed_at",{ascending:false}).then(({data})=>{if(data)setSignatures(data);});
+        }}
+      />
+    </div>
+  );
+
   if (!currentUser.is_manager&&!currentUser.isManager) return (
     <DriverView
       user={currentUser} deliveries={deliveries} customTasks={customTasks} baseTasks={baseTasks}
@@ -1274,6 +1921,7 @@ export default function App() {
       onSendMessage={(m)=>setMessages(prev=>[...prev,m])}
       onLogProblem={(p)=>setProblems(prev=>[...prev,p])}
       onSaveDelivery={saveDelivery}
+      smsTemplates={smsTemplates}
       onSaveSignature={(delId, url, at)=>{
         setDeliveries(prev=>prev.map(d=>d.id===delId?{...d,signature_url:url,signed_at:at,status:"Delivered"}:d));
         sb.from("signatures").select("*").order("signed_at",{ascending:false}).then(({data})=>{if(data)setSignatures(data);});
@@ -1299,11 +1947,12 @@ export default function App() {
             <div style={{width:32,height:32,background:"linear-gradient(135deg,#2563eb,#1d4ed8)",borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16}}>🛏</div>
             <div>
               <div style={{fontWeight:800,fontSize:14,color:"#f1f5f9"}}>America's Mattress</div>
-              <div style={{fontSize:10,color:"#475569",fontFamily:"'DM Mono',monospace"}}>{syncing?"● Saving...":"● Live"} · {todayDate}</div>
+              <div style={{fontSize:10,color:"#475569",fontFamily:"'DM Mono',monospace"}}>{syncing?"● Saving...":isOnline?"● Live":"🔴 Offline"} · {todayDate}</div>
             </div>
           </div>
           <div style={{display:"flex",alignItems:"center",gap:8}}>
             <div style={{width:30,height:30,borderRadius:"50%",background:"linear-gradient(135deg,#7c3aed,#4f46e5)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:800,color:"#fff"}}>CO</div>
+            <button className="btn" onClick={()=>setDriverMode(true)} style={{background:"linear-gradient(135deg,#059669,#047857)",color:"#fff",padding:"5px 10px",fontSize:11,marginRight:4}}>🚛 Driver Mode</button>
             <button className="btn" onClick={()=>setCurrentUser(null)} style={{background:"#1e2d3d",color:"#64748b",padding:"5px 10px",fontSize:11}}>Sign Out</button>
           </div>
         </div>
@@ -1327,6 +1976,10 @@ export default function App() {
             {key:"mgr-prep",label:"Prep",icon:"📋"},
             {key:"import",label:"Import",icon:"📥"},
             {key:"signatures",label:"Signatures",icon:"✍️"},
+            {key:"trainings",label:"Trainings",icon:"🎓"},
+            {key:"liability",label:"Liability",icon:"📝"},
+            {key:"sms-setup",label:"SMS Setup",icon:"📱"},
+            {key:"sms-replies",label:"Replies",icon:"💬"},
           ].map(t=>(
             <button key={t.key} className="btn" onClick={()=>setTab(t.key)}
               style={{padding:"12px 13px",fontSize:12,fontWeight:500,whiteSpace:"nowrap",color:tab===t.key?"#60a5fa":"#64748b",borderBottom:tab===t.key?"2px solid #3b82f6":"2px solid transparent",background:"none",borderRadius:0}}>
@@ -1572,8 +2225,8 @@ export default function App() {
                   <button className="btn" onClick={()=>setEditingDelivery(p=>({...p,items:[...(p.items||[]),{qty:1,name:""}]}))} style={{background:"#1e2d3d",color:"#60a5fa",padding:"5px 11px",fontSize:11}}>➕ Add Item</button>
                 </div>
                 <div className="del-form-3" style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:9,marginBottom:9}}>
-                  <div><div style={{fontSize:10,color:"#475569",marginBottom:3}}>Driver</div><select value={editingDelivery.assigned_to||1} onChange={e=>setEditingDelivery(p=>({...p,assigned_to:Number(e.target.value)}))} style={C.sel}>{employees.filter(e=>!e.is_manager).map(e=><option key={e.id} value={e.id}>{e.name}</option>)}</select></div>
-                  <div><div style={{fontSize:10,color:"#475569",marginBottom:3}}>Helper (optional)</div><select value={editingDelivery.helper_id||0} onChange={e=>setEditingDelivery(p=>({...p,helper_id:Number(e.target.value)}))} style={C.sel}><option value={0}>None</option>{employees.filter(e=>!e.is_manager).map(e=><option key={e.id} value={e.id}>{e.name}</option>)}</select></div>
+                  <div><div style={{fontSize:10,color:"#475569",marginBottom:3}}>Driver</div><select value={editingDelivery.assigned_to||1} onChange={e=>setEditingDelivery(p=>({...p,assigned_to:Number(e.target.value)}))} style={C.sel}>{employees.map(e=><option key={e.id} value={e.id}>{e.name}{e.is_manager?" 👑":""}</option>)}</select></div>
+                  <div><div style={{fontSize:10,color:"#475569",marginBottom:3}}>Helper (optional)</div><select value={editingDelivery.helper_id||0} onChange={e=>setEditingDelivery(p=>({...p,helper_id:Number(e.target.value)}))} style={C.sel}><option value={0}>None</option>{employees.map(e=><option key={e.id} value={e.id}>{e.name}{e.is_manager?" 👑":""}</option>)}</select></div>
                   <div><div style={{fontSize:10,color:"#475569",marginBottom:3}}>Status</div><select value={editingDelivery.status} onChange={e=>setEditingDelivery(p=>({...p,status:e.target.value}))} style={C.sel}>{Object.keys(STATUS_COLORS).map(s=><option key={s} value={s}>{s}</option>)}</select></div>
                   <div><div style={{fontSize:10,color:"#475569",marginBottom:3}}>Stop #</div><input type="number" value={editingDelivery.stop_order||1} onChange={e=>setEditingDelivery(p=>({...p,stop_order:Number(e.target.value)}))} style={C.inp}/></div>
                 </div>
@@ -1655,6 +2308,29 @@ export default function App() {
                         </div>
                       </div>
                       {d.address&&<div style={{marginTop:10,borderRadius:8,overflow:"hidden",border:"1px solid #1e2d3d"}}><iframe title={`m-${d.id}`} width="100%" height="170" style={{border:0,display:"block"}} loading="lazy" src={`https://maps.google.com/maps?q=${encodeURIComponent(d.address)}&output=embed&z=15`}/></div>}
+                      {/* Manager Approval */}
+                      <div style={{marginTop:9,borderTop:"1px solid #131f2e",paddingTop:9,display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
+                        {!d.manager_approved?(
+                          <button className="btn" onClick={async()=>{
+                            await sb.from("deliveries").update({manager_approved:true,manager_approved_by:currentUser.name}).eq("id",d.id);
+                            setDeliveries(prev=>prev.map(x=>x.id===d.id?{...x,manager_approved:true,manager_approved_by:currentUser.name}:x));
+                          }} style={{background:"linear-gradient(135deg,#7c3aed,#4f46e5)",color:"#fff",padding:"6px 13px",fontSize:12,fontWeight:600}}>
+                            👑 Approve for Delivery
+                          </button>
+                        ):(
+                          <span style={{fontSize:11,background:"#1e1038",color:"#a78bfa",borderRadius:6,padding:"4px 9px",fontWeight:600}}>✅ Approved by {d.manager_approved_by}</span>
+                        )}
+                        {/* SMS Buttons */}
+                        <button className="btn" onClick={async()=>{
+                          const r=await sendCustomerSMS(d,"confirmed");
+                          alert(r?.preview?"SMS Preview sent (Twilio not configured yet)":"SMS sent to "+d.phone+"!");
+                        }} style={{background:"#0c2340",color:"#60a5fa",padding:"6px 11px",fontSize:11}}>📱 Confirm SMS</button>
+                        <button className="btn" onClick={async()=>{
+                          const r=await sendCustomerSMS(d,"delivered");
+                          alert(r?.preview?"SMS Preview sent":"SMS sent!");
+                        }} style={{background:"#052e16",color:"#4ade80",padding:"6px 11px",fontSize:11}}>📱 Delivered SMS</button>
+                        {d.signature_url&&<span style={{fontSize:11,background:"#052e16",color:"#4ade80",borderRadius:5,padding:"3px 8px"}}>✅ Signed</span>}
+                      </div>
                       {dMsgs.length>0&&(
                         <div style={{marginTop:9,borderTop:"1px solid #131f2e",paddingTop:9}}>
                           <div style={{fontSize:10,color:"#475569",textTransform:"uppercase",letterSpacing:".06em",marginBottom:5}}>Driver Updates</div>
@@ -2162,25 +2838,33 @@ export default function App() {
                 try {
                   const reader=new FileReader();
                   reader.onload=async(ev)=>{
+                    // Extract text from PDF using FileReader then send just text to AI (much faster)
                     const base64=ev.target.result.split(",")[1];
+                    // Try to extract raw text first
+                    let pdfText = "";
+                    try {
+                      const raw = atob(base64);
+                      const matches = raw.match(/\(([^)]{2,100})\)/g)||[];
+                      pdfText = matches.map(m=>m.slice(1,-1)).join(" ").replace(/\\n/g," ").substring(0,3000);
+                    } catch(ex) {}
                     const res=await fetch("https://api.anthropic.com/v1/messages",{
                       method:"POST",
                       headers:{"Content-Type":"application/json"},
                       body:JSON.stringify({
                         model:"claude-haiku-4-5-20251001",
-                        max_tokens:400,
+                        max_tokens:300,
                         messages:[{
                           role:"user",
                           content:[
                             {type:"document",source:{type:"base64",media_type:"application/pdf",data:base64}},
-                            {type:"text",text:`Extract from this pick list PDF. Return ONLY JSON: {"ticket_number":"","customer":"","address":"full address city state zip","phone":"","delivery_date":"YYYY-MM-DD","delivery_window":"","notes":"","items":[{"qty":1,"name":""}]}`}
+                            {type:"text",text:"Extract delivery info. Return ONLY valid JSON with fields: ticket_number, customer, address, phone, delivery_date as YYYY-MM-DD, delivery_window, notes, items array each with qty and name. No extra text."}
                           ]
                         }]
                       })
                     });
                     const data=await res.json();
-                    const text=data.content.map(b=>b.text||"").join("").trim();
-                    const parsed=JSON.parse(text.replace(/```json|```/g,"").trim());
+                    const txt=data.content.map(b=>b.text||"").join("").trim();
+                    const parsed=JSON.parse(txt.replace(/```json|```/g,"").trim());
                     setPdfResult(parsed);
                     setPdfImporting(false);
                   };
@@ -2215,7 +2899,7 @@ export default function App() {
                   <div style={{marginBottom:10}}>
                     <div style={{fontSize:10,color:"#475569",marginBottom:3}}>Assign Driver</div>
                     <select onChange={e=>setPdfResult(p=>({...p,assigned_to:Number(e.target.value)}))} style={C.sel} defaultValue={1}>
-                      {employees.filter(e=>!e.is_manager).map(e=><option key={e.id} value={e.id}>{e.name}</option>)}
+                      {employees.map(e=><option key={e.id} value={e.id}>{e.name}{e.is_manager?" 👑":""}</option>)}
                     </select>
                   </div>
                   <button className="btn" onClick={async()=>{
@@ -2388,22 +3072,88 @@ export default function App() {
                 {csvDone?"✅ Imported Successfully!":csvImporting?`⏳ Importing ${csvPreview.length} deliveries...`:`📥 Import ${csvPreview.length} Deliveries`}
               </button>
             )}
+
+            {/* ROUTE OPTIMIZATION */}
+            {deliveries.length>0&&(
+              <div style={{...C.card,padding:"16px 18px",marginTop:14,borderColor:"#1e3a5f"}}>
+                <div style={{fontWeight:700,fontSize:13,color:"#60a5fa",marginBottom:6}}>🗺️ Route Optimizer</div>
+                <div style={{fontSize:12,color:"#475569",marginBottom:12}}>AI reads all delivery notes to detect real deliveries vs store transfers/pickups, then sorts by location and time window for the most efficient route.</div>
+                <button className="btn" onClick={async()=>{
+                  const today = new Date().toISOString().split("T")[0];
+                  const todayDels = deliveries.filter(d=>(d.delivery_date||today)===today);
+                  if(todayDels.length===0){alert("No deliveries for today to optimize.");return;}
+                  const delSummary = todayDels.map((d,i)=>({
+                    id:d.id, stop:i+1, customer:d.customer, address:d.address,
+                    window:d.delivery_window||"", notes:d.notes||"", items:(d.items||[]).map(x=>x.name).join(", ")
+                  }));
+                  try {
+                    const res = await fetch("https://api.anthropic.com/v1/messages",{
+                      method:"POST",headers:{"Content-Type":"application/json"},
+                      body:JSON.stringify({
+                        model:"claude-haiku-4-5-20251001", max_tokens:800,
+                        messages:[{role:"user",content:`You are optimizing a mattress delivery route in Albuquerque NM. Analyze these deliveries and return an optimized stop order.
+
+Rules:
+1. Flag any delivery as "skip" if notes say: store transfer, CPU (customer pick up), pickup, transfer to store, or similar
+2. Group deliveries by geographic area (Rio Rancho, East Side, South Valley, etc.)
+3. Within same area, sort by time window (morning before afternoon)
+4. Return ONLY valid JSON array: [{"id":"delivery_id","stop_order":1,"area":"area name","type":"delivery or skip","reason":"why skip if applicable"}]
+
+Deliveries: ${JSON.stringify(delSummary)}`}]
+                      })
+                    });
+                    const data = await res.json();
+                    const text = data.content.map(b=>b.text||"").join("").trim();
+                    const optimized = JSON.parse(text.replace(/\`\`\`json|\`\`\`/g,"").trim());
+                    // Apply optimized order
+                    for(const item of optimized){
+                      if(item.type==="skip"){
+                        await sb.from("deliveries").update({status:"Transfer",notes:(item.reason||"Store Transfer/Pickup")}).eq("id",item.id);
+                      } else {
+                        await sb.from("deliveries").update({stop_order:item.stop_order}).eq("id",item.id);
+                      }
+                    }
+                    const updated = await sb.from("deliveries").select("*");
+                    if(updated.data) setDeliveries(updated.data);
+                    const skipped = optimized.filter(x=>x.type==="skip").length;
+                    alert("✅ Route optimized! " + (optimized.length-skipped) + " deliveries sorted. " + (skipped>0?skipped+" flagged as transfers/pickups.":""));
+                  } catch(e){ alert("Error optimizing route: "+e.message); }
+                }} style={{width:"100%",background:"linear-gradient(135deg,#7c3aed,#4f46e5)",color:"#fff",padding:"11px",fontSize:14,fontWeight:700}}>
+                  🗺️ Optimize Today's Route with AI
+                </button>
+              </div>
+            )}
           </div>
         )}
 
         {/* SIGNATURES */}
         {tab==="signatures"&&(
           <div className="fade">
-            <div style={{fontWeight:700,fontSize:15,color:"#f1f5f9",marginBottom:4}}>✍️ Customer Signatures</div>
-            <div style={{fontSize:12,color:"#475569",marginBottom:16}}>All signatures are stored permanently and never deleted.</div>
-            {signatures.length===0?(
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8,flexWrap:"wrap",gap:8}}>
+              <div>
+                <div style={{fontWeight:700,fontSize:15,color:"#f1f5f9"}}>✍️ Customer Signatures</div>
+                <div style={{fontSize:12,color:"#475569",marginTop:2}}>Stored permanently — {signatures.length} total</div>
+              </div>
+            </div>
+            <input value={sigSearch} onChange={e=>setSigSearch(e.target.value)}
+              placeholder="Search by customer name, ticket #, or date..."
+              style={{...C.inp,marginBottom:14,fontSize:14}}/>
+            {signatures.filter(s=>{
+              if(!sigSearch.trim()) return true;
+              const q=sigSearch.toLowerCase();
+              return (s.customer||"").toLowerCase().includes(q)||(s.ticket_number||"").toLowerCase().includes(q)||(s.delivery_date||"").includes(q)||(s.signed_by||"").toLowerCase().includes(q);
+            }).length===0?(
               <div style={{...C.card,padding:40,textAlign:"center",color:"#475569"}}>
                 <div style={{fontSize:32,marginBottom:8}}>✍️</div>
-                <div>No signatures yet. Drivers collect signatures when marking deliveries complete.</div>
+                <div>{sigSearch?"No results found.":"No signatures yet. Drivers collect signatures when marking deliveries complete."}</div>
               </div>
             ):(
               <div style={{display:"flex",flexDirection:"column",gap:10}}>
-                {signatures.map(sig=>(
+                {signatures.filter(s=>{
+                  if(!sigSearch.trim()) return true;
+                  const q=sigSearch.toLowerCase();
+                  return (s.customer||"").toLowerCase().includes(q)||(s.ticket_number||"").toLowerCase().includes(q)||(s.delivery_date||"").includes(q)||(s.signed_by||"").toLowerCase().includes(q);
+                }).map(sig=>(
                   <div key={sig.id} style={{...C.card,padding:"14px 16px"}}>
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8,flexWrap:"wrap",gap:6}}>
                       <div>
@@ -2421,6 +3171,353 @@ export default function App() {
                     {sig.signature_url&&<img src={sig.signature_url} alt="signature" style={{maxWidth:300,height:80,objectFit:"contain",background:"#fff",borderRadius:8,padding:8,display:"block"}}/>}
                   </div>
                 ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* TRAININGS */}
+        {tab==="trainings"&&(
+          <div className="fade">
+            {/* Training session signing modal */}
+            {trainingSigningEmp&&trainingSession&&(
+              <TrainingSignPad
+                emp={trainingSigningEmp}
+                session={trainingSession}
+                onSigned={async(url)=>{
+                  const c={id:Date.now(),training_id:trainingSession.id,emp_id:trainingSigningEmp.id,emp_name:trainingSigningEmp.name,completed_at:new Date().toISOString(),signature_url:url};
+                  await sb.from("training_completions").insert(c);
+                  setCompletions(prev=>[...prev,c]);
+                  setTrainingSigningEmp(null);
+                }}
+                onClose={()=>setTrainingSigningEmp(null)}
+              />
+            )}
+
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,flexWrap:"wrap",gap:8}}>
+              <div>
+                <div style={{fontWeight:700,fontSize:15,color:"#f1f5f9"}}>🎓 Training Log</div>
+                <div style={{fontSize:12,color:"#475569",marginTop:2}}>Create training sessions and collect employee signatures.</div>
+              </div>
+              <button className="btn" onClick={()=>{
+                const title=prompt("Training session title (e.g. Weekly Training 4/15/26):");
+                if(!title) return;
+                setTrainingSession({id:Date.now(),title,topics:[],date:new Date().toLocaleDateString(),created_at:new Date().toISOString(),isNew:true});
+              }} style={{background:"linear-gradient(135deg,#2563eb,#1d4ed8)",color:"#fff",padding:"8px 16px",fontSize:13}}>
+                ➕ New Training Session
+              </button>
+            </div>
+
+            {/* New training session builder */}
+            {trainingSession&&trainingSession.isNew&&(
+              <div style={{...C.card,padding:"16px 18px",marginBottom:14,borderColor:"#3b82f6"}}>
+                <div style={{fontWeight:700,fontSize:14,color:"#60a5fa",marginBottom:12}}>📋 {trainingSession.title}</div>
+                <div style={{fontSize:12,color:"#475569",marginBottom:8}}>Add topics covered in this training:</div>
+                <div style={{marginBottom:10}}>
+                  {(trainingSession.topics||[]).map((topic,i)=>(
+                    <div key={i} style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+                      <span style={{width:6,height:6,borderRadius:"50%",background:"#3b82f6",flexShrink:0}}/>
+                      <span style={{fontSize:13,color:"#e2e8f0",flex:1}}>{topic}</span>
+                      <button className="btn" onClick={()=>setTrainingSession(p=>({...p,topics:p.topics.filter((_,ti)=>ti!==i)}))} style={{background:"#2d0a0a",color:"#f87171",padding:"2px 7px",fontSize:11}}>✕</button>
+                    </div>
+                  ))}
+                  <div style={{display:"flex",gap:7,marginTop:8}}>
+                    <input id="topicInput" placeholder="e.g. Delivery safety procedures" style={{...C.inp,flex:1}}
+                      onKeyDown={e=>{if(e.key==="Enter"&&e.target.value.trim()){setTrainingSession(p=>({...p,topics:[...(p.topics||[]),e.target.value.trim()]}));e.target.value="";}}}/>
+                    <button className="btn" onClick={()=>{const inp=document.getElementById("topicInput");if(inp&&inp.value.trim()){setTrainingSession(p=>({...p,topics:[...(p.topics||[]),inp.value.trim()]}));inp.value="";}}} style={{background:"#1e2d3d",color:"#60a5fa",padding:"8px 13px",fontSize:13}}>Add</button>
+                  </div>
+                </div>
+                <div style={{fontSize:12,color:"#f1f5f9",fontWeight:600,marginBottom:8,marginTop:12}}>Collect Signatures — tap each employee to sign:</div>
+                <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:12}}>
+                  {employees.map(emp=>{
+                    const signed=completions.find(c=>c.training_id===trainingSession.id&&c.emp_id===emp.id);
+                    return(
+                      <div key={emp.id} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",background:signed?"#052e16":"#0a1628",borderRadius:9,border:`1px solid ${signed?"#22c55e":"#1e2d3d"}`}}>
+                        <div style={{width:30,height:30,borderRadius:"50%",background:avatarBg(emp),display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:700,color:"#fff",flexShrink:0}}>{emp.avatar}</div>
+                        <div style={{flex:1}}>
+                          <div style={{fontWeight:600,fontSize:13,color:"#f1f5f9"}}>{emp.name}</div>
+                          <div style={{fontSize:11,color:signed?"#4ade80":"#475569"}}>{signed?"✅ Signed":"Tap to sign"}</div>
+                        </div>
+                        {!signed?(
+                          <button className="btn" onClick={()=>setTrainingSigningEmp(emp)} style={{background:"linear-gradient(135deg,#059669,#047857)",color:"#fff",padding:"7px 14px",fontSize:12,fontWeight:600}}>
+                            ✍️ Sign
+                          </button>
+                        ):(
+                          <span style={{fontSize:20}}>✅</span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+                <div style={{display:"flex",gap:8}}>
+                  <button className="btn" onClick={async()=>{
+                    const t={id:trainingSession.id,title:trainingSession.title,description:(trainingSession.topics||[]).join(" | "),type:"training_session",content_url:"",created_at:trainingSession.created_at};
+                    await sb.from("trainings").insert(t);
+                    setTrainings(prev=>[t,...prev]);
+                    setTrainingSession(null);
+                  }} style={{flex:1,background:"linear-gradient(135deg,#2563eb,#1d4ed8)",color:"#fff",padding:"9px",fontSize:13,fontWeight:600}}>
+                    💾 Save & Close Session
+                  </button>
+                  <button className="btn" onClick={()=>setTrainingSession(null)} style={{background:"#1e2d3d",color:"#94a3b8",padding:"9px 14px",fontSize:13}}>Cancel</button>
+                </div>
+              </div>
+            )}
+
+            {/* Past training sessions */}
+            {trainings.length===0&&!trainingSession?(
+              <div style={{...C.card,padding:40,textAlign:"center",color:"#475569"}}>
+                <div style={{fontSize:32,marginBottom:8}}>🎓</div>
+                <div>No training sessions yet. Click "➕ New Training Session" to start.</div>
+              </div>
+            ):(
+              trainings.map((t,i)=>{
+                const sessionCompletions=completions.filter(c=>c.training_id===t.id);
+                const topics=t.description?t.description.split(" | "):[];
+                return(
+                  <div key={t.id} style={{...C.card,padding:"14px 16px",marginBottom:10}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8,flexWrap:"wrap",gap:6}}>
+                      <div>
+                        <div style={{fontWeight:700,fontSize:14,color:"#f1f5f9"}}>{t.title}</div>
+                        <div style={{fontSize:11,color:"#475569",marginTop:2}}>{new Date(t.created_at).toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"})}</div>
+                      </div>
+                      <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                        <span style={{fontSize:11,background:"#052e16",color:"#4ade80",borderRadius:5,padding:"3px 8px",fontWeight:600}}>{sessionCompletions.length}/{employees.length} signed</span>
+                        <button className="btn" onClick={async()=>{
+                          await sb.from("trainings").delete().eq("id",t.id);
+                          setTrainings(prev=>prev.filter(x=>x.id!==t.id));
+                        }} style={{background:"#2d0a0a",color:"#f87171",padding:"4px 8px",fontSize:11}}>✕</button>
+                      </div>
+                    </div>
+                    {topics.length>0&&(
+                      <div style={{marginBottom:8}}>
+                        {topics.map((topic,ti)=>(
+                          <div key={ti} style={{display:"flex",alignItems:"center",gap:7,marginBottom:4}}>
+                            <span style={{width:5,height:5,borderRadius:"50%",background:"#3b82f6",flexShrink:0}}/>
+                            <span style={{fontSize:12,color:"#94a3b8"}}>{topic}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <div style={{display:"flex",gap:5,flexWrap:"wrap",marginBottom:sessionCompletions.length<employees.length?8:0}}>
+                      {employees.map(emp=>{
+                        const signed=sessionCompletions.find(c=>c.emp_id===emp.id);
+                        return(
+                          <div key={emp.id} style={{display:"flex",alignItems:"center",gap:5,background:signed?"#052e16":"#0a1628",borderRadius:6,padding:"4px 9px",border:`1px solid ${signed?"#22c55e":"#1e2d3d"}`}}>
+                            <span style={{fontSize:11,color:signed?"#4ade80":"#475569"}}>{signed?"✅":""} {emp.name.split(" ")[0]}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    {sessionCompletions.length<employees.length&&(
+                      <button className="btn" onClick={()=>{
+                        setTrainingSession({...t,topics,isNew:true});
+                      }} style={{background:"#1e2d3d",color:"#60a5fa",padding:"6px 13px",fontSize:12,marginTop:4}}>
+                        ✍️ Collect Missing Signatures
+                      </button>
+                    )}
+                  </div>
+                );
+              })
+            )}
+          </div>
+        )}
+
+
+        {/* LIABILITY FORMS */}
+        {tab==="liability"&&(
+          <div className="fade">
+            <div style={{fontWeight:700,fontSize:15,color:"#f1f5f9",marginBottom:4}}>📝 Liability Forms</div>
+            <div style={{fontSize:12,color:"#475569",marginBottom:14}}>Customer-signed forms for headboard drilling and furniture moving. Permanent records.</div>
+
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:16}}>
+              {[
+                {type:"headboard",label:"🔧 Headboard Drilling",desc:"Customer authorizes drilling into headboard for bed frame assembly",color:"#1e3a5f",textColor:"#60a5fa"},
+                {type:"furniture",label:"🛋️ Furniture Moving",desc:"Customer authorizes moving existing furniture to complete delivery",color:"#1a0a2e",textColor:"#c084fc"},
+              ].map(f=>(
+                <div key={f.type} style={{...C.card,padding:"14px 16px",borderColor:f.color}}>
+                  <div style={{fontWeight:700,fontSize:13,color:f.textColor,marginBottom:6}}>{f.label}</div>
+                  <div style={{fontSize:11,color:"#475569",marginBottom:12,lineHeight:1.5}}>{f.desc}</div>
+                  <div style={{fontSize:11,color:"#475569",marginBottom:4}}>Recent: {liabilityForms.filter(x=>x.form_type===f.type).length} signed</div>
+                </div>
+              ))}
+            </div>
+
+            {liabilityForms.length===0?(
+              <div style={{...C.card,padding:36,textAlign:"center",color:"#475569"}}>
+                <div style={{fontSize:28,marginBottom:8}}>📝</div>
+                <div>No liability forms yet. Drivers collect these from the delivery screen when needed.</div>
+              </div>
+            ):(
+              <div style={{display:"flex",flexDirection:"column",gap:9}}>
+                {liabilityForms.map(f=>(
+                  <div key={f.id} style={{...C.card,padding:"13px 15px"}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:6,flexWrap:"wrap",gap:6}}>
+                      <div>
+                        <div style={{fontWeight:700,fontSize:13,color:"#f1f5f9"}}>{f.customer}</div>
+                        <div style={{fontSize:11,color:"#64748b"}}>{f.address}</div>
+                        <div style={{display:"flex",gap:7,marginTop:4,flexWrap:"wrap"}}>
+                          {f.ticket_number&&<span style={{fontSize:11,background:"#1e3a5f",color:"#60a5fa",borderRadius:4,padding:"2px 7px"}}>#{f.ticket_number}</span>}
+                          <span style={{fontSize:11,background:f.form_type==="headboard"?"#1e3a5f":"#1a0a2e",color:f.form_type==="headboard"?"#60a5fa":"#c084fc",borderRadius:4,padding:"2px 7px"}}>{f.form_type==="headboard"?"🔧 Headboard":"🛋️ Furniture"}</span>
+                          <span style={{fontSize:11,color:"#475569"}}>{f.driver_name}</span>
+                          <span style={{fontSize:11,color:"#22c55e"}}>{new Date(f.signed_at).toLocaleDateString()}</span>
+                        </div>
+                      </div>
+                      <span style={{fontSize:11,background:"#052e16",color:"#4ade80",borderRadius:5,padding:"3px 8px",fontWeight:600}}>✅ Signed</span>
+                    </div>
+                    {f.details&&<div style={{fontSize:12,color:"#94a3b8",marginBottom:6,background:"#0a1628",borderRadius:6,padding:"6px 10px"}}>{f.details}</div>}
+                    {f.signature_url&&<img src={f.signature_url} alt="signature" style={{maxWidth:250,height:60,objectFit:"contain",background:"#fff",borderRadius:6,padding:6}}/>}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* SMS SETUP — Conner only, inactive until approved */}
+        {tab==="sms-setup"&&(
+          <div className="fade">
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:4,flexWrap:"wrap",gap:8}}>
+              <div>
+                <div style={{fontWeight:700,fontSize:15,color:"#f1f5f9"}}>📱 SMS & Tracking Setup</div>
+                <div style={{fontSize:12,color:"#475569",marginTop:2}}>Configure and preview before going live. Owner approval required to activate.</div>
+              </div>
+              <span style={{background:SMS_ENABLED?"#052e16":"#1c1500",color:SMS_ENABLED?"#4ade80":"#f59e0b",borderRadius:8,padding:"5px 12px",fontSize:12,fontWeight:700}}>
+                {SMS_ENABLED?"🟢 ACTIVE — Add Twilio credentials to go live":"🟡 INACTIVE"}
+              </span>
+            </div>
+
+            {/* What happens when activated */}
+            <div style={{...C.card,padding:"14px 16px",marginBottom:14,borderColor:"#1e3a5f"}}>
+              <div style={{fontWeight:600,fontSize:13,color:"#60a5fa",marginBottom:10}}>📋 How It Will Work When Activated</div>
+              {[
+                {step:"1",label:"Delivery Confirmed",desc:"Customer gets a text when you add their delivery to the schedule"},
+                {step:"2",label:"Driver On The Way",desc:"Driver taps 'Notify Customer' → customer gets a 30-min warning text"},
+                {step:"3",label:"Delivered",desc:"When driver marks Delivered → customer gets confirmation + Google review link"},
+                {step:"4",label:"Live Tracking",desc:"Driver taps 'Start Tracking' → customer gets a link to watch the truck live"},
+              ].map(s=>(
+                <div key={s.step} style={{display:"flex",gap:12,marginBottom:10,alignItems:"flex-start"}}>
+                  <div style={{width:24,height:24,borderRadius:"50%",background:"#1e3a5f",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,color:"#60a5fa",flexShrink:0}}>{s.step}</div>
+                  <div>
+                    <div style={{fontWeight:600,fontSize:12,color:"#f1f5f9"}}>{s.label}</div>
+                    <div style={{fontSize:11,color:"#475569"}}>{s.desc}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* SMS Templates — Conner editable */}
+            <div style={{...C.card,overflow:"hidden",marginBottom:14}}>
+              <div style={{padding:"10px 16px",background:"#0a1628",fontSize:11,fontWeight:700,letterSpacing:".08em",color:"#f1f5f9",textTransform:"uppercase"}}>✏️ Your SMS Templates — Edit Before Going Live</div>
+              <div style={{padding:"8px 16px",background:"#0a1628",fontSize:11,color:"#475569",borderBottom:"1px solid #131f2e"}}>
+                Variables: {"{name}"} = customer first name, {"{date}"} = delivery date, {"{window}"} = time window, {"{items}"} = item list, {"{review_link}"} = Google review URL
+              </div>
+              {Object.entries(smsTemplates).map(([key,val],i)=>{
+                const labels={confirmed:"✅ Delivery Confirmed",enroute:"🚛 Driver En Route",delivered:"📦 Delivered + Review Request",rescheduled:"📅 Rescheduled"};
+                return(
+                  <div key={key} style={{padding:"12px 16px",borderTop:i>0?"1px solid #131f2e":"none"}}>
+                    <div style={{fontWeight:600,fontSize:12,color:"#f1f5f9",marginBottom:6}}>{labels[key]||key}</div>
+                    {editingTemplate===key?(
+                      <div>
+                        <textarea value={editTemplateVal} onChange={e=>setEditTemplateVal(e.target.value)}
+                          rows={3} style={{...C.inp,resize:"vertical",marginBottom:8,fontSize:13}}/>
+                        <div style={{display:"flex",gap:7}}>
+                          <button className="btn" onClick={()=>{setSmsTemplates(prev=>({...prev,[key]:editTemplateVal}));setEditingTemplate(null);}} style={{background:"linear-gradient(135deg,#2563eb,#1d4ed8)",color:"#fff",padding:"7px 14px",fontSize:12}}>💾 Save</button>
+                          <button className="btn" onClick={()=>setEditingTemplate(null)} style={{background:"#1e2d3d",color:"#94a3b8",padding:"7px 12px",fontSize:12}}>Cancel</button>
+                        </div>
+                      </div>
+                    ):(
+                      <div>
+                        <div style={{fontSize:12,color:"#94a3b8",background:"#0a1628",borderRadius:7,padding:"8px 11px",lineHeight:1.6,marginBottom:6}}>{val}</div>
+                        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                          <span style={{fontSize:10,color:val.length>160?"#f87171":"#475569"}}>{val.length} chars {val.length>160?"⚠️ over 160":"✅"}</span>
+                          <button className="btn" onClick={()=>{setEditingTemplate(key);setEditTemplateVal(val);}} style={{background:"#1e2d3d",color:"#60a5fa",padding:"4px 10px",fontSize:11}}>✏️ Edit</button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Google Review Link */}
+            <div style={{...C.card,padding:"14px 16px",marginBottom:14}}>
+              <div style={{fontWeight:600,fontSize:13,color:"#f1f5f9",marginBottom:6}}>⭐ Google Review Link</div>
+              <div style={{fontSize:11,color:"#475569",marginBottom:8}}>This gets sent automatically after every successful delivery. Get it from your Google Business Profile.</div>
+              <input defaultValue={GOOGLE_REVIEW_LINK} placeholder="https://g.page/r/..." style={C.inp}/>
+            </div>
+
+            {/* Tracking toggle */}
+            <div style={{...C.card,padding:"14px 16px",marginBottom:14}}>
+              <div style={{fontWeight:600,fontSize:13,color:"#f1f5f9",marginBottom:6}}>📍 Live Tracking</div>
+              <div style={{fontSize:11,color:"#475569",marginBottom:10}}>When enabled, drivers can share their live location with customers via a link texted automatically. Drivers control when tracking is on/off — never tracked off the clock.</div>
+              <div style={{display:"flex",alignItems:"center",gap:12}}>
+                <div style={{width:44,height:24,borderRadius:12,background:trackingEnabled?"#22c55e":"#334155",cursor:"pointer",position:"relative",transition:"background .2s"}} onClick={()=>setTrackingEnabled(p=>!p)}>
+                  <div style={{width:20,height:20,borderRadius:"50%",background:"#fff",position:"absolute",top:2,left:trackingEnabled?22:2,transition:"left .2s"}}/>
+                </div>
+                <span style={{fontSize:13,color:trackingEnabled?"#22c55e":"#475569",fontWeight:600}}>{trackingEnabled?"Enabled (demo only)":"Disabled"}</span>
+              </div>
+            </div>
+
+            {/* Activation checklist */}
+            <div style={{...C.card,padding:"14px 16px",borderColor:"#1c1500"}}>
+              <div style={{fontWeight:600,fontSize:13,color:"#f59e0b",marginBottom:10}}>🚀 To Activate SMS — Checklist</div>
+              {[
+                "Get owner approval",
+                "Create Twilio account at twilio.com (free)",
+                "Purchase 505 Albuquerque phone number ($1.15/month)",
+                "Add TWILIO_ACCOUNT_SID to App.jsx",
+                "Add TWILIO_AUTH_TOKEN to App.jsx",
+                "Add TWILIO_PHONE to App.jsx",
+                "Add your Google Review link above",
+                "Set SMS_ENABLED = true in App.jsx",
+                "Push to Netlify — done!",
+              ].map((item,i)=>(
+                <div key={i} style={{display:"flex",alignItems:"center",gap:9,marginBottom:7}}>
+                  <div style={{width:18,height:18,borderRadius:4,border:"1.5px solid #334155",flexShrink:0}}/>
+                  <span style={{fontSize:12,color:"#94a3b8"}}>{item}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* SMS REPLIES */}
+        {tab==="sms-replies"&&(
+          <div className="fade">
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,flexWrap:"wrap",gap:8}}>
+              <div>
+                <div style={{fontWeight:700,fontSize:15,color:"#f1f5f9"}}>💬 Customer Replies</div>
+                <div style={{fontSize:12,color:"#475569",marginTop:2}}>Incoming SMS replies from customers. Twilio forwards these automatically.</div>
+              </div>
+              <button className="btn" onClick={async()=>{
+                const r = await sb.from("sms_replies").select("*").order("received_at",{ascending:false}).limit(50);
+                if(r.data) setSmsReplies(r.data);
+              }} style={{background:"#1e2d3d",color:"#60a5fa",padding:"6px 12px",fontSize:12}}>🔄 Refresh</button>
+            </div>
+            {smsReplies.length===0?(
+              <div style={{...C.card,padding:40,textAlign:"center",color:"#475569"}}>
+                <div style={{fontSize:32,marginBottom:8}}>💬</div>
+                <div>No replies yet. Customer replies to your SMS messages will appear here.</div>
+                <div style={{fontSize:11,color:"#334155",marginTop:12}}>To enable: add a Twilio webhook URL pointing to your Supabase function.</div>
+              </div>
+            ):(
+              <div style={{display:"flex",flexDirection:"column",gap:9}}>
+                {smsReplies.map(r=>{
+                  const matchedDel = deliveries.find(d=>d.id===r.delivery_id);
+                  return(
+                    <div key={r.id} style={{...C.card,padding:"13px 15px"}}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:6,flexWrap:"wrap",gap:6}}>
+                        <div>
+                          <div style={{fontWeight:700,fontSize:13,color:"#f1f5f9"}}>{r.customer_name||r.from_number}</div>
+                          <div style={{fontSize:11,color:"#475569"}}>{r.from_number}</div>
+                        </div>
+                        <span style={{fontSize:11,color:"#475569"}}>{new Date(r.received_at).toLocaleString()}</span>
+                      </div>
+                      <div style={{fontSize:13,color:"#e2e8f0",background:"#0a1628",borderRadius:8,padding:"10px 12px",lineHeight:1.5}}>{r.body}</div>
+                      {matchedDel&&<div style={{fontSize:11,color:"#60a5fa",marginTop:6}}>Re: {matchedDel.customer} — {matchedDel.address}</div>}
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>
