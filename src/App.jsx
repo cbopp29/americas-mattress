@@ -21,19 +21,22 @@ async function sendSMS(to, body) {
     return { ok: true, preview: true };
   }
   try {
-    const res = await fetch(
-      `https://api.twilio.com/2010-04-01/Accounts/${TWILIO_ACCOUNT_SID}/Messages.json`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-          "Authorization": "Basic " + btoa(TWILIO_ACCOUNT_SID + ":" + TWILIO_AUTH_TOKEN),
-        },
-        body: new URLSearchParams({ From: TWILIO_PHONE, To: to, Body: body }).toString(),
-      }
-    );
-    return res;
-  } catch(e) { console.error("SMS error:", e); return { ok: false }; }
+    // Route through Netlify function to avoid CORS issues
+    const res = await fetch("/.netlify/functions/send-sms", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ to, body }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      console.error("SMS error:", data);
+      return { ok: false, error: data.error };
+    }
+    return { ok: true, sid: data.sid };
+  } catch(e) {
+    console.error("SMS error:", e);
+    return { ok: false, error: e.message };
+  }
 }
 
 // SMS Templates — Conner edits these
@@ -358,11 +361,17 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
             {helperEmp&&helperEmp.id!==0&&<span style={{fontSize:12,color:"#94a3b8",background:"#1e2d3d",borderRadius:6,padding:"3px 9px"}}>+ {helperEmp.name}</span>}
           </div>
           {(d.items||[]).map((item,i)=>(
-            <div key={i} style={{display:"flex",alignItems:"center",gap:7,marginBottom:4,flexWrap:"wrap"}}>
-              <span style={{background:"#1e2d3d",color:"#60a5fa",borderRadius:5,padding:"1px 7px",fontSize:12,fontWeight:700}}>{item.qty}x</span>
-              <span style={{fontSize:13,color:"#e2e8f0"}}>{item.name}</span>
-              {d.manufacturer&&i===0&&<span style={{fontSize:11,color:"#94a3b8",background:"#0a1628",borderRadius:4,padding:"1px 7px"}}>{d.manufacturer}</span>}
-              {d.piece_number&&i===0&&<span style={{fontSize:11,color:"#94a3b8",background:"#0a1628",borderRadius:4,padding:"1px 7px"}}>#{d.piece_number}</span>}
+            <div key={i} style={{marginBottom:6}}>
+              <div style={{display:"flex",alignItems:"center",gap:7}}>
+                <span style={{background:"#1e2d3d",color:"#60a5fa",borderRadius:5,padding:"1px 7px",fontSize:12,fontWeight:700}}>{item.qty}x</span>
+                <span style={{fontSize:13,color:"#e2e8f0"}}>{item.name}</span>
+              </div>
+              {i===0&&(d.manufacturer||d.piece_number)&&(
+                <div style={{display:"flex",gap:6,marginTop:3,paddingLeft:30}}>
+                  {d.manufacturer&&<span style={{fontSize:11,color:"#60a5fa"}}>{d.manufacturer}</span>}
+                  {d.piece_number&&<span style={{fontSize:11,color:"#475569"}}>#{d.piece_number}</span>}
+                </div>
+              )}
             </div>
           ))}
           {d.notes&&<div style={{fontSize:12,color:"#f59e0b",marginTop:8,background:"#1c1500",borderRadius:6,padding:"4px 8px"}}>⚠️ {d.notes}</div>}
