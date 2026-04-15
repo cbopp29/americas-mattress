@@ -16,8 +16,8 @@ const GOOGLE_REVIEW_LINK = "https://share.google/FPhPsBEOVAtNaVbD7"; // replace 
 
 // Send SMS via Twilio
 async function sendSMS(to, body) {
-  if (!SMS_ENABLED || !TWILIO_ACCOUNT_SID || TWILIO_ACCOUNT_SID === "YOUR_TWILIO_SID") {
-    console.log("SMS (preview):", to, body);
+  if (!SMS_ENABLED) {
+    console.log("SMS disabled:", to, body);
     return { ok: true, preview: true };
   }
   try {
@@ -358,9 +358,11 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
             {helperEmp&&helperEmp.id!==0&&<span style={{fontSize:12,color:"#94a3b8",background:"#1e2d3d",borderRadius:6,padding:"3px 9px"}}>+ {helperEmp.name}</span>}
           </div>
           {(d.items||[]).map((item,i)=>(
-            <div key={i} style={{display:"flex",alignItems:"center",gap:7,marginBottom:4}}>
+            <div key={i} style={{display:"flex",alignItems:"center",gap:7,marginBottom:4,flexWrap:"wrap"}}>
               <span style={{background:"#1e2d3d",color:"#60a5fa",borderRadius:5,padding:"1px 7px",fontSize:12,fontWeight:700}}>{item.qty}x</span>
               <span style={{fontSize:13,color:"#e2e8f0"}}>{item.name}</span>
+              {d.manufacturer&&i===0&&<span style={{fontSize:11,color:"#94a3b8",background:"#0a1628",borderRadius:4,padding:"1px 7px"}}>{d.manufacturer}</span>}
+              {d.piece_number&&i===0&&<span style={{fontSize:11,color:"#94a3b8",background:"#0a1628",borderRadius:4,padding:"1px 7px"}}>#{d.piece_number}</span>}
             </div>
           ))}
           {d.notes&&<div style={{fontSize:12,color:"#f59e0b",marginTop:8,background:"#1c1500",borderRadius:6,padding:"4px 8px"}}>⚠️ {d.notes}</div>}
@@ -411,17 +413,43 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
                   </button>
                 ))}
               </div>
-              {SMS_ENABLED&&d.phone&&(
-                <button className="btn" onClick={async()=>{
-                  const name=d.customer.split(" ")[0];
-                  const items=(d.items||[]).map(i=>i.name).join(", ");
-                  const msg=(smsTemplates?.enroute||"Hi {name}! Your driver is about 30 min away with your {items}. Please be home!")
-                    .replace("{name}",name).replace("{items}",items);
-                  const r = await sendSMS(d.phone, msg);
-                  alert(r?.preview?"SMS Preview: "+msg:"✅ SMS sent to "+d.phone);
-                }} style={{width:"100%",background:"linear-gradient(135deg,#0ea5e9,#0284c7)",color:"#fff",padding:"11px",fontSize:13,fontWeight:700,marginBottom:8}}>
-                  💬 {isEs?"Notificar Cliente (30 min)":"Notify Customer — 30 Min Away"}
-                </button>
+              {d.phone&&(
+                <div style={{marginBottom:8}}>
+                  <div style={{fontSize:11,color:"#475569",textTransform:"uppercase",letterSpacing:".07em",marginBottom:6}}>{isEs?"Notificar Cliente":"Notify Customer"}</div>
+                  <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                    {[
+                      {key:"confirmed",label:"✅ "+(isEs?"Confirmar Entrega":"Confirm Delivery"),bg:"linear-gradient(135deg,#059669,#047857)"},
+                      {key:"enroute",label:"🚛 "+(isEs?"En Camino (30 min)":"On The Way (30 min)"),bg:"linear-gradient(135deg,#0ea5e9,#0284c7)"},
+                      {key:"delivered",label:"📦 "+(isEs?"Entregado + Reseña":"Delivered + Review"),bg:"linear-gradient(135deg,#7c3aed,#4f46e5)"},
+                      {key:"rescheduled",label:"📅 "+(isEs?"Reprogramar":"Reschedule"),bg:"linear-gradient(135deg,#d97706,#b45309)"},
+                    ].map(btn=>(
+                      <button key={btn.key} className="btn" onClick={async()=>{
+                        const name=d.customer.split(" ")[0];
+                        const items=(d.items||[]).map(i=>i.name).join(", ");
+                        const msg=(smsTemplates?.[btn.key]||"")
+                          .replace("{name}",name)
+                          .replace("{items}",items)
+                          .replace("{date}",d.delivery_date||"today")
+                          .replace("{window}",d.delivery_window||"your scheduled window")
+                          .replace("{review_link}",GOOGLE_REVIEW_LINK||"");
+                        const r = await sendSMS(d.phone, msg);
+                        alert(r?.ok?"✅ SMS sent to "+d.phone:"❌ SMS failed — check Twilio credentials");
+                      }} style={{width:"100%",background:btn.bg,color:"#fff",padding:"10px",fontSize:12,fontWeight:600}}>
+                        {btn.label}
+                      </button>
+                    ))}
+                    {trackingActive&&(
+                      <button className="btn" onClick={async()=>{
+                        const trackUrl = `https://americasmattress.netlify.app/track/${user.id}`;
+                        const msg = "Track your America's Mattress delivery live: "+trackUrl;
+                        const r = await sendSMS(d.phone, msg);
+                        alert(r?.ok?"✅ Tracking link sent!":"❌ SMS failed");
+                      }} style={{width:"100%",background:"#0a1628",color:"#4ade80",padding:"10px",fontSize:12,fontWeight:600,border:"1px solid #22c55e"}}>
+                        📍 Send Live Tracking Link
+                      </button>
+                    )}
+                  </div>
+                </div>
               )}
               {!d.signature_url?(
                 <button className="btn" onClick={()=>setSigningDel(d)}
@@ -1625,6 +1653,75 @@ function AddBaseTaskRow({ lang, setBaseTasks }) {
 }
 
 // ─── MAIN APP (MANAGER VIEW) ──────────────────────────────────────────────────
+// ─── CUSTOMER TRACKING PAGE ──────────────────────────────────────────────────
+function CustomerTrackingPage({ driverId, employees, deliveries }) {
+  const [location, setLocation] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const driver = employees.find(e=>String(e.id)===String(driverId));
+
+  useEffect(()=>{
+    const load = async () => {
+      const {data} = await sb.from("employees").select("last_location,name").eq("id",driverId).single();
+      if(data?.last_location) setLocation(data.last_location);
+      setLoading(false);
+    };
+    load();
+    const interval = setInterval(load, 15000);
+    return ()=>clearInterval(interval);
+  },[driverId]);
+
+  const driverDels = deliveries.filter(d=>d.assigned_to===Number(driverId)&&d.status!=="Delivered")
+    .sort((a,b)=>(a.stop_order||0)-(b.stop_order||0));
+  const completedCount = deliveries.filter(d=>d.assigned_to===Number(driverId)&&d.status==="Delivered").length;
+
+  return (
+    <div style={{background:"#080d14",minHeight:"100vh",color:"#e2e8f0",fontFamily:"'DM Sans',sans-serif",maxWidth:500,margin:"0 auto",padding:20}}>
+      <div style={{textAlign:"center",marginBottom:20}}>
+        <div style={{fontSize:36,marginBottom:8}}>🛏</div>
+        <div style={{fontWeight:800,fontSize:20,color:"#f1f5f9"}}>America's Mattress</div>
+        <div style={{fontSize:13,color:"#475569"}}>Live Delivery Tracking</div>
+      </div>
+      {loading?(
+        <div style={{textAlign:"center",color:"#475569",padding:40}}>Loading driver location...</div>
+      ):!location?(
+        <div style={{textAlign:"center",color:"#475569",padding:40,background:"#0f1923",borderRadius:12}}>
+          <div style={{fontSize:32,marginBottom:8}}>📍</div>
+          <div>Driver tracking is not active yet. Check back when your driver is on the way!</div>
+        </div>
+      ):(
+        <div>
+          <div style={{background:"#052e16",borderRadius:10,padding:"12px 16px",marginBottom:14,display:"flex",alignItems:"center",gap:10}}>
+            <span style={{fontSize:20}}>🟢</span>
+            <div>
+              <div style={{fontWeight:700,color:"#4ade80"}}>{driver?.name||"Your Driver"} is on the way</div>
+              <div style={{fontSize:11,color:"#475569"}}>Updated {new Date(location.ts).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}</div>
+            </div>
+          </div>
+          {driverDels.length>0&&(
+            <div style={{background:"#0f1923",borderRadius:10,padding:"12px 16px",marginBottom:14,border:"1px solid #1e2d3d"}}>
+              <div style={{fontSize:12,color:"#475569",marginBottom:8}}>📦 {completedCount} delivered · {driverDels.length} remaining</div>
+              {driverDels.slice(0,3).map((d,i)=>(
+                <div key={d.id} style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+                  <span style={{fontSize:11,color:"#60a5fa",background:"#0c2340",borderRadius:4,padding:"2px 7px",flexShrink:0}}>Stop {d.stop_order}</span>
+                  <span style={{fontSize:12,color:"#94a3b8"}}>{d.customer}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          <div style={{borderRadius:10,overflow:"hidden",border:"1px solid #1e2d3d"}}>
+            <iframe
+              title="driver-location"
+              width="100%" height="300"
+              style={{border:0,display:"block"}}
+              src={`https://maps.google.com/maps?q=${location.lat},${location.lng}&output=embed&z=13`}/>
+          </div>
+          <div style={{textAlign:"center",marginTop:14,fontSize:11,color:"#334155"}}>Map updates every 15 seconds</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function App() {
   const [currentUser, setCurrentUser] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -1880,6 +1977,16 @@ export default function App() {
     scheduled:deliveries.filter(d=>d.status==="Scheduled").length,
     issues:deliveries.filter(d=>["Issue","Rescheduled"].includes(d.status)).length,
   };
+
+  // Customer tracking page route
+  const trackMatch = window.location.pathname.match(/^\/track\/(.+)$/);
+  if (trackMatch) return (
+    <CustomerTrackingPage
+      driverId={trackMatch[1]}
+      employees={employees}
+      deliveries={deliveries}
+    />
+  );
 
   if (loading) return (
     <div style={{background:"#080d14",minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:14,fontFamily:"'DM Sans',sans-serif"}}>
@@ -2835,44 +2942,37 @@ export default function App() {
                 if(!file) return;
                 setPdfImporting(true);
                 setPdfResult(null);
-                try {
-                  const reader=new FileReader();
-                  reader.onload=async(ev)=>{
-                    // Extract text from PDF using FileReader then send just text to AI (much faster)
+                const reader=new FileReader();
+                reader.onload=async(ev)=>{
+                  try {
                     const base64=ev.target.result.split(",")[1];
-                    // Try to extract raw text first
-                    let pdfText = "";
-                    try {
-                      const raw = atob(base64);
-                      const matches = raw.match(/\(([^)]{2,100})\)/g)||[];
-                      pdfText = matches.map(m=>m.slice(1,-1)).join(" ").replace(/\\n/g," ").substring(0,3000);
-                    } catch(ex) {}
                     const res=await fetch("https://api.anthropic.com/v1/messages",{
                       method:"POST",
                       headers:{"Content-Type":"application/json"},
                       body:JSON.stringify({
                         model:"claude-haiku-4-5-20251001",
-                        max_tokens:300,
+                        max_tokens:600,
                         messages:[{
                           role:"user",
                           content:[
                             {type:"document",source:{type:"base64",media_type:"application/pdf",data:base64}},
-                            {type:"text",text:"Extract delivery info. Return ONLY valid JSON with fields: ticket_number, customer, address, phone, delivery_date as YYYY-MM-DD, delivery_window, notes, items array each with qty and name. No extra text."}
+                            {type:"text",text:"This is an EZ Process Pro pick list PDF. Extract: Sale# as ticket_number, customer full name, full address including city/state/zip, phone, estimated delivery date as YYYY-MM-DD, any time window, special instructions as notes (include transfer/CPU/pickup notes), and all items with qty and full description as name. Also detect: if notes mention transfer/CPU/pickup set is_transfer=true. Return ONLY valid JSON: {ticket_number,customer,address,phone,delivery_date,delivery_window,notes,is_transfer,items:[{qty,name}]}"}
                           ]
                         }]
                       })
                     });
                     const data=await res.json();
+                    if(data.error){alert("AI Error: "+data.error.message);setPdfImporting(false);return;}
                     const txt=data.content.map(b=>b.text||"").join("").trim();
                     const parsed=JSON.parse(txt.replace(/```json|```/g,"").trim());
                     setPdfResult(parsed);
-                    setPdfImporting(false);
-                  };
-                  reader.readAsDataURL(file);
-                } catch(err) {
-                  console.error(err);
+                  } catch(err) {
+                    console.error(err);
+                    alert("Could not read PDF: "+err.message);
+                  }
                   setPdfImporting(false);
-                }
+                };
+                reader.readAsDataURL(file);
               }} style={{...C.inp,padding:"8px",marginBottom:10}}/>
               {pdfImporting&&<div style={{fontSize:13,color:"#60a5fa",padding:"10px 0"}}>⏳ Reading PDF with AI...</div>}
               {pdfResult&&(
@@ -2902,22 +3002,30 @@ export default function App() {
                       {employees.map(e=><option key={e.id} value={e.id}>{e.name}{e.is_manager?" 👑":""}</option>)}
                     </select>
                   </div>
+                  {pdfResult.is_transfer&&(
+                    <div style={{background:"#1c1500",border:"1px solid #f59e0b",borderRadius:8,padding:"8px 12px",marginBottom:10}}>
+                      <div style={{fontSize:12,color:"#f59e0b",fontWeight:600}}>⚠️ Transfer / Pickup Detected</div>
+                      <div style={{fontSize:11,color:"#fbbf24",marginTop:2}}>Notes suggest this is a store transfer or customer pickup. It will be marked as "Transfer" status.</div>
+                    </div>
+                  )}
                   <button className="btn" onClick={async()=>{
                     const nid=`D-${String(deliveries.length+1).padStart(3,"0")}-${Date.now()}`;
+                    const isTransfer=!!pdfResult.is_transfer;
                     const newRow={
                       id:nid,customer:pdfResult.customer,address:pdfResult.address,phone:pdfResult.phone,
                       items:pdfResult.items||[],delivery_window:pdfResult.delivery_window||"",
-                      assigned_to:pdfResult.assigned_to||1,status:"Scheduled",
+                      assigned_to:pdfResult.assigned_to||1,
+                      status:isTransfer?"Transfer":"Scheduled",
                       notes:pdfResult.notes||"",floor:"1",elevator:false,
-                      removal_requested:false,transfer_scheduled:false,route_notes:"",
+                      removal_requested:false,transfer_scheduled:isTransfer,route_notes:"",
                       stop_order:deliveries.length+1,delivery_date:pdfResult.delivery_date,
                       ticket_number:pdfResult.ticket_number,helper_id:0,
                     };
                     await sb.from("deliveries").insert(newRow);
                     setDeliveries(prev=>[...prev,newRow]);
                     setPdfResult(null);
-                  }} style={{width:"100%",background:"linear-gradient(135deg,#059669,#047857)",color:"#fff",padding:"11px",fontSize:14,fontWeight:700}}>
-                    ✅ Add This Delivery
+                  }} style={{width:"100%",background:pdfResult.is_transfer?"linear-gradient(135deg,#d97706,#b45309)":"linear-gradient(135deg,#059669,#047857)",color:"#fff",padding:"11px",fontSize:14,fontWeight:700}}>
+                    {pdfResult.is_transfer?"📦 Add as Transfer":"✅ Add This Delivery"}
                   </button>
                 </div>
               )}
@@ -3382,7 +3490,7 @@ Deliveries: ${JSON.stringify(delSummary)}`}]
                 <div style={{fontSize:12,color:"#475569",marginTop:2}}>Configure and preview before going live. Owner approval required to activate.</div>
               </div>
               <span style={{background:SMS_ENABLED?"#052e16":"#1c1500",color:SMS_ENABLED?"#4ade80":"#f59e0b",borderRadius:8,padding:"5px 12px",fontSize:12,fontWeight:700}}>
-                {SMS_ENABLED?"🟢 ACTIVE — Add Twilio credentials to go live":"🟡 INACTIVE"}
+                {SMS_ENABLED?"🟢 ACTIVE — Twilio connected":"🟡 INACTIVE"}
               </span>
             </div>
 
