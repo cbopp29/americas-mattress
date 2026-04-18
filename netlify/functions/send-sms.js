@@ -29,7 +29,7 @@ exports.handler = async (event) => {
           "Content-Type": "application/x-www-form-urlencoded",
           Authorization: "Basic " + Buffer.from(`${TWILIO_ACCOUNT_SID}:${TWILIO_AUTH_TOKEN}`).toString("base64"),
         },
-        body: new URLSearchParams({ From: TWILIO_PHONE, To: to, Body: body }).toString(),
+        body: new URLSearchParams({ MessagingServiceSid: "MGccf5ad9b48e901cac6236432ebeefb5b", To: to, Body: body }).toString(),
       }
     );
 
