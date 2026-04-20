@@ -1915,7 +1915,7 @@ export default function App() {
     setSendingMsg(d.id);
     const items = (d.items||[]).map(i=>`${i.qty}x ${i.name}`).join(", ");
     try {
-      const r = await fetch("/.netlify/functions/ai",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:160,messages:[{role:"user",content:`Write a friendly SMS under 160 chars for America's Mattress. No payment info. Customer: ${d.customer}, Items: ${items}, Window: ${d.delivery_window}, Status: ${d.status}. Return ONLY the SMS text.`}]})});
+      const r = await fetch("/.netlify/functions/ai",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-5",max_tokens:160,messages:[{role:"user",content:`Write a friendly SMS under 160 chars for America's Mattress. No payment info. Customer: ${d.customer}, Items: ${items}, Window: ${d.delivery_window}, Status: ${d.status}. Return ONLY the SMS text.`}]})});
       const data = await r.json();
       setCustomerMsg(prev=>({...prev,[d.id]:data.content.map(b=>b.text||"").join("").trim()}));
     } catch {
@@ -2970,7 +2970,7 @@ export default function App() {
                       method:"POST",
                       headers:{"Content-Type":"application/json"},
                       body:JSON.stringify({
-                        model:"claude-sonnet-4-20250514",
+                        model:"claude-sonnet-4-5",
                         max_tokens:2000,
                         messages:[{
                           role:"user",
@@ -3308,7 +3308,7 @@ Return ONLY a valid JSON array of all deliveries found:
                     const res = await fetch("/.netlify/functions/ai",{
                       method:"POST",headers:{"Content-Type":"application/json"},
                       body:JSON.stringify({
-                        model:"claude-haiku-4-5-20251001", max_tokens:800,
+                        model:"claude-haiku-4-5", max_tokens:800,
                         messages:[{role:"user",content:`You are optimizing a mattress delivery route in Albuquerque NM. Analyze these deliveries and return an optimized stop order.
 
 Rules:
