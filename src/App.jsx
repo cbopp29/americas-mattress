@@ -1858,7 +1858,7 @@ export default function App() {
 
   const saveDelivery = async (d) => {
     setSyncing(true);
-    const today = new Date().toISOString().split('T')[0]; const row = { customer:d.customer,address:d.address,phone:d.phone,items:d.items||[],delivery_window:d.delivery_window||"",assigned_to:Number(d.assigned_to)||1,status:d.status,notes:d.notes||"",floor:d.floor||"1",elevator:!!d.elevator,removal_requested:!!d.removal_requested,transfer_scheduled:!!d.transfer_scheduled,route_notes:d.route_notes||"",stop_order:Number(d.stop_order)||1,delivery_date:d.delivery_date||today,ticket_number:d.ticket_number||"",helper_id:Number(d.helper_id)||0 };
+    const today = new Date().toISOString().split('T')[0]; const row = { customer:d.customer,address:d.address,phone:d.phone,items:d.items||[],delivery_window:d.delivery_window||"",assigned_to:Number(d.assigned_to)||1,status:d.status,notes:d.notes||"",floor:d.floor||"1",elevator:!!d.elevator,removal_requested:!!d.removal_requested,transfer_scheduled:!!d.transfer_scheduled,route_notes:d.route_notes||"",stop_order:Number(d.stop_order)||1,delivery_date:d.delivery_date||today,ticket_number:d.ticket_number||"",helper_id:Number(d.helper_id)||0,manufacturer:d.manufacturer||"",piece_number:d.piece_number||"" };
     if (!d.id) {
       const nid = `D-${String(deliveries.length+1).padStart(3,"0")}-${Date.now()}`;
       const {data} = await sb.from("deliveries").insert({...row,id:nid}).select();
@@ -1915,7 +1915,7 @@ export default function App() {
     setSendingMsg(d.id);
     const items = (d.items||[]).map(i=>`${i.qty}x ${i.name}`).join(", ");
     try {
-      const r = await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:160,messages:[{role:"user",content:`Write a friendly SMS under 160 chars for America's Mattress. No payment info. Customer: ${d.customer}, Items: ${items}, Window: ${d.delivery_window}, Status: ${d.status}. Return ONLY the SMS text.`}]})});
+      const r = await fetch("/.netlify/functions/ai",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:160,messages:[{role:"user",content:`Write a friendly SMS under 160 chars for America's Mattress. No payment info. Customer: ${d.customer}, Items: ${items}, Window: ${d.delivery_window}, Status: ${d.status}. Return ONLY the SMS text.`}]})});
       const data = await r.json();
       setCustomerMsg(prev=>({...prev,[d.id]:data.content.map(b=>b.text||"").join("").trim()}));
     } catch {
@@ -2350,6 +2350,8 @@ export default function App() {
                 <div className="del-form-3" style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:9,marginBottom:9}}>
                   <div><div style={{fontSize:10,color:"#475569",marginBottom:3}}>Driver</div><select value={editingDelivery.assigned_to||1} onChange={e=>setEditingDelivery(p=>({...p,assigned_to:Number(e.target.value)}))} style={C.sel}>{employees.map(e=><option key={e.id} value={e.id}>{e.name}{e.is_manager?" 👑":""}</option>)}</select></div>
                   <div><div style={{fontSize:10,color:"#475569",marginBottom:3}}>Helper (optional)</div><select value={editingDelivery.helper_id||0} onChange={e=>setEditingDelivery(p=>({...p,helper_id:Number(e.target.value)}))} style={C.sel}><option value={0}>None</option>{employees.map(e=><option key={e.id} value={e.id}>{e.name}{e.is_manager?" 👑":""}</option>)}</select></div>
+                  <div><div style={{fontSize:10,color:"#475569",marginBottom:3}}>Manufacturer</div><input value={editingDelivery.manufacturer||""} onChange={e=>setEditingDelivery(p=>({...p,manufacturer:e.target.value}))} placeholder="e.g. Serta" style={C.inp}/></div>
+                  <div><div style={{fontSize:10,color:"#475569",marginBottom:3}}>Piece #</div><input value={editingDelivery.piece_number||""} onChange={e=>setEditingDelivery(p=>({...p,piece_number:e.target.value}))} placeholder="e.g. 500833819-7550" style={C.inp}/></div>
                   <div><div style={{fontSize:10,color:"#475569",marginBottom:3}}>Status</div><select value={editingDelivery.status} onChange={e=>setEditingDelivery(p=>({...p,status:e.target.value}))} style={C.sel}>{Object.keys(STATUS_COLORS).map(s=><option key={s} value={s}>{s}</option>)}</select></div>
                   <div><div style={{fontSize:10,color:"#475569",marginBottom:3}}>Stop #</div><input type="number" value={editingDelivery.stop_order||1} onChange={e=>setEditingDelivery(p=>({...p,stop_order:Number(e.target.value)}))} style={C.inp}/></div>
                 </div>
@@ -2953,8 +2955,8 @@ export default function App() {
 
             {/* PDF PICK LIST IMPORT */}
             <div style={{...C.card,padding:"16px 18px",marginBottom:16,borderColor:"#1e3a5f"}}>
-              <div style={{fontWeight:700,fontSize:13,color:"#60a5fa",marginBottom:4}}>📄 Upload Pick List PDF</div>
-              <div style={{fontSize:12,color:"#475569",marginBottom:12}}>Upload any Pick List PDF from EZ Process Pro — AI reads it and auto-fills the delivery form.</div>
+              <div style={{fontWeight:700,fontSize:13,color:"#60a5fa",marginBottom:4}}>📄 Upload Daily Route PDF</div>
+              <div style={{fontSize:12,color:"#475569",marginBottom:12}}>Upload your EZ Process Pro delivery receipt PDF each morning — all deliveries import automatically with manufacturer, piece#, driver, and instructions.</div>
               <input type="file" accept=".pdf" onChange={async(e)=>{
                 const file=e.target.files[0];
                 if(!file) return;
@@ -2964,17 +2966,38 @@ export default function App() {
                 reader.onload=async(ev)=>{
                   try {
                     const base64=ev.target.result.split(",")[1];
-                    const res=await fetch("https://api.anthropic.com/v1/messages",{
+                    const res=await fetch("/.netlify/functions/ai",{
                       method:"POST",
                       headers:{"Content-Type":"application/json"},
                       body:JSON.stringify({
-                        model:"claude-haiku-4-5-20251001",
-                        max_tokens:600,
+                        model:"claude-sonnet-4-20250514",
+                        max_tokens:2000,
                         messages:[{
                           role:"user",
                           content:[
                             {type:"document",source:{type:"base64",media_type:"application/pdf",data:base64}},
-                            {type:"text",text:"This is an EZ Process Pro pick list PDF. Extract: Sale# as ticket_number, customer full name, full address including city/state/zip, phone, estimated delivery date as YYYY-MM-DD, any time window, special instructions as notes (include transfer/CPU/pickup notes), and all items with qty and full description as name. Also detect: if notes mention transfer/CPU/pickup set is_transfer=true. Return ONLY valid JSON: {ticket_number,customer,address,phone,delivery_date,delivery_window,notes,is_transfer,items:[{qty,name}]}"}
+                            {type:"text",text:`This is an America's Mattress EZ Process Pro delivery receipt PDF. It may contain MULTIPLE deliveries (one per page or section). Extract ALL of them.
+
+For each delivery extract:
+- sale_number: the Sale Number (e.g. 30503)
+- memo_number: the Memo # (e.g. 50249)  
+- customer: first + last name
+- address: full street address, city, state, zip
+- phone: home phone number
+- delivery_date: Estimated Date of Delivery as YYYY-MM-DD
+- delivery_window: time of day (Morning, Afternoon, or specific time range)
+- driver: Delivery Man field (e.g. "frank ricky")
+- notes: the Instruction field text
+- route: Route # number
+- items: array of all items, each with:
+  - qty: quantity shipped
+  - name: Item Description
+  - manufacturer: Man# field (e.g. SERTA, SIMMONS, BEDGEAR)
+  - piece_number: Piece# field (e.g. 500833819-7550)
+- is_transfer: true if instructions mention transfer, CPU, pickup, or store transfer
+
+Return ONLY a valid JSON array of all deliveries found:
+[{sale_number,memo_number,customer,address,phone,delivery_date,delivery_window,driver,notes,route,is_transfer,items:[{qty,name,manufacturer,piece_number}]}]`}
                           ]
                         }]
                       })
@@ -2983,67 +3006,136 @@ export default function App() {
                     if(data.error){alert("AI Error: "+data.error.message);setPdfImporting(false);return;}
                     const txt=data.content.map(b=>b.text||"").join("").trim();
                     const parsed=JSON.parse(txt.replace(/```json|```/g,"").trim());
-                    setPdfResult(parsed);
+                    // Handle both single object and array
+                    setPdfResult(Array.isArray(parsed)?parsed:[parsed]);
                   } catch(err) {
                     console.error(err);
-                    alert("Could not read PDF: "+err.message);
+                    alert("Could not read PDF: "+err.message+". Try again.");
                   }
                   setPdfImporting(false);
                 };
                 reader.readAsDataURL(file);
               }} style={{...C.inp,padding:"8px",marginBottom:10}}/>
-              {pdfImporting&&<div style={{fontSize:13,color:"#60a5fa",padding:"10px 0"}}>⏳ Reading PDF with AI...</div>}
-              {pdfResult&&(
+              {pdfImporting&&(
+                <div style={{...C.card,padding:"14px 16px",marginBottom:10,borderColor:"#1e3a5f",textAlign:"center"}}>
+                  <div style={{fontSize:13,color:"#60a5fa",marginBottom:4}}>⏳ Reading PDF with AI...</div>
+                  <div style={{fontSize:11,color:"#475569"}}>Extracting all deliveries, items, manufacturers and drivers...</div>
+                </div>
+              )}
+              {pdfResult&&Array.isArray(pdfResult)&&(
                 <div>
-                  <div style={{fontSize:12,color:"#22c55e",fontWeight:600,marginBottom:10}}>✅ PDF Read Successfully — Review &amp; Edit Before Saving</div>
-                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
-                    {[{l:"Ticket #",f:"ticket_number"},{l:"Customer",f:"customer"},{l:"Address",f:"address"},{l:"Phone",f:"phone"},{l:"Date",f:"delivery_date"},{l:"Time Window",f:"delivery_window"},{l:"Notes",f:"notes"}].map(x=>(
-                      <div key={x.f}>
-                        <div style={{fontSize:10,color:"#475569",marginBottom:3}}>{x.l}</div>
-                        <input value={pdfResult[x.f]||""} onChange={e=>setPdfResult(p=>({...p,[x.f]:e.target.value}))}
-                          style={{...C.inp}} type={x.f==="delivery_date"?"date":"text"}/>
+                  <div style={{fontSize:12,color:"#22c55e",fontWeight:600,marginBottom:10}}>
+                    ✅ Found {pdfResult.length} deliveries — Review then import all at once
+                  </div>
+                  {pdfResult.map((del,di)=>{
+                    const matchedDriver = employees.find(e=>
+                      (del.driver||"").toLowerCase().split(" ").some(n=>e.name.toLowerCase().includes(n))&&!e.is_manager
+                    );
+                    return(
+                      <div key={di} style={{...C.card,padding:"14px 16px",marginBottom:12,borderColor:del.is_transfer?"#f59e0b":"#1e3a5f"}}>
+                        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10,flexWrap:"wrap",gap:6}}>
+                          <div>
+                            <div style={{fontWeight:700,fontSize:14,color:"#f1f5f9"}}>{del.customer}</div>
+                            <div style={{fontSize:11,color:"#475569"}}>{del.address}</div>
+                          </div>
+                          <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+                            {del.sale_number&&<span style={{fontSize:11,background:"#1e3a5f",color:"#60a5fa",borderRadius:4,padding:"2px 7px"}}>Sale #{del.sale_number}</span>}
+                            {del.is_transfer&&<span style={{fontSize:11,background:"#1c1500",color:"#f59e0b",borderRadius:4,padding:"2px 7px"}}>⚠️ Transfer/Pickup</span>}
+                            <span style={{fontSize:11,background:"#052e16",color:"#4ade80",borderRadius:4,padding:"2px 7px"}}>{del.delivery_window||"Morning"}</span>
+                          </div>
+                        </div>
+                        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:7,marginBottom:10}}>
+                          <div>
+                            <div style={{fontSize:10,color:"#475569",marginBottom:2}}>Phone</div>
+                            <input value={del.phone||""} onChange={e=>{const r=[...pdfResult];r[di]={...r[di],phone:e.target.value};setPdfResult(r);}} style={{...C.inp}}/>
+                          </div>
+                          <div>
+                            <div style={{fontSize:10,color:"#475569",marginBottom:2}}>Date</div>
+                            <input type="date" value={del.delivery_date||""} onChange={e=>{const r=[...pdfResult];r[di]={...r[di],delivery_date:e.target.value};setPdfResult(r);}} style={{...C.inp,colorScheme:"dark"}}/>
+                          </div>
+                          <div>
+                            <div style={{fontSize:10,color:"#475569",marginBottom:2}}>Window</div>
+                            <input value={del.delivery_window||""} onChange={e=>{const r=[...pdfResult];r[di]={...r[di],delivery_window:e.target.value};setPdfResult(r);}} style={{...C.inp}}/>
+                          </div>
+                          <div>
+                            <div style={{fontSize:10,color:"#475569",marginBottom:2}}>Driver</div>
+                            <select value={del.assigned_to||matchedDriver?.id||1} onChange={e=>{const r=[...pdfResult];r[di]={...r[di],assigned_to:Number(e.target.value)};setPdfResult(r);}} style={C.sel}>
+                              {employees.map(e=><option key={e.id} value={e.id}>{e.name}{e.is_manager?" 👑":""}</option>)}
+                            </select>
+                          </div>
+                        </div>
+                        {del.notes&&<div style={{fontSize:11,color:"#f59e0b",background:"#1c1500",borderRadius:6,padding:"5px 9px",marginBottom:8}}>📋 {del.notes}</div>}
+                        <div style={{marginBottom:6}}>
+                          <div style={{fontSize:10,color:"#475569",marginBottom:4}}>Items</div>
+                          {(del.items||[]).map((item,ii)=>(
+                            <div key={ii} style={{background:"#0a1628",borderRadius:6,padding:"6px 10px",marginBottom:5}}>
+                              <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:2}}>
+                                <span style={{background:"#1e2d3d",color:"#60a5fa",borderRadius:4,padding:"1px 6px",fontSize:11,fontWeight:700}}>{item.qty}x</span>
+                                <span style={{fontSize:12,color:"#e2e8f0",flex:1}}>{item.name}</span>
+                              </div>
+                              {(item.manufacturer||item.piece_number)&&(
+                                <div style={{display:"flex",gap:8,paddingLeft:28}}>
+                                  {item.manufacturer&&<span style={{fontSize:10,color:"#60a5fa"}}>{item.manufacturer}</span>}
+                                  {item.piece_number&&<span style={{fontSize:10,color:"#475569"}}>#{item.piece_number}</span>}
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
                       </div>
-                    ))}
-                  </div>
-                  <div style={{marginBottom:10}}>
-                    <div style={{fontSize:10,color:"#475569",marginBottom:5}}>Items</div>
-                    {(pdfResult.items||[]).map((item,idx)=>(
-                      <div key={idx} style={{display:"flex",gap:7,marginBottom:6}}>
-                        <input type="number" min="1" value={item.qty} onChange={e=>{const items=[...pdfResult.items];items[idx]={...items[idx],qty:Number(e.target.value)};setPdfResult(p=>({...p,items}));}} style={{...C.inp,width:60,textAlign:"center"}}/>
-                        <input value={item.name} onChange={e=>{const items=[...pdfResult.items];items[idx]={...items[idx],name:e.target.value};setPdfResult(p=>({...p,items}));}} style={{...C.inp,flex:1}}/>
-                      </div>
-                    ))}
-                  </div>
-                  <div style={{marginBottom:10}}>
-                    <div style={{fontSize:10,color:"#475569",marginBottom:3}}>Assign Driver</div>
-                    <select onChange={e=>setPdfResult(p=>({...p,assigned_to:Number(e.target.value)}))} style={C.sel} defaultValue={1}>
-                      {employees.map(e=><option key={e.id} value={e.id}>{e.name}{e.is_manager?" 👑":""}</option>)}
-                    </select>
-                  </div>
-                  {pdfResult.is_transfer&&(
-                    <div style={{background:"#1c1500",border:"1px solid #f59e0b",borderRadius:8,padding:"8px 12px",marginBottom:10}}>
-                      <div style={{fontSize:12,color:"#f59e0b",fontWeight:600}}>⚠️ Transfer / Pickup Detected</div>
-                      <div style={{fontSize:11,color:"#fbbf24",marginTop:2}}>Notes suggest this is a store transfer or customer pickup. It will be marked as "Transfer" status.</div>
-                    </div>
-                  )}
+                    );
+                  })}
                   <button className="btn" onClick={async()=>{
-                    const nid=`D-${String(deliveries.length+1).padStart(3,"0")}-${Date.now()}`;
-                    const isTransfer=!!pdfResult.is_transfer;
-                    const newRow={
-                      id:nid,customer:pdfResult.customer,address:pdfResult.address,phone:pdfResult.phone,
-                      items:pdfResult.items||[],delivery_window:pdfResult.delivery_window||"",
-                      assigned_to:pdfResult.assigned_to||1,
-                      status:isTransfer?"Transfer":"Scheduled",
-                      notes:pdfResult.notes||"",floor:"1",elevator:false,
-                      removal_requested:false,transfer_scheduled:isTransfer,route_notes:"",
-                      stop_order:deliveries.length+1,delivery_date:pdfResult.delivery_date,
-                      ticket_number:pdfResult.ticket_number,helper_id:0,
-                    };
-                    await sb.from("deliveries").insert(newRow);
-                    setDeliveries(prev=>[...prev,newRow]);
+                    let stop = deliveries.length+1;
+                    const added = [];
+                    for(const del of pdfResult){
+                      const matchedDriver = employees.find(e=>
+                        (del.driver||"").toLowerCase().split(" ").some(n=>n.length>2&&e.name.toLowerCase().includes(n))&&!e.is_manager
+                      );
+                      const isTransfer = !!del.is_transfer;
+                      // Store manufacturer/piece# on first item for display
+                      const items = (del.items||[]).map(item=>({
+                        qty:item.qty||1,
+                        name:item.name||"",
+                        manufacturer:item.manufacturer||"",
+                        piece_number:item.piece_number||"",
+                      }));
+                      const nid = `D-${String(stop).padStart(3,"0")}-${Date.now()}`;
+                      const manufacturer = items[0]?.manufacturer||"";
+                      const piece_number = items[0]?.piece_number||"";
+                      const newRow={
+                        id:nid,
+                        customer:del.customer,
+                        address:del.address,
+                        phone:del.phone||"",
+                        items,
+                        delivery_window:del.delivery_window||"Morning",
+                        assigned_to:del.assigned_to||matchedDriver?.id||1,
+                        status:isTransfer?"Transfer":"Scheduled",
+                        notes:del.notes||"",
+                        floor:"1",elevator:false,
+                        removal_requested:false,
+                        transfer_scheduled:isTransfer,
+                        route_notes:"",
+                        stop_order:stop,
+                        delivery_date:del.delivery_date||new Date().toISOString().split("T")[0],
+                        ticket_number:String(del.sale_number||del.memo_number||""),
+                        helper_id:0,
+                        manufacturer,
+                        piece_number,
+                      };
+                      await sb.from("deliveries").insert(newRow);
+                      added.push(newRow);
+                      stop++;
+                    }
+                    setDeliveries(prev=>[...prev,...added]);
                     setPdfResult(null);
-                  }} style={{width:"100%",background:pdfResult.is_transfer?"linear-gradient(135deg,#d97706,#b45309)":"linear-gradient(135deg,#059669,#047857)",color:"#fff",padding:"11px",fontSize:14,fontWeight:700}}>
-                    {pdfResult.is_transfer?"📦 Add as Transfer":"✅ Add This Delivery"}
+                    alert("✅ "+added.length+" deliveries imported!");
+                  }} style={{width:"100%",background:"linear-gradient(135deg,#059669,#047857)",color:"#fff",padding:"13px",fontSize:14,fontWeight:700,marginTop:4}}>
+                    ✅ Import All {pdfResult.length} Deliveries
+                  </button>
+                  <button className="btn" onClick={()=>setPdfResult(null)} style={{width:"100%",background:"#1e2d3d",color:"#94a3b8",padding:"9px",fontSize:13,marginTop:8}}>
+                    Cancel
                   </button>
                 </div>
               )}
@@ -3213,7 +3305,7 @@ export default function App() {
                     window:d.delivery_window||"", notes:d.notes||"", items:(d.items||[]).map(x=>x.name).join(", ")
                   }));
                   try {
-                    const res = await fetch("https://api.anthropic.com/v1/messages",{
+                    const res = await fetch("/.netlify/functions/ai",{
                       method:"POST",headers:{"Content-Type":"application/json"},
                       body:JSON.stringify({
                         model:"claude-haiku-4-5-20251001", max_tokens:800,
