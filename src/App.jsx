@@ -1797,6 +1797,7 @@ export default function App() {
   const [showLiabilityPad, setShowLiabilityPad] = useState(null);
   const [driverMode, setDriverMode] = useState(false);
   const [smsReplies, setSmsReplies] = useState([]);
+  const [reportWeek, setReportWeek] = useState(()=>{const d=new Date();d.setDate(d.getDate()-d.getDay());return d.toISOString().split("T")[0];});
   const [offlineQueue, setOfflineQueue] = useState([]);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [sigSearch, setSigSearch] = useState("");
@@ -1817,7 +1818,7 @@ export default function App() {
   const [customDateFrom, setCustomDateFrom] = useState("");
   const [customDateTo, setCustomDateTo] = useState("");
 
-  const todayStr = new Date().toISOString().split("T")[0]; const EMPTY_DEL = { id:"", customer:"", address:"", phone:"", items:[{qty:1,name:""}], delivery_window:"", assigned_to:1, status:"Scheduled", notes:"", floor:"1", elevator:false, removal_requested:false, transfer_scheduled:false, route_notes:"", stop_order:deliveries.length+1, delivery_date:todayStr, ticket_number:"", helper_id:0 };
+  const todayStr = new Date().toISOString().split("T")[0]; const EMPTY_DEL = { id:"", customer:"", address:"", phone:"", items:[{qty:1,name:""}], delivery_window:"", assigned_to:1, status:"Scheduled", notes:"", floor:"1", elevator:false, removal_requested:false, transfer_scheduled:false, route_notes:"", stop_order:(deliveries.filter(d=>d.delivery_date===todayStr).length)+1, delivery_date:todayStr, ticket_number:"", helper_id:0 };
 
   // Load data
   useEffect(()=>{
@@ -2121,6 +2122,7 @@ export default function App() {
             {key:"liability",label:"Liability",icon:"📝"},
             {key:"sms-setup",label:"SMS Setup",icon:"📱"},
             {key:"sms-replies",label:"Replies",icon:"💬"},
+            {key:"weekly-report",label:"Weekly",icon:"📊"},
           ].map(t=>(
             <button key={t.key} className="btn" onClick={()=>setTab(t.key)}
               style={{padding:"12px 13px",fontSize:12,fontWeight:500,whiteSpace:"nowrap",color:tab===t.key?"#60a5fa":"#64748b",borderBottom:tab===t.key?"2px solid #3b82f6":"2px solid transparent",background:"none",borderRadius:0}}>
@@ -2360,7 +2362,7 @@ export default function App() {
                 }} style={{background:"#1c1500",color:"#f59e0b",padding:"7px 13px",fontSize:12,fontWeight:600}}>
                   🔄 New Day Reset
                 </button>
-                <button className="btn" onClick={()=>setEditingDelivery({id:"",customer:"",address:"",phone:"",items:[{qty:1,name:""}],delivery_window:"",assigned_to:1,status:"Scheduled",notes:"",floor:"1",elevator:false,removal_requested:false,transfer_scheduled:false,route_notes:"",stop_order:deliveries.length+1,delivery_date:new Date().toISOString().split("T")[0],ticket_number:"",helper_id:0})} style={{background:"linear-gradient(135deg,#2563eb,#1d4ed8)",color:"#fff",padding:"7px 15px",fontSize:13}}>➕ Add Delivery</button>
+                <button className="btn" onClick={()=>setEditingDelivery({id:"",customer:"",address:"",phone:"",items:[{qty:1,name:""}],delivery_window:"",assigned_to:1,status:"Scheduled",notes:"",floor:"1",elevator:false,removal_requested:false,transfer_scheduled:false,route_notes:"",stop_order:(deliveries.filter(d=>d.delivery_date===new Date().toISOString().split("T")[0]).length)+1,delivery_date:new Date().toISOString().split("T")[0],ticket_number:"",helper_id:0})} style={{background:"linear-gradient(135deg,#2563eb,#1d4ed8)",color:"#fff",padding:"7px 15px",fontSize:13}}>➕ Add Delivery</button>
               </div>
             </div>
             {editingDelivery&&(
@@ -2374,10 +2376,22 @@ export default function App() {
                 <div style={{marginBottom:9}}>
                   <div style={{fontSize:10,color:"#475569",marginBottom:5}}>Items</div>
                   {(editingDelivery.items||[{qty:1,name:""}]).map((item,idx)=>(
-                    <div key={idx} style={{display:"flex",gap:6,marginBottom:6}}>
-                      <input type="number" min="1" value={item.qty} onChange={e=>{const items=[...(editingDelivery.items||[])];items[idx]={...items[idx],qty:Number(e.target.value)};setEditingDelivery(p=>({...p,items}));}} style={{...C.inp,width:60,textAlign:"center"}}/>
-                      <input value={item.name} onChange={e=>{const items=[...(editingDelivery.items||[])];items[idx]={...items[idx],name:e.target.value};setEditingDelivery(p=>({...p,items}));}} placeholder="Item name" style={{...C.inp,flex:1}}/>
-                      {(editingDelivery.items||[]).length>1&&<button className="btn" onClick={()=>setEditingDelivery(p=>({...p,items:p.items.filter((_,i)=>i!==idx)}))} style={{background:"#2d0a0a",color:"#f87171",padding:"7px 9px",fontSize:12}}>✕</button>}
+                    <div key={idx} style={{background:"#0a1628",borderRadius:8,padding:"10px 12px",marginBottom:8,border:"1px solid #1e2d3d"}}>
+                      <div style={{display:"flex",gap:6,marginBottom:6}}>
+                        <input type="number" min="1" value={item.qty} onChange={e=>{const items=[...(editingDelivery.items||[])];items[idx]={...items[idx],qty:Number(e.target.value)};setEditingDelivery(p=>({...p,items}));}} style={{...C.inp,width:60,textAlign:"center"}}/>
+                        <input value={item.name} onChange={e=>{const items=[...(editingDelivery.items||[])];items[idx]={...items[idx],name:e.target.value};setEditingDelivery(p=>({...p,items}));}} placeholder="Item name" style={{...C.inp,flex:1}}/>
+                        {(editingDelivery.items||[]).length>1&&<button className="btn" onClick={()=>setEditingDelivery(p=>({...p,items:p.items.filter((_,i)=>i!==idx)}))} style={{background:"#2d0a0a",color:"#f87171",padding:"7px 9px",fontSize:12}}>✕</button>}
+                      </div>
+                      <div style={{display:"flex",gap:6}}>
+                        <div style={{flex:1}}>
+                          <div style={{fontSize:10,color:"#475569",marginBottom:2}}>Manufacturer</div>
+                          <input value={item.manufacturer||""} onChange={e=>{const items=[...(editingDelivery.items||[])];items[idx]={...items[idx],manufacturer:e.target.value};setEditingDelivery(p=>({...p,items}));}} placeholder="e.g. Serta" style={{...C.inp,fontSize:12}}/>
+                        </div>
+                        <div style={{flex:1}}>
+                          <div style={{fontSize:10,color:"#475569",marginBottom:2}}>Piece #</div>
+                          <input value={item.piece_number||""} onChange={e=>{const items=[...(editingDelivery.items||[])];items[idx]={...items[idx],piece_number:e.target.value};setEditingDelivery(p=>({...p,items}));}} placeholder="e.g. 500833819-7550" style={{...C.inp,fontSize:12}}/>
+                        </div>
+                      </div>
                     </div>
                   ))}
                   <button className="btn" onClick={()=>setEditingDelivery(p=>({...p,items:[...(p.items||[]),{qty:1,name:""}]}))} style={{background:"#1e2d3d",color:"#60a5fa",padding:"5px 11px",fontSize:11}}>➕ Add Item</button>
@@ -3792,6 +3806,211 @@ Deliveries: ${JSON.stringify(delSummary)}`}]
             )}
           </div>
         )}
+
+        {/* WEEKLY REPORT */}
+        {tab==="weekly-report"&&(()=>{
+          // Calculate week range
+          const weekStart = new Date(reportWeek+"T12:00:00");
+          const weekEnd = new Date(weekStart);
+          weekEnd.setDate(weekEnd.getDate()+6);
+          const weekDays = Array.from({length:7},(_,i)=>{const d=new Date(weekStart);d.setDate(d.getDate()+i);return d.toISOString().split("T")[0];});
+
+          // Filter deliveries for this week
+          const weekDels = deliveries.filter(d=>weekDays.includes(d.delivery_date||""));
+          const delivered = weekDels.filter(d=>d.status==="Delivered");
+          const pending = weekDels.filter(d=>d.status!=="Delivered"&&d.status!=="Transfer");
+          const transfers = weekDels.filter(d=>d.status==="Transfer");
+
+          // Per driver stats
+          const driverStats = employees.filter(e=>!e.is_manager).map(emp=>{
+            const empDels = delivered.filter(d=>d.assigned_to===emp.id);
+            const totalMins = empDels.reduce((acc,d)=>{
+              if(d.driver_time_in&&d.driver_time_out){
+                const [ih,im]=d.driver_time_in.split(":").map(Number);
+                const [oh,om]=d.driver_time_out.split(":").map(Number);
+                return acc+((oh*60+om)-(ih*60+im));
+              }
+              return acc;
+            },0);
+            const haulOffs = empDels.reduce((acc,d)=>acc+(d.haul_off_count||0),0);
+            return {emp, count:empDels.length, minutes:totalMins, haulOffs, deliveries:empDels};
+          }).filter(s=>s.count>0);
+
+          // All warranty photos this week
+          const warrantyPhotos = delivered.filter(d=>d.warranty_photos&&Object.keys(d.warranty_photos).length>0);
+
+          // Items delivered summary
+          const itemsSummary = {};
+          delivered.forEach(d=>(d.items||[]).forEach(item=>{
+            const k=item.name||"Unknown";
+            if(!itemsSummary[k]) itemsSummary[k]=0;
+            itemsSummary[k]+=item.qty||1;
+          }));
+
+          return(
+            <div className="fade">
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,flexWrap:"wrap",gap:8}}>
+                <div>
+                  <div style={{fontWeight:700,fontSize:15,color:"#f1f5f9"}}>📊 Weekly Report</div>
+                  <div style={{fontSize:12,color:"#475569",marginTop:2}}>
+                    {weekStart.toLocaleDateString("en-US",{month:"short",day:"numeric"})} — {weekEnd.toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}
+                  </div>
+                </div>
+                <div style={{display:"flex",gap:7,alignItems:"center",flexWrap:"wrap"}}>
+                  <input type="date" value={reportWeek} onChange={e=>setReportWeek(e.target.value)} style={{...C.inp,width:"auto",colorScheme:"dark",fontSize:12}}/>
+                  <button className="btn" onClick={()=>{
+                    // Build printable report
+                    const driverRows = driverStats.map(s=>`<tr><td>${s.emp.name}</td><td>${s.count}</td><td>${s.minutes>0?Math.floor(s.minutes/60)+"h "+s.minutes%60+"m":"—"}</td><td>${s.haulOffs}</td></tr>`).join("");
+                    const itemRows = Object.entries(itemsSummary).sort((a,b)=>b[1]-a[1]).map(([name,qty])=>`<tr><td>${name}</td><td>${qty}</td></tr>`).join("");
+                    const dayRows = weekDays.map(day=>{
+                      const dayDels = delivered.filter(d=>d.delivery_date===day);
+                      return dayDels.length>0?`<tr><td>${new Date(day+"T12:00:00").toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"})}</td><td>${dayDels.length}</td><td>${dayDels.map(d=>d.customer).join(", ")}</td></tr>`:"";
+                    }).join("");
+                    const html=`<!DOCTYPE html><html><head><title>Weekly Report — America's Mattress</title>
+                    <style>body{font-family:Arial,sans-serif;max-width:800px;margin:30px auto;padding:20px;color:#111}
+                    h1{font-size:22px}h2{font-size:15px;color:#333;margin-top:24px;border-bottom:1px solid #ddd;padding-bottom:4px}
+                    table{width:100%;border-collapse:collapse;margin-top:10px}td,th{padding:8px;border:1px solid #ddd;font-size:13px}
+                    th{background:#f5f5f5}.stat{display:inline-block;margin-right:20px;font-size:18px;font-weight:700}
+                    .statlabel{font-size:11px;color:#666;display:block}</style></head><body>
+                    <h1>🛏 America's Mattress — Weekly Delivery Report</h1>
+                    <p>${weekStart.toLocaleDateString("en-US",{month:"long",day:"numeric"})} – ${weekEnd.toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric"})}</p>
+                    <div style="background:#f9f9f9;padding:16px;border-radius:8px;margin:16px 0">
+                      <span class="stat">${delivered.length}<span class="statlabel">Delivered</span></span>
+                      <span class="stat">${pending.length}<span class="statlabel">Pending</span></span>
+                      <span class="stat">${transfers.length}<span class="statlabel">Transfers</span></span>
+                      <span class="stat">${weekDels.reduce((a,d)=>a+(d.haul_off_count||0),0)}<span class="statlabel">Haul Offs</span></span>
+                    </div>
+                    <h2>Driver Performance</h2>
+                    <table><tr><th>Driver</th><th>Deliveries</th><th>Total Time</th><th>Haul Offs</th></tr>${driverRows}</table>
+                    <h2>Daily Breakdown</h2>
+                    <table><tr><th>Day</th><th>Count</th><th>Customers</th></tr>${dayRows}</table>
+                    <h2>Items Delivered</h2>
+                    <table><tr><th>Item</th><th>Qty</th></tr>${itemRows}</table>
+                    ${warrantyPhotos.length>0?`<h2>Warranty Inspections (${warrantyPhotos.length})</h2><p>${warrantyPhotos.map(d=>d.customer+" — "+d.ticket_number).join(", ")}</p>`:""}
+                    <p style="font-size:10px;color:#999;margin-top:30px">Generated ${new Date().toLocaleString()} · America's Mattress Albuquerque</p>
+                    </body></html>`;
+                    const w=window.open("","_blank");w.document.write(html);w.document.close();w.print();
+                  }} style={{background:"linear-gradient(135deg,#7c3aed,#4f46e5)",color:"#fff",padding:"7px 14px",fontSize:12,fontWeight:600}}>
+                    📄 Print / Save Report
+                  </button>
+                </div>
+              </div>
+
+              {/* Summary stats */}
+              <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:9,marginBottom:14}}>
+                {[
+                  {l:"Delivered",v:delivered.length,c:"#22c55e",i:"✅"},
+                  {l:"Pending",v:pending.length,c:"#f59e0b",i:"⏳"},
+                  {l:"Transfers",v:transfers.length,c:"#60a5fa",i:"📦"},
+                  {l:"Haul Offs",v:weekDels.reduce((a,d)=>a+(d.haul_off_count||0),0),c:"#a78bfa",i:"♻️"},
+                ].map(s=>(
+                  <div key={s.l} style={{...C.card,padding:"12px 10px",textAlign:"center"}}>
+                    <div style={{fontSize:18,marginBottom:3}}>{s.i}</div>
+                    <div style={{fontSize:22,fontWeight:700,color:s.c,fontFamily:"monospace"}}>{s.v}</div>
+                    <div style={{fontSize:10,color:"#475569",marginTop:2}}>{s.l}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Driver performance */}
+              {driverStats.length>0&&(
+                <div style={{...C.card,overflow:"hidden",marginBottom:14}}>
+                  <div style={{padding:"10px 16px",background:"#0a1628",fontSize:11,fontWeight:700,letterSpacing:".08em",color:"#f1f5f9",textTransform:"uppercase"}}>🚛 Driver Performance</div>
+                  {driverStats.map((s,i)=>(
+                    <div key={s.emp.id} style={{padding:"12px 16px",borderTop:i>0?"1px solid #131f2e":"none"}}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6,flexWrap:"wrap",gap:6}}>
+                        <div style={{display:"flex",alignItems:"center",gap:9}}>
+                          <div style={{width:30,height:30,borderRadius:"50%",background:"#1e3a5f",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,color:"#60a5fa"}}>{s.emp.avatar}</div>
+                          <div style={{fontWeight:600,fontSize:13,color:"#f1f5f9"}}>{s.emp.name}</div>
+                        </div>
+                        <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+                          <span style={{fontSize:12,color:"#22c55e",fontWeight:700}}>{s.count} deliveries</span>
+                          {s.minutes>0&&<span style={{fontSize:12,color:"#60a5fa"}}>{Math.floor(s.minutes/60)}h {s.minutes%60}m total</span>}
+                          {s.haulOffs>0&&<span style={{fontSize:12,color:"#a78bfa"}}>{s.haulOffs} haul offs</span>}
+                        </div>
+                      </div>
+                      <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+                        {s.deliveries.map(d=>(
+                          <span key={d.id} style={{fontSize:10,background:"#0a1628",color:"#94a3b8",borderRadius:4,padding:"2px 7px"}}>{d.customer.split(" ")[1]||d.customer}</span>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Daily breakdown */}
+              <div style={{...C.card,overflow:"hidden",marginBottom:14}}>
+                <div style={{padding:"10px 16px",background:"#0a1628",fontSize:11,fontWeight:700,letterSpacing:".08em",color:"#475569",textTransform:"uppercase"}}>📅 Daily Breakdown</div>
+                {weekDays.map((day,i)=>{
+                  const dayDels=delivered.filter(d=>d.delivery_date===day);
+                  const dayLabel=new Date(day+"T12:00:00").toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"});
+                  return(
+                    <div key={day} style={{padding:"10px 16px",borderTop:i>0?"1px solid #131f2e":"none",display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+                      <div style={{fontSize:12,color:"#64748b",width:90,flexShrink:0}}>{dayLabel}</div>
+                      <div style={{flex:1}}>
+                        {dayDels.length===0?(
+                          <span style={{fontSize:11,color:"#334155"}}>No deliveries</span>
+                        ):(
+                          <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+                            {dayDels.map(d=>(
+                              <span key={d.id} style={{fontSize:11,background:"#052e16",color:"#4ade80",borderRadius:4,padding:"2px 7px"}}>{d.customer.split(" ")[0]} {d.customer.split(" ")[1]?.[0]||""}</span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      {dayDels.length>0&&<span style={{fontSize:12,fontWeight:700,color:"#22c55e",flexShrink:0}}>{dayDels.length}</span>}
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Items summary */}
+              {Object.keys(itemsSummary).length>0&&(
+                <div style={{...C.card,overflow:"hidden",marginBottom:14}}>
+                  <div style={{padding:"10px 16px",background:"#0a1628",fontSize:11,fontWeight:700,letterSpacing:".08em",color:"#475569",textTransform:"uppercase"}}>📦 Items Delivered This Week</div>
+                  {Object.entries(itemsSummary).sort((a,b)=>b[1]-a[1]).map(([name,qty],i)=>(
+                    <div key={name} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 16px",borderTop:i>0?"1px solid #131f2e":"none"}}>
+                      <span style={{fontSize:13,color:"#e2e8f0"}}>{name}</span>
+                      <span style={{fontSize:13,fontWeight:700,color:"#60a5fa",background:"#0c2340",borderRadius:6,padding:"3px 10px"}}>{qty}x</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Warranty photos */}
+              {warrantyPhotos.length>0&&(
+                <div style={{...C.card,overflow:"hidden"}}>
+                  <div style={{padding:"10px 16px",background:"#0a1628",fontSize:11,fontWeight:700,letterSpacing:".08em",color:"#f59e0b",textTransform:"uppercase"}}>🔍 Warranty Inspections ({warrantyPhotos.length})</div>
+                  {warrantyPhotos.map((d,i)=>{
+                    const photos = d.warranty_photos||{};
+                    const STEPS = ["flat","angle","closeup","foundation","frame","lawtag"];
+                    return(
+                      <div key={d.id} style={{padding:"12px 16px",borderTop:i>0?"1px solid #131f2e":"none"}}>
+                        <div style={{fontWeight:600,fontSize:13,color:"#f1f5f9",marginBottom:4}}>{d.customer} — #{d.ticket_number}</div>
+                        <div style={{fontSize:11,color:"#475569",marginBottom:8}}>{d.address} · {d.delivery_date}</div>
+                        <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                          {STEPS.map(step=>photos[step]?(
+                            <a key={step} href={photos[step]} target="_blank" rel="noreferrer">
+                              <img src={photos[step]} alt={step} style={{width:70,height:70,objectFit:"cover",borderRadius:6,border:"1px solid #1e2d3d"}}/>
+                            </a>
+                          ):null)}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {weekDels.length===0&&(
+                <div style={{...C.card,padding:40,textAlign:"center",color:"#475569"}}>
+                  <div style={{fontSize:32,marginBottom:8}}>📊</div>
+                  <div>No deliveries found for this week. Use the date picker to select a different week.</div>
+                </div>
+              )}
+            </div>
+          );
+        })()}
 
         {/* TEMPLATES */}
         {tab==="basetasks"&&(
