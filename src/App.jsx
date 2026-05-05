@@ -243,9 +243,19 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
   const today = todayDayName();
   const isDriver = user.role.toLowerCase().includes("driver");
   const todayISOd = new Date().toISOString().split("T")[0];
+  const [showPastDels, setShowPastDels] = useState(false);
 
-  const myDeliveries = [...deliveries.filter(d=>d.assigned_to===user.id||d.helper_id===user.id)].sort((a,b)=>(a.stop_order||0)-(b.stop_order||0));
-  const otherDeliveries = [...deliveries.filter(d=>d.assigned_to!==user.id&&d.helper_id!==user.id&&(d.delivery_date||todayISOd)===todayISOd)].sort((a,b)=>(a.stop_order||0)-(b.stop_order||0));
+  const myDeliveries = [...deliveries.filter(d=>{
+    const isMine = d.assigned_to===user.id||d.helper_id===user.id;
+    if(!isMine) return false;
+    if(showPastDels) return true;
+    return (d.delivery_date||todayISOd)===todayISOd;
+  })].sort((a,b)=>(a.stop_order||0)-(b.stop_order||0));
+  const otherDeliveries = [...deliveries.filter(d=>{
+    const isMine = d.assigned_to===user.id||d.helper_id===user.id;
+    if(isMine) return false;
+    return (d.delivery_date||todayISOd)===todayISOd;
+  })].sort((a,b)=>(a.stop_order||0)-(b.stop_order||0));
 
   const myTasks = [
     ...(isEs ? baseTasks.es : baseTasks.en).filter(t=>t.days.includes(today)||t.days.includes("All")),
@@ -772,7 +782,15 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
                 )}
               </div>
             )}
-            {myDeliveries.length>0&&<div style={{fontSize:11,color:"#22c55e",fontWeight:700,letterSpacing:".07em",textTransform:"uppercase",marginBottom:8}}>✅ {isEs?"Mis Entregas":"My Deliveries"} ({myDeliveries.length})</div>}
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,flexWrap:"wrap",gap:6}}>
+              <div style={{fontSize:11,color:"#22c55e",fontWeight:700,letterSpacing:".07em",textTransform:"uppercase"}}>
+                ✅ {isEs?"Mis Entregas":"My Deliveries"} ({myDeliveries.length})
+              </div>
+              <button className="btn" onClick={()=>setShowPastDels(p=>!p)}
+                style={{background:showPastDels?"#1c1500":"#1e2d3d",color:showPastDels?"#f59e0b":"#64748b",padding:"4px 10px",fontSize:11}}>
+                {showPastDels?"📅 Showing All — Tap for Today":"🕐 Show Past Deliveries"}
+              </button>
+            </div>
             {myDeliveries.map(d=>renderDeliveryCard(d,true))}
             {otherDeliveries.length>0&&(
               <div style={{marginTop:16}}>
@@ -2326,7 +2344,24 @@ export default function App() {
                   </span>
                 ))}
               </div>
-              <button className="btn" onClick={()=>setEditingDelivery({id:"",customer:"",address:"",phone:"",items:[{qty:1,name:""}],delivery_window:"",assigned_to:1,status:"Scheduled",notes:"",floor:"1",elevator:false,removal_requested:false,transfer_scheduled:false,route_notes:"",stop_order:deliveries.length+1,delivery_date:new Date().toISOString().split("T")[0],ticket_number:"",helper_id:0})} style={{background:"linear-gradient(135deg,#2563eb,#1d4ed8)",color:"#fff",padding:"7px 15px",fontSize:13}}>➕ Add Delivery</button>
+              <div style={{display:"flex",gap:7,flexWrap:"wrap"}}>
+                <button className="btn" onClick={async()=>{
+                  if(!window.confirm("Reset all stop numbers to start from 1? Do this at the start of each new day.")) return;
+                  const today = new Date().toISOString().split("T")[0];
+                  const todayDels = deliveries.filter(d=>(d.delivery_date||today)===today).sort((a,b)=>(a.stop_order||0)-(b.stop_order||0));
+                  let stop = 1;
+                  for(const d of todayDels){
+                    await sb.from("deliveries").update({stop_order:stop}).eq("id",d.id);
+                    stop++;
+                  }
+                  const {data} = await sb.from("deliveries").select("*");
+                  if(data) setDeliveries(data);
+                  alert("✅ Stop numbers reset to 1-"+todayDels.length+" for today!");
+                }} style={{background:"#1c1500",color:"#f59e0b",padding:"7px 13px",fontSize:12,fontWeight:600}}>
+                  🔄 New Day Reset
+                </button>
+                <button className="btn" onClick={()=>setEditingDelivery({id:"",customer:"",address:"",phone:"",items:[{qty:1,name:""}],delivery_window:"",assigned_to:1,status:"Scheduled",notes:"",floor:"1",elevator:false,removal_requested:false,transfer_scheduled:false,route_notes:"",stop_order:deliveries.length+1,delivery_date:new Date().toISOString().split("T")[0],ticket_number:"",helper_id:0})} style={{background:"linear-gradient(135deg,#2563eb,#1d4ed8)",color:"#fff",padding:"7px 15px",fontSize:13}}>➕ Add Delivery</button>
+              </div>
             </div>
             {editingDelivery&&(
               <div style={{...C.card,padding:"16px 18px",marginBottom:14,borderColor:"#3b82f6"}}>
@@ -3352,45 +3387,62 @@ Deliveries: ${JSON.stringify(delSummary)}`}]
                 <div style={{fontWeight:700,fontSize:15,color:"#f1f5f9"}}>✍️ Customer Signatures</div>
                 <div style={{fontSize:12,color:"#475569",marginTop:2}}>Stored permanently — {signatures.length} total</div>
               </div>
+              <button className="btn" onClick={async()=>{
+                const r=await sb.from("signatures").select("*").order("signed_at",{ascending:false});
+                if(r.data) setSignatures(r.data);
+              }} style={{background:"#1e2d3d",color:"#60a5fa",padding:"6px 12px",fontSize:12}}>🔄 Refresh</button>
             </div>
             <input value={sigSearch} onChange={e=>setSigSearch(e.target.value)}
               placeholder="Search by customer name, ticket #, or date..."
               style={{...C.inp,marginBottom:14,fontSize:14}}/>
-            {signatures.filter(s=>{
-              if(!sigSearch.trim()) return true;
-              const q=sigSearch.toLowerCase();
-              return (s.customer||"").toLowerCase().includes(q)||(s.ticket_number||"").toLowerCase().includes(q)||(s.delivery_date||"").includes(q)||(s.signed_by||"").toLowerCase().includes(q);
-            }).length===0?(
-              <div style={{...C.card,padding:40,textAlign:"center",color:"#475569"}}>
-                <div style={{fontSize:32,marginBottom:8}}>✍️</div>
-                <div>{sigSearch?"No results found.":"No signatures yet. Drivers collect signatures when marking deliveries complete."}</div>
-              </div>
-            ):(
-              <div style={{display:"flex",flexDirection:"column",gap:10}}>
-                {signatures.filter(s=>{
-                  if(!sigSearch.trim()) return true;
-                  const q=sigSearch.toLowerCase();
-                  return (s.customer||"").toLowerCase().includes(q)||(s.ticket_number||"").toLowerCase().includes(q)||(s.delivery_date||"").includes(q)||(s.signed_by||"").toLowerCase().includes(q);
-                }).map(sig=>(
-                  <div key={sig.id} style={{...C.card,padding:"14px 16px"}}>
-                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8,flexWrap:"wrap",gap:6}}>
-                      <div>
-                        <div style={{fontWeight:700,fontSize:14,color:"#f1f5f9"}}>{sig.customer}</div>
-                        <div style={{fontSize:11,color:"#64748b"}}>{sig.address}</div>
-                        <div style={{display:"flex",gap:8,marginTop:4,flexWrap:"wrap"}}>
-                          {sig.ticket_number&&<span style={{fontSize:11,background:"#1e3a5f",color:"#60a5fa",borderRadius:4,padding:"2px 7px"}}>#{sig.ticket_number}</span>}
-                          <span style={{fontSize:11,color:"#475569"}}>{sig.driver_name}</span>
-                          <span style={{fontSize:11,color:"#475569"}}>{sig.delivery_date}</span>
-                          <span style={{fontSize:11,color:"#22c55e"}}>{new Date(sig.signed_at).toLocaleString()}</span>
+            {(()=>{
+              const filtered = signatures.filter(s=>{
+                if(!sigSearch.trim()) return true;
+                const q=sigSearch.toLowerCase();
+                return (s.customer||"").toLowerCase().includes(q)||(s.ticket_number||"").toLowerCase().includes(q)||(s.delivery_date||"").includes(q)||(s.signed_by||"").toLowerCase().includes(q)||(s.driver_name||"").toLowerCase().includes(q);
+              });
+              if(filtered.length===0) return(
+                <div style={{...C.card,padding:40,textAlign:"center",color:"#475569"}}>
+                  <div style={{fontSize:32,marginBottom:8}}>✍️</div>
+                  <div>{sigSearch?"No results found.":"No signatures yet."}</div>
+                </div>
+              );
+              return(
+                <div style={{display:"flex",flexDirection:"column",gap:10}}>
+                  {filtered.map(sig=>(
+                    <div key={sig.id} style={{...C.card,padding:"14px 16px"}}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8,flexWrap:"wrap",gap:6}}>
+                        <div style={{flex:1}}>
+                          <div style={{fontWeight:700,fontSize:14,color:"#f1f5f9"}}>{sig.customer}</div>
+                          <div style={{fontSize:11,color:"#64748b",marginBottom:4}}>{sig.address}</div>
+                          <div style={{display:"flex",gap:7,flexWrap:"wrap",marginBottom:6}}>
+                            {sig.ticket_number&&<span style={{fontSize:11,background:"#1e3a5f",color:"#60a5fa",borderRadius:4,padding:"2px 7px"}}>#{sig.ticket_number}</span>}
+                            {sig.driver_name&&<span style={{fontSize:11,background:"#1e2d3d",color:"#94a3b8",borderRadius:4,padding:"2px 7px"}}>🚛 {sig.driver_name}</span>}
+                            {sig.delivery_date&&<span style={{fontSize:11,color:"#475569"}}>{sig.delivery_date}</span>}
+                            <span style={{fontSize:11,color:"#22c55e"}}>{new Date(sig.signed_at).toLocaleString()}</span>
+                          </div>
+                          {sig.signed_by&&<div style={{fontSize:11,color:"#a78bfa",marginBottom:6}}>✍️ Signed by: {sig.signed_by}</div>}
+                          {(sig.items||[]).length>0&&(
+                            <div style={{background:"#0a1628",borderRadius:7,padding:"7px 10px",marginBottom:6}}>
+                              <div style={{fontSize:10,color:"#475569",marginBottom:4,textTransform:"uppercase",letterSpacing:".06em"}}>Items Delivered</div>
+                              {(sig.items||[]).map((item,ii)=>(
+                                <div key={ii} style={{display:"flex",alignItems:"center",gap:6,marginBottom:3}}>
+                                  <span style={{fontSize:11,background:"#1e2d3d",color:"#60a5fa",borderRadius:4,padding:"1px 5px",fontWeight:700}}>{item.qty}x</span>
+                                  <span style={{fontSize:12,color:"#e2e8f0"}}>{item.name}</span>
+                                  {item.manufacturer&&<span style={{fontSize:10,color:"#475569"}}>{item.manufacturer}</span>}
+                                </div>
+                              ))}
+                            </div>
+                          )}
                         </div>
+                        <span style={{fontSize:11,background:"#052e16",color:"#4ade80",borderRadius:6,padding:"3px 9px",fontWeight:600,flexShrink:0}}>✅ Signed</span>
                       </div>
-                      <span style={{fontSize:11,background:"#052e16",color:"#4ade80",borderRadius:6,padding:"3px 9px",fontWeight:600}}>✅ Signed</span>
+                      {sig.signature_url&&<img src={sig.signature_url} alt="signature" style={{maxWidth:"100%",height:80,objectFit:"contain",background:"#fff",borderRadius:8,padding:8,display:"block"}}/>}
                     </div>
-                    {sig.signature_url&&<img src={sig.signature_url} alt="signature" style={{maxWidth:300,height:80,objectFit:"contain",background:"#fff",borderRadius:8,padding:8,display:"block"}}/>}
-                  </div>
-                ))}
-              </div>
-            )}
+                  ))}
+                </div>
+              );
+            })()}
           </div>
         )}
 
