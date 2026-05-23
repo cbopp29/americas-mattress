@@ -3038,7 +3038,8 @@ export default function App() {
               );
             })}
           </div>
-        )}
+        );}
+        })()}
 
         {/* MANAGER PREP */}
         {tab==="mgr-prep"&&(()=>{
