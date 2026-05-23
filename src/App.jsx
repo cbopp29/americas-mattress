@@ -1781,6 +1781,7 @@ export default function App() {
   const [mgrSchedDay, setMgrSchedDay] = useState(null);
   const [csvText, setCsvText] = useState("");
   const [pdfImporting, setPdfImporting] = useState(false);
+  const [pdfRoute, setPdfRoute] = useState(1);
   const [pdfResult, setPdfResult] = useState(null);
   const [signatures, setSignatures] = useState([]);
   const [trainings, setTrainings] = useState([]);
@@ -1793,6 +1794,9 @@ export default function App() {
   const [showLiabilityPad, setShowLiabilityPad] = useState(null);
   const [driverMode, setDriverMode] = useState(false);
   const [smsReplies, setSmsReplies] = useState([]);
+  const [probFilter, setProbFilter] = useState("open");
+  const [editingProb, setEditingProb] = useState(null);
+  const [newProb, setNewProb] = useState({customer:"",ticket_number:"",eta:"",description:"",what_to_do:"",type:"customer",status:"Open"});
   const [reportWeek, setReportWeek] = useState(()=>{const d=new Date();d.setDate(d.getDate()-d.getDay());return d.toISOString().split("T")[0];});
   const [offlineQueue, setOfflineQueue] = useState([]);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
@@ -2546,11 +2550,8 @@ export default function App() {
         )}
 
         {/* PROBLEMS */}
-        {tab==="problems"&&(()=>{
-          const [probFilter, setProbFilter] = React.useState("open");
-          const [editingProb, setEditingProb] = React.useState(null);
-          const [newProb, setNewProb] = React.useState({customer:"",ticket_number:"",eta:"",description:"",what_to_do:"",type:"customer",status:"Open"});
-
+        {tab==="problems"&&(
+          <div className="fade">{(()=>{
           const filteredProbs = problems.filter(p=>{
             if(probFilter==="open") return !p.resolved;
             if(probFilter==="done") return p.resolved;
@@ -2560,31 +2561,22 @@ export default function App() {
           const saveNewProblem = async () => {
             if(!newProb.description.trim()) return;
             const p = {
-              id:Date.now(),
-              emp_name:currentUser.name,
-              emp_id:currentUser.id,
-              customer:newProb.customer,
-              ticket_number:newProb.ticket_number,
-              eta:newProb.eta,
-              description:newProb.description,
-              what_to_do:newProb.what_to_do,
-              type:newProb.type,
-              escalation_step:0,
-              time:new Date().toLocaleDateString("en-US"),
-              resolved:false,
-              status:newProb.status||"Open",
+              id:Date.now(),emp_name:currentUser.name,emp_id:currentUser.id,
+              customer:newProb.customer,ticket_number:newProb.ticket_number,
+              eta:newProb.eta,description:newProb.description,
+              what_to_do:newProb.what_to_do,type:newProb.type,
+              escalation_step:0,time:new Date().toLocaleDateString("en-US"),
+              resolved:false,status:newProb.status||"Open",
             };
             await sb.from("problems").insert(p);
             setProblems(prev=>[p,...prev]);
             setNewProb({customer:"",ticket_number:"",eta:"",description:"",what_to_do:"",type:"customer",status:"Open"});
           };
-
           const updateProblem = async (id, updates) => {
             await sb.from("problems").update(updates).eq("id",id);
             setProblems(prev=>prev.map(p=>p.id===id?{...p,...updates}:p));
             setEditingProb(null);
           };
-
           const exportCSV = () => {
             const rows = [["CUSTOMER","TICKET #","ETA","PROBLEM","WHAT NEEDS TO BE DONE?","STATUS","DATE","REPORTED BY","TYPE"]];
             problems.forEach(p=>{
@@ -2734,7 +2726,8 @@ export default function App() {
             )}
           </div>
           );
-        })()}
+          })()}</div>
+        )}
 
         {/* SMS */}
         {tab==="comms"&&(
@@ -3141,8 +3134,156 @@ export default function App() {
         {/* IMPORT */}
         {tab==="import"&&(
           <div className="fade">
-            <div style={{fontWeight:700,fontSize:15,color:"#f1f5f9",marginBottom:4}}>📥 Add Deliveries</div>
-            <div style={{fontSize:12,color:"#475569",marginBottom:14}}>Quickly add multiple deliveries for today. Fill in each field and click Add to queue, then Import All when ready.</div>
+            <div style={{fontWeight:700,fontSize:15,color:"#f1f5f9",marginBottom:4}}>📥 Daily Route Import</div>
+            <div style={{fontSize:12,color:"#475569",marginBottom:14}}>Upload your EZ Process Pro PDF to import all deliveries at once, or add manually below.</div>
+
+            {/* PDF Upload - uses your Anthropic API key stored in Netlify */}
+            <div style={{...C.card,padding:"16px 18px",marginBottom:14,borderColor:"#1e3a5f"}}>
+              <div style={{fontWeight:700,fontSize:13,color:"#60a5fa",marginBottom:4}}>📄 Upload Route PDF — Import All At Once</div>
+              <div style={{fontSize:12,color:"#475569",marginBottom:10}}>Upload your daily delivery receipt PDF. AI reads all deliveries including items, manufacturer, piece#, instructions, and flags pickups/transfers automatically.</div>
+              
+              {/* Route selector */}
+              <div style={{marginBottom:10}}>
+                <div style={{fontSize:11,color:"#475569",marginBottom:5}}>Assign to Route:</div>
+                <div style={{display:"flex",gap:8}}>
+                  {[1,2].map(r=>(
+                    <button key={r} className="btn" onClick={()=>setPdfRoute(r)}
+                      style={{flex:1,background:pdfRoute===r?"linear-gradient(135deg,#2563eb,#1d4ed8)":"#1e2d3d",color:pdfRoute===r?"#fff":"#94a3b8",padding:"8px",fontSize:13,fontWeight:600}}>
+                      🚛 Route {r}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <input type="file" accept=".pdf" onChange={async(e)=>{
+                const file=e.target.files[0];
+                if(!file) return;
+                setPdfImporting(true);
+                setPdfResult(null);
+                const reader=new FileReader();
+                reader.onload=async(ev)=>{
+                  try {
+                    const base64=ev.target.result.split(",")[1];
+                    const res=await fetch("/.netlify/functions/ai",{
+                      method:"POST",
+                      headers:{"Content-Type":"application/json"},
+                      body:JSON.stringify({
+                        model:"claude-haiku-4-5",
+                        max_tokens:4000,
+                        messages:[{
+                          role:"user",
+                          content:[
+                            {type:"document",source:{type:"base64",media_type:"application/pdf",data:base64}},
+                            {type:"text",text:"This is an America's Mattress EZ Process Pro delivery receipt PDF with MULTIPLE deliveries (one per page). Extract ALL deliveries. For each one extract: sale_number (Sale Number field), memo_number (Memo # field), customer (First + Last name), address (full street + city + state + zip), phone (Tel.Home), delivery_date (Estimated Date of Delivery as YYYY-MM-DD), delivery_window (Morning/Afternoon/time range from the date field), notes (full Instruction field text), is_transfer (true if memo says PICK UP MEMO or instructions say CPU/pickup/transfer/will pick up/PU), is_haul_off (true if DISPOSALFEE in items), floor (apartment floor number if mentioned in address or instructions), items array (only actual mattresses/bases/protectors/accessories - skip DISPOSALFEE/ABQDELIVERY/RIORANCHODELIVERY/LOSLUNAS etc delivery fee line items), and for each item: qty, name (Item Description), manufacturer (Man# column), piece_number (Piece# column). Return ONLY a valid JSON array, no other text: [{sale_number,memo_number,customer,address,phone,delivery_date,delivery_window,notes,is_transfer,is_haul_off,floor,items:[{qty,name,manufacturer,piece_number}]}]"}
+                          ]
+                        }]
+                      })
+                    });
+                    const data=await res.json();
+                    if(data.error){alert("Error: "+data.error.message);setPdfImporting(false);return;}
+                    const txt=data.content.map(b=>b.text||"").join("").trim();
+                    const parsed=JSON.parse(txt.replace(/```json|```/g,"").trim());
+                    setPdfResult(Array.isArray(parsed)?parsed:[parsed]);
+                  } catch(err) {
+                    console.error(err);
+                    alert("Could not read PDF: "+err.message);
+                  }
+                  setPdfImporting(false);
+                  e.target.value="";
+                };
+                reader.readAsDataURL(file);
+              }} style={{...C.inp,padding:"8px",marginBottom:10}}/>
+
+              {pdfImporting&&(
+                <div style={{...C.card,padding:"14px",marginBottom:10,borderColor:"#1e3a5f",textAlign:"center"}}>
+                  <div style={{fontSize:13,color:"#60a5fa",marginBottom:4}}>⏳ Reading PDF — extracting all deliveries...</div>
+                  <div style={{fontSize:11,color:"#475569"}}>This takes 10-20 seconds for large route files</div>
+                </div>
+              )}
+
+              {pdfResult&&Array.isArray(pdfResult)&&(
+                <div>
+                  <div style={{fontSize:13,color:"#22c55e",fontWeight:600,marginBottom:10}}>
+                    ✅ Found {pdfResult.length} deliveries for Route {pdfRoute} — Review then import all
+                  </div>
+                  <div style={{maxHeight:400,overflowY:"auto",display:"flex",flexDirection:"column",gap:8,marginBottom:10}}>
+                    {pdfResult.map((del,di)=>{
+                      const realItems=(del.items||[]).filter(i=>i.name&&!["DISPOSALFEE","ABQDELIVERY","RIORANCHODELIVERY","LOSLUNAS","SANTA_FE","delivery","Delivery"].some(skip=>i.name.includes(skip)));
+                      return(
+                        <div key={di} style={{...C.card,padding:"12px 14px",borderColor:del.is_transfer?"#f59e0b":"#1e3a5f"}}>
+                          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:6,marginBottom:6}}>
+                            <div>
+                              <div style={{fontWeight:700,fontSize:13,color:"#f1f5f9"}}>{del.customer}</div>
+                              <div style={{fontSize:11,color:"#64748b"}}>{del.address} · {del.phone}</div>
+                            </div>
+                            <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+                              {del.sale_number&&<span style={{fontSize:10,background:"#1e3a5f",color:"#60a5fa",borderRadius:4,padding:"2px 6px"}}>#{del.sale_number}</span>}
+                              {del.is_transfer&&<span style={{fontSize:10,background:"#1c1500",color:"#f59e0b",borderRadius:4,padding:"2px 6px"}}>⚠️ Pickup</span>}
+                              {del.is_haul_off&&<span style={{fontSize:10,background:"#1e1038",color:"#c084fc",borderRadius:4,padding:"2px 6px"}}>♻️ Haul Off</span>}
+                              <span style={{fontSize:10,background:"#052e16",color:"#4ade80",borderRadius:4,padding:"2px 6px"}}>{del.delivery_window}</span>
+                            </div>
+                          </div>
+                          {del.notes&&<div style={{fontSize:11,color:"#f59e0b",background:"#1c1500",borderRadius:5,padding:"4px 8px",marginBottom:5}}>📋 {del.notes.substring(0,120)}{del.notes.length>120?"...":""}</div>}
+                          <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+                            {realItems.map((item,ii)=>(
+                              <div key={ii} style={{background:"#0a1628",borderRadius:5,padding:"3px 8px"}}>
+                                <span style={{fontSize:11,color:"#60a5fa",fontWeight:700}}>{item.qty}x</span>
+                                <span style={{fontSize:11,color:"#e2e8f0",marginLeft:4}}>{item.name}</span>
+                                {item.manufacturer&&<span style={{fontSize:10,color:"#475569",marginLeft:4}}>{item.manufacturer}</span>}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div style={{display:"flex",gap:8}}>
+                    <button className="btn" onClick={async()=>{
+                      const today=new Date().toISOString().split("T")[0];
+                      const route1Count=deliveries.filter(d=>d.delivery_date===today&&d.route_number!==2).length;
+                      const route2Count=deliveries.filter(d=>d.delivery_date===today&&d.route_number===2).length;
+                      let stop=pdfRoute===1?route1Count+1:route2Count+1;
+                      const added=[];
+                      for(const del of pdfResult){
+                        const realItems=(del.items||[]).filter(i=>i.name&&!["DISPOSALFEE","ABQDELIVERY","RIORANCHODELIVERY","LOSLUNAS","SANTA_FE"].some(skip=>i.name.toUpperCase().includes(skip.toUpperCase())));
+                        const nid=`D-${String(Date.now()).slice(-6)}-${stop}`;
+                        const isTransfer=!!del.is_transfer;
+                        const newRow={
+                          id:nid,customer:del.customer,address:del.address,phone:del.phone||"",
+                          items:realItems.length>0?realItems:[{qty:1,name:"See notes"}],
+                          delivery_window:del.delivery_window||"Morning",
+                          assigned_to:1,status:isTransfer?"Transfer":"Scheduled",
+                          notes:del.notes||"",
+                          floor:del.floor||"1",
+                          elevator:false,
+                          removal_requested:!!del.is_haul_off,
+                          transfer_scheduled:isTransfer,
+                          route_notes:"",
+                          stop_order:stop,
+                          delivery_date:del.delivery_date||today,
+                          ticket_number:String(del.sale_number||del.memo_number||""),
+                          helper_id:0,
+                          manufacturer:realItems[0]?.manufacturer||"",
+                          piece_number:realItems[0]?.piece_number||"",
+                          route_number:pdfRoute,
+                        };
+                        await sb.from("deliveries").insert(newRow);
+                        added.push(newRow);
+                        stop++;
+                      }
+                      setDeliveries(prev=>[...prev,...added]);
+                      setPdfResult(null);
+                      alert("✅ "+added.length+" deliveries imported to Route "+pdfRoute+"!");
+                    }} style={{flex:1,background:"linear-gradient(135deg,#059669,#047857)",color:"#fff",padding:"11px",fontSize:13,fontWeight:700}}>
+                      ✅ Import All to Route {pdfRoute}
+                    </button>
+                    <button className="btn" onClick={()=>setPdfResult(null)} style={{background:"#1e2d3d",color:"#94a3b8",padding:"11px 14px",fontSize:12}}>Cancel</button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div style={{fontWeight:600,fontSize:13,color:"#f1f5f9",marginBottom:8}}>✏️ Or Add Manually:</div>
 
             {/* Quick add form */}
             <div style={{...C.card,padding:"16px 18px",marginBottom:14,borderColor:"#1e3a5f"}}>
