@@ -587,16 +587,6 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
                   <input type="number" min="0" defaultValue={d.haul_off_count||0} onBlur={e=>updateDeliveryDetail(d.id,"haul_off_count",Number(e.target.value))}
                     style={inputStyle}/>
                 </div>
-                <div>
-                  <div style={{fontSize:10,color:"#475569",marginBottom:3}}>{isEs?"Fabricante":"Manufacturer"}</div>
-                  <input defaultValue={d.manufacturer||""} onBlur={e=>updateDeliveryDetail(d.id,"manufacturer",e.target.value)}
-                    placeholder="e.g. Serta" style={inputStyle}/>
-                </div>
-              </div>
-              <div style={{marginBottom:10}}>
-                <div style={{fontSize:10,color:"#475569",marginBottom:3}}>{isEs?"# de Pieza":"Piece #"}</div>
-                <input defaultValue={d.piece_number||""} onBlur={e=>updateDeliveryDetail(d.id,"piece_number",e.target.value)}
-                  placeholder="e.g. 500943363-1060" style={inputStyle}/>
               </div>
             </div>
 
@@ -604,7 +594,7 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
             <div style={{padding:"12px 16px",borderTop:"1px solid #1e2d3d"}}>
               <div style={{fontSize:11,color:"#475569",textTransform:"uppercase",letterSpacing:".07em",marginBottom:10}}>✅ {isEs?"Lista de Verificación":"Customer Checklist"}</div>
               {(()=>{
-                const checks = d.checklist || {};
+                const checks = (deliveryDetails[d.id]?.checklist) || (d.checklist) || {};
                 const questions = [
                   {key:"correct_spot",label:isEs?"¿Cama en el lugar correcto?":"Bed in correct spot?"},
                   {key:"correct_height",label:isEs?"¿Altura correcta?":"Correct height?"},
@@ -612,14 +602,16 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
                   {key:"adjustable_explained",label:isEs?"¿Base ajustable explicada?":"Adjustable base operations explained?"},
                 ];
                 return questions.map(q=>(
-                  <div key={q.key} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"8px 0",borderBottom:"1px solid #131f2e"}}>
-                    <span style={{fontSize:13,color:"#e2e8f0",flex:1}}>{q.label}</span>
-                    <div style={{display:"flex",gap:6}}>
+                  <div key={q.key} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 0",borderBottom:"1px solid #131f2e"}}>
+                    <span style={{fontSize:13,color:"#e2e8f0",flex:1,paddingRight:8}}>{q.label}</span>
+                    <div style={{display:"flex",gap:6,flexShrink:0}}>
                       {["Yes","No","N/A"].map(v=>(
                         <button key={v} className="btn" onClick={async()=>{
                           const newChecks={...checks,[q.key]:v};
-                          await updateDeliveryDetail(d.id,"checklist",newChecks);
-                        }} style={{padding:"5px 10px",fontSize:11,background:checks[q.key]===v?(v==="Yes"?"#052e16":v==="No"?"#2d0a0a":"#1e2d3d"):"#0a1628",color:checks[q.key]===v?(v==="Yes"?"#4ade80":v==="No"?"#f87171":"#94a3b8"):"#475569",border:`1px solid ${checks[q.key]===v?(v==="Yes"?"#22c55e":v==="No"?"#ef4444":"#334155"):"#1e2d3d"}`}}>
+                          setDeliveryDetails(prev=>({...prev,[d.id]:{...(prev[d.id]||{}),checklist:newChecks}}));
+                          setDeliveries(prev=>prev.map(x=>x.id===d.id?{...x,checklist:newChecks}:x));
+                          await sb.from("deliveries").update({checklist:newChecks}).eq("id",d.id);
+                        }} style={{padding:"7px 12px",fontSize:12,fontWeight:600,background:checks[q.key]===v?(v==="Yes"?"#052e16":v==="No"?"#2d0a0a":"#1e2d3d"):"#0a1628",color:checks[q.key]===v?(v==="Yes"?"#4ade80":v==="No"?"#f87171":"#94a3b8"):"#475569",border:`2px solid ${checks[q.key]===v?(v==="Yes"?"#22c55e":v==="No"?"#ef4444":"#334155"):"#1e2d3d"}`}}>
                           {v}
                         </button>
                       ))}
@@ -867,7 +859,11 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
                 ⚠️ {isEs?"Reportar":"Report Problem"}
               </button>
             </div>
-            {problems.filter(p=>p.emp_name===user.name).map(p=>(
+            {problems.filter(p=>p.emp_name===user.name||p.emp_id===user.id).length===0?(
+              <div style={{...cardStyle,padding:24,textAlign:"center",color:"#475569",fontSize:13,marginTop:8}}>
+                {isEs?"No has reportado problemas.":"No problems reported yet."}
+              </div>
+            ):problems.filter(p=>p.emp_name===user.name||p.emp_id===user.id).map(p=>(
               <div key={p.id} style={{...cardStyle,padding:"13px 15px",marginBottom:10,borderColor:p.resolved?"#1e3a20":"#3d1515"}}>
                 <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
                   <span style={{fontSize:12,color:p.type==="customer"?"#60a5fa":"#c084fc"}}>{p.type==="customer"?"👤":"📦"} {p.type}</span>
@@ -1094,7 +1090,7 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
 
         {tab==="inspection"&&(
           <div>
-            <div style={{...cardStyle,padding:14}}>
+            <div style={{...cardStyle,padding:14,marginBottom:12}}>
               <div style={{fontWeight:700,fontSize:14,color:"#f1f5f9",marginBottom:8}}>🔍 {isEs?"Inspección del Camión":"Truck Inspection"}</div>
               <div style={{fontSize:12,color:"#94a3b8",marginBottom:12}}>{isEs?"Sube fotos de la inspección previa al viaje.":"Upload photos of your pre-trip inspection."}</div>
               <DriverInspectionUpload user={user} onUploaded={()=>{}} isEs={isEs}/>
@@ -2399,8 +2395,7 @@ export default function App() {
                 <div className="del-form-3" style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:9,marginBottom:9}}>
                   <div><div style={{fontSize:10,color:"#475569",marginBottom:3}}>Driver</div><select value={editingDelivery.assigned_to||1} onChange={e=>setEditingDelivery(p=>({...p,assigned_to:Number(e.target.value)}))} style={C.sel}>{employees.map(e=><option key={e.id} value={e.id}>{e.name}{e.is_manager?" 👑":""}</option>)}</select></div>
                   <div><div style={{fontSize:10,color:"#475569",marginBottom:3}}>Helper (optional)</div><select value={editingDelivery.helper_id||0} onChange={e=>setEditingDelivery(p=>({...p,helper_id:Number(e.target.value)}))} style={C.sel}><option value={0}>None</option>{employees.map(e=><option key={e.id} value={e.id}>{e.name}{e.is_manager?" 👑":""}</option>)}</select></div>
-                  <div><div style={{fontSize:10,color:"#475569",marginBottom:3}}>Manufacturer</div><input value={editingDelivery.manufacturer||""} onChange={e=>setEditingDelivery(p=>({...p,manufacturer:e.target.value}))} placeholder="e.g. Serta" style={C.inp}/></div>
-                  <div><div style={{fontSize:10,color:"#475569",marginBottom:3}}>Piece #</div><input value={editingDelivery.piece_number||""} onChange={e=>setEditingDelivery(p=>({...p,piece_number:e.target.value}))} placeholder="e.g. 500833819-7550" style={C.inp}/></div>
+
                   <div><div style={{fontSize:10,color:"#475569",marginBottom:3}}>Status</div><select value={editingDelivery.status} onChange={e=>setEditingDelivery(p=>({...p,status:e.target.value}))} style={C.sel}>{Object.keys(STATUS_COLORS).map(s=><option key={s} value={s}>{s}</option>)}</select></div>
                   <div><div style={{fontSize:10,color:"#475569",marginBottom:3}}>Stop #</div><input type="number" value={editingDelivery.stop_order||1} onChange={e=>setEditingDelivery(p=>({...p,stop_order:Number(e.target.value)}))} style={C.inp}/></div>
                 </div>
@@ -2551,67 +2546,195 @@ export default function App() {
         )}
 
         {/* PROBLEMS */}
-        {tab==="problems"&&(
+        {tab==="problems"&&(()=>{
+          const [probFilter, setProbFilter] = React.useState("open");
+          const [editingProb, setEditingProb] = React.useState(null);
+          const [newProb, setNewProb] = React.useState({customer:"",ticket_number:"",eta:"",description:"",what_to_do:"",type:"customer",status:"Open"});
+
+          const filteredProbs = problems.filter(p=>{
+            if(probFilter==="open") return !p.resolved;
+            if(probFilter==="done") return p.resolved;
+            return true;
+          });
+
+          const saveNewProblem = async () => {
+            if(!newProb.description.trim()) return;
+            const p = {
+              id:Date.now(),
+              emp_name:currentUser.name,
+              emp_id:currentUser.id,
+              customer:newProb.customer,
+              ticket_number:newProb.ticket_number,
+              eta:newProb.eta,
+              description:newProb.description,
+              what_to_do:newProb.what_to_do,
+              type:newProb.type,
+              escalation_step:0,
+              time:new Date().toLocaleDateString("en-US"),
+              resolved:false,
+              status:newProb.status||"Open",
+            };
+            await sb.from("problems").insert(p);
+            setProblems(prev=>[p,...prev]);
+            setNewProb({customer:"",ticket_number:"",eta:"",description:"",what_to_do:"",type:"customer",status:"Open"});
+          };
+
+          const updateProblem = async (id, updates) => {
+            await sb.from("problems").update(updates).eq("id",id);
+            setProblems(prev=>prev.map(p=>p.id===id?{...p,...updates}:p));
+            setEditingProb(null);
+          };
+
+          const exportCSV = () => {
+            const rows = [["CUSTOMER","TICKET #","ETA","PROBLEM","WHAT NEEDS TO BE DONE?","STATUS","DATE","REPORTED BY","TYPE"]];
+            problems.forEach(p=>{
+              rows.push([p.customer||"",p.ticket_number||"",p.eta||"",p.description||"",p.what_to_do||"",p.resolved?"done":(p.status||"Open"),p.time||"",p.emp_name||"",p.type||""]);
+            });
+            const csv = rows.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(",")).join("\n");
+            const blob = new Blob([csv],{type:"text/csv"});
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href=url; a.download="problems_"+new Date().toISOString().split("T")[0]+".csv"; a.click();
+          };
+
+          return(
           <div className="fade">
-            <div style={{...C.card,padding:"15px 16px",marginBottom:14}}>
-              <div style={{fontWeight:700,fontSize:14,color:"#f1f5f9",marginBottom:12}}>⚠️ Log a Problem</div>
-              <div className="del-form-grid" style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:9,marginBottom:9}}>
-                <div><div style={{fontSize:10,color:"#475569",marginBottom:3}}>Employee</div><select value={problemInput.empId} onChange={e=>setProblemInput(p=>({...p,empId:e.target.value}))} style={C.sel}><option value="">Select...</option>{employees.map(e=><option key={e.id} value={e.id}>{e.name}</option>)}</select></div>
-                <div><div style={{fontSize:10,color:"#475569",marginBottom:3}}>Type</div><select value={problemInput.type} onChange={e=>setProblemInput(p=>({...p,type:e.target.value}))} style={C.sel}><option value="customer">Customer Issue</option><option value="product">Product / Vendor</option></select></div>
+            {/* Header */}
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12,flexWrap:"wrap",gap:8}}>
+              <div style={{fontWeight:700,fontSize:15,color:"#f1f5f9"}}>⚠️ Problem Log</div>
+              <div style={{display:"flex",gap:7}}>
+                <button className="btn" onClick={exportCSV} style={{background:"#1e2d3d",color:"#60a5fa",padding:"6px 12px",fontSize:11}}>📥 Export CSV</button>
               </div>
-              <textarea value={problemInput.description} onChange={e=>setProblemInput(p=>({...p,description:e.target.value}))} placeholder="Describe the problem..." rows={3} style={{...C.inp,resize:"vertical",marginBottom:9}}/>
-              <button className="btn" onClick={logProblem} style={{background:"linear-gradient(135deg,#dc2626,#b91c1c)",color:"#fff",padding:"8px 17px",fontSize:13}}>⚠️ Log Problem</button>
             </div>
-            <div className="prob-grid" style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}>
-              {Object.entries(ESCALATION).map(([type,chain])=>(
-                <div key={type} style={{...C.card,padding:"13px 15px"}}>
-                  <div style={{fontWeight:600,fontSize:12,color:"#f1f5f9",marginBottom:9}}>{type==="customer"?"👤 Customer Chain":"📦 Vendor Chain"}</div>
-                  {chain.map((step,i)=>(
-                    <div key={i} style={{display:"flex",alignItems:"center",gap:8,marginBottom:i<chain.length-1?7:0}}>
-                      <div style={{width:20,height:20,borderRadius:"50%",background:i===0?"#1e2d3d":i===1?"#2d1a5e":"#052e16",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:700,color:i===0?"#94a3b8":i===1?"#a78bfa":"#4ade80",flexShrink:0}}>{i+1}</div>
-                      <div style={{fontSize:12,color:i===1?"#a78bfa":"#e2e8f0"}}>{step}</div>
-                      {i<chain.length-1&&<div style={{marginLeft:"auto",color:"#334155",fontSize:11}}>→</div>}
-                    </div>
-                  ))}
+
+            {/* Add new problem */}
+            <div style={{...C.card,padding:"14px 16px",marginBottom:14,borderColor:"#3d1515"}}>
+              <div style={{fontWeight:600,fontSize:13,color:"#f87171",marginBottom:10}}>➕ Log New Problem</div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+                <div>
+                  <div style={{fontSize:10,color:"#475569",marginBottom:3}}>Customer Name</div>
+                  <input value={newProb.customer} onChange={e=>setNewProb(p=>({...p,customer:e.target.value}))} placeholder="Customer name" style={C.inp}/>
                 </div>
+                <div>
+                  <div style={{fontSize:10,color:"#475569",marginBottom:3}}>Ticket #</div>
+                  <input value={newProb.ticket_number} onChange={e=>setNewProb(p=>({...p,ticket_number:e.target.value}))} placeholder="e.g. 30503" style={C.inp}/>
+                </div>
+                <div>
+                  <div style={{fontSize:10,color:"#475569",marginBottom:3}}>ETA / Expected Date</div>
+                  <input value={newProb.eta} onChange={e=>setNewProb(p=>({...p,eta:e.target.value}))} placeholder="e.g. Next week" style={C.inp}/>
+                </div>
+                <div>
+                  <div style={{fontSize:10,color:"#475569",marginBottom:3}}>Type</div>
+                  <select value={newProb.type} onChange={e=>setNewProb(p=>({...p,type:e.target.value}))} style={C.sel}>
+                    <option value="customer">👤 Customer Issue</option>
+                    <option value="product">📦 Product / Vendor</option>
+                    <option value="delivery">🚛 Delivery Issue</option>
+                    <option value="internal">🏢 Internal</option>
+                  </select>
+                </div>
+              </div>
+              <div style={{marginBottom:8}}>
+                <div style={{fontSize:10,color:"#475569",marginBottom:3}}>Problem Description</div>
+                <textarea value={newProb.description} onChange={e=>setNewProb(p=>({...p,description:e.target.value}))}
+                  placeholder="Describe the problem in detail..." rows={3} style={{...C.inp,resize:"vertical"}}/>
+              </div>
+              <div style={{marginBottom:10}}>
+                <div style={{fontSize:10,color:"#475569",marginBottom:3}}>What Needs To Be Done?</div>
+                <textarea value={newProb.what_to_do} onChange={e=>setNewProb(p=>({...p,what_to_do:e.target.value}))}
+                  placeholder="Next steps, action required..." rows={2} style={{...C.inp,resize:"vertical"}}/>
+              </div>
+              <button className="btn" onClick={saveNewProblem}
+                style={{width:"100%",background:"linear-gradient(135deg,#dc2626,#b91c1c)",color:"#fff",padding:"11px",fontSize:13,fontWeight:700}}>
+                ⚠️ Log Problem
+              </button>
+            </div>
+
+            {/* Filter tabs */}
+            <div style={{display:"flex",gap:6,marginBottom:12}}>
+              {[{v:"open",l:"Open",c:"#f87171"},{v:"done",l:"Resolved",c:"#4ade80"},{v:"all",l:"All",c:"#94a3b8"}].map(f=>(
+                <button key={f.v} className="btn" onClick={()=>setProbFilter(f.v)}
+                  style={{padding:"5px 14px",fontSize:12,background:probFilter===f.v?"#1e2d3d":"transparent",color:probFilter===f.v?f.c:"#475569",border:`1px solid ${probFilter===f.v?f.c:"#1e2d3d"}`}}>
+                  {f.l} {probFilter===f.v?`(${filteredProbs.length})`:""}
+                </button>
               ))}
             </div>
-            {problems.length===0?(
-              <div style={{...C.card,padding:36,textAlign:"center",color:"#475569"}}><div style={{fontSize:28,marginBottom:7}}>✅</div><div>No problems logged.</div></div>
+
+            {/* Problems list */}
+            {filteredProbs.length===0?(
+              <div style={{...C.card,padding:36,textAlign:"center",color:"#475569"}}>
+                <div style={{fontSize:28,marginBottom:7}}>{probFilter==="open"?"✅":"📋"}</div>
+                <div>{probFilter==="open"?"No open problems!":"No problems found."}</div>
+              </div>
             ):(
-              <div style={{display:"flex",flexDirection:"column",gap:9}}>
-                {problems.map(p=>{
-                  const chain=ESCALATION[p.type];
-                  const nextLevel=chain[(p.escalation_step||0)+1];
-                  return(
-                    <div key={p.id} style={{...C.card,padding:"13px 15px",borderColor:p.resolved?"#1e3a20":"#3d1515"}}>
-                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8,flexWrap:"wrap",gap:7}}>
+              filteredProbs.map(p=>(
+                <div key={p.id} style={{...C.card,marginBottom:10,padding:"14px 16px",borderColor:p.resolved?"#1e3a20":p.type==="delivery"?"#1c1500":"#3d1515"}}>
+                  {editingProb===p.id?(
+                    <div>
+                      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:7,marginBottom:8}}>
                         <div>
-                          <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:3}}>
-                            <span style={{fontWeight:700,fontSize:13,color:"#f1f5f9"}}>{p.emp_name}</span>
-                            <span className="badge" style={{background:p.type==="customer"?"#0c2340":"#1a0a2e",color:p.type==="customer"?"#60a5fa":"#c084fc"}}>{p.type==="customer"?"👤":"📦"}</span>
-                            {p.resolved&&<span className="badge" style={{background:"#052e16",color:"#4ade80"}}>✅ Resolved</span>}
-                          </div>
-                          <div style={{fontSize:12,color:"#cbd5e1"}}>{p.description}</div>
-                          <div style={{fontSize:10,color:"#475569",marginTop:3}}>{p.time}</div>
+                          <div style={{fontSize:10,color:"#475569",marginBottom:2}}>Status</div>
+                          <select defaultValue={p.status||"Open"} id={`status-${p.id}`} style={C.sel}>
+                            <option>Open</option>
+                            <option>In Progress</option>
+                            <option>Waiting on Vendor</option>
+                            <option>Waiting on Customer</option>
+                            <option>Done</option>
+                          </select>
                         </div>
-                        {!p.resolved&&nextLevel&&<button className="btn" onClick={()=>escalate(p.id)} style={{background:"linear-gradient(135deg,#d97706,#b45309)",color:"#fff",padding:"5px 11px",fontSize:11}}>↑ Escalate to {nextLevel}</button>}
+                        <div>
+                          <div style={{fontSize:10,color:"#475569",marginBottom:2}}>ETA</div>
+                          <input defaultValue={p.eta||""} id={`eta-${p.id}`} style={C.inp}/>
+                        </div>
                       </div>
-                      <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
-                        {chain.map((step,i)=>(
-                          <div key={i} style={{display:"flex",alignItems:"center",gap:4,background:i<=(p.escalation_step||0)?(i===(p.escalation_step||0)?"#0c2340":"#052e16"):"#0a1628",borderRadius:5,padding:"3px 8px",border:`1px solid ${i===(p.escalation_step||0)?"#3b82f6":"#1e2d3d"}`}}>
-                            <span style={{width:5,height:5,borderRadius:"50%",background:i<(p.escalation_step||0)?"#22c55e":i===(p.escalation_step||0)?"#3b82f6":"#334155"}}/>
-                            <span style={{fontSize:10,color:i<=(p.escalation_step||0)?"#e2e8f0":"#475569"}}>{step}</span>
-                          </div>
-                        ))}
+                      <div style={{marginBottom:8}}>
+                        <div style={{fontSize:10,color:"#475569",marginBottom:2}}>What Needs To Be Done</div>
+                        <textarea defaultValue={p.what_to_do||""} id={`wtd-${p.id}`} rows={2} style={{...C.inp,resize:"vertical"}}/>
+                      </div>
+                      <div style={{display:"flex",gap:7}}>
+                        <button className="btn" onClick={()=>{
+                          const status=document.getElementById(`status-${p.id}`).value;
+                          const eta=document.getElementById(`eta-${p.id}`).value;
+                          const what_to_do=document.getElementById(`wtd-${p.id}`).value;
+                          const resolved=status==="Done";
+                          updateProblem(p.id,{status,eta,what_to_do,resolved});
+                        }} style={{flex:1,background:"linear-gradient(135deg,#059669,#047857)",color:"#fff",padding:"8px",fontSize:12,fontWeight:600}}>💾 Save</button>
+                        <button className="btn" onClick={()=>setEditingProb(null)} style={{background:"#1e2d3d",color:"#94a3b8",padding:"8px 12px",fontSize:12}}>Cancel</button>
                       </div>
                     </div>
-                  );
-                })}
-              </div>
+                  ):(
+                    <div>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8,flexWrap:"wrap",gap:6}}>
+                        <div style={{flex:1}}>
+                          <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:4,flexWrap:"wrap"}}>
+                            {p.customer&&<span style={{fontWeight:700,fontSize:14,color:"#f1f5f9"}}>{p.customer}</span>}
+                            {p.ticket_number&&<span style={{fontSize:11,background:"#1e3a5f",color:"#60a5fa",borderRadius:4,padding:"2px 7px"}}>#{p.ticket_number}</span>}
+                            <span style={{fontSize:11,background:p.type==="customer"?"#0c2340":p.type==="delivery"?"#1c1500":"#1a0a2e",color:p.type==="customer"?"#60a5fa":p.type==="delivery"?"#f59e0b":"#c084fc",borderRadius:4,padding:"2px 7px"}}>
+                              {p.type==="customer"?"👤":p.type==="delivery"?"🚛":"📦"} {p.type}
+                            </span>
+                            <span style={{fontSize:11,background:p.resolved?"#052e16":p.status==="In Progress"?"#0c2340":"#1c1500",color:p.resolved?"#4ade80":p.status==="In Progress"?"#60a5fa":"#f59e0b",borderRadius:4,padding:"2px 7px",fontWeight:600}}>
+                              {p.resolved?"✅ Done":(p.status||"Open")}
+                            </span>
+                          </div>
+                          <div style={{fontSize:13,color:"#e2e8f0",marginBottom:4,lineHeight:1.5}}>{p.description}</div>
+                          {p.what_to_do&&<div style={{fontSize:12,color:"#60a5fa",background:"#0c1f38",borderRadius:6,padding:"5px 9px",marginBottom:4}}>→ {p.what_to_do}</div>}
+                          <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+                            {p.eta&&<span style={{fontSize:11,color:"#a78bfa"}}>📅 ETA: {p.eta}</span>}
+                            <span style={{fontSize:11,color:"#475569"}}>{p.time} · {p.emp_name}</span>
+                          </div>
+                        </div>
+                        <div style={{display:"flex",flexDirection:"column",gap:5,flexShrink:0}}>
+                          <button className="btn" onClick={()=>setEditingProb(p.id)} style={{background:"#1e2d3d",color:"#60a5fa",padding:"5px 10px",fontSize:11}}>✏️ Update</button>
+                          {!p.resolved&&<button className="btn" onClick={()=>updateProblem(p.id,{resolved:true,status:"Done"})} style={{background:"#052e16",color:"#4ade80",padding:"5px 10px",fontSize:11}}>✅ Done</button>}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))
             )}
           </div>
-        )}
+          );
+        })()}
 
         {/* SMS */}
         {tab==="comms"&&(
@@ -2822,7 +2945,7 @@ export default function App() {
                       </div>
                       {ins.notes&&<div style={{fontSize:12,color:"#f59e0b",background:"#1c1500",borderRadius:6,padding:"4px 9px"}}>⚠️ {ins.notes}</div>}
                     </div>
-                    {ins.photo_url&&<img src={ins.photo_url} alt="inspection" style={{width:"100%",borderRadius:8,maxHeight:280,objectFit:"cover"}}/>}
+                    {ins.photo_url&&<img src={ins.photo_url} alt="inspection" style={{width:120,height:90,borderRadius:6,objectFit:"cover",cursor:"pointer"}} onClick={()=>window.open(ins.photo_url,"_blank")}/>}
                   </div>
                 ))}
               </div>
@@ -2831,32 +2954,50 @@ export default function App() {
         )}
 
         {/* MANAGER SCHEDULE */}
-        {tab==="mgr-schedule"&&(
+        {tab==="mgr-schedule"&&(()=>{
+          // Build this week's dates (Mon-Sun)
+          const todayD = new Date();
+          const dow = todayD.getDay(); // 0=Sun
+          const mondayOffset = dow===0?-6:1-dow;
+          const weekDates = Array.from({length:7},(_,i)=>{
+            const d=new Date(todayD);
+            d.setDate(d.getDate()+mondayOffset+i);
+            return d.toISOString().split("T")[0];
+          });
+          const dayKeys=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+          const dayFull={Mon:"Monday",Tue:"Tuesday",Wed:"Wednesday",Thu:"Thursday",Fri:"Friday",Sat:"Saturday",Sun:"Sunday"};
+          return(
           <div className="fade">
-            <div style={{fontWeight:700,fontSize:15,color:"#f1f5f9",marginBottom:12}}>📅 Weekly Team Schedule</div>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12,flexWrap:"wrap",gap:6}}>
+              <div style={{fontWeight:700,fontSize:15,color:"#f1f5f9"}}>📅 This Week's Schedule</div>
+              <div style={{fontSize:11,color:"#475569"}}>
+                {new Date(weekDates[0]+"T12:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric"})} — {new Date(weekDates[6]+"T12:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}
+              </div>
+            </div>
             <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:14}}>
-              {["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].map(d=>(
+              {dayKeys.map((d,i)=>(
                 <button key={d} className="btn" onClick={()=>setMgrSchedDay(mgrSchedDay===d?null:d)}
-                  style={{padding:"7px 14px",fontSize:12,fontWeight:600,background:mgrSchedDay===d?"linear-gradient(135deg,#2563eb,#1d4ed8)":"#1e2d3d",color:mgrSchedDay===d?"#fff":"#94a3b8",border:`1px solid ${mgrSchedDay===d?"#3b82f6":"#1e2d3d"}`}}>
+                  style={{padding:"7px 12px",fontSize:11,fontWeight:600,background:mgrSchedDay===d?"linear-gradient(135deg,#2563eb,#1d4ed8)":"#1e2d3d",color:mgrSchedDay===d?"#fff":"#94a3b8",position:"relative"}}>
                   {d}
+                  {deliveries.filter(x=>x.delivery_date===weekDates[i]).length>0&&(
+                    <span style={{position:"absolute",top:-4,right:-4,background:"#22c55e",color:"#fff",borderRadius:"50%",width:14,height:14,fontSize:9,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700}}>
+                      {deliveries.filter(x=>x.delivery_date===weekDates[i]).length}
+                    </span>
+                  )}
                 </button>
               ))}
               {mgrSchedDay&&<button className="btn" onClick={()=>setMgrSchedDay(null)} style={{padding:"7px 12px",fontSize:11,background:"#1e2d3d",color:"#64748b"}}>Show All</button>}
             </div>
-            {["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].filter(d=>!mgrSchedDay||d===mgrSchedDay).map(day=>{
-              const dayFull={Mon:"Monday",Tue:"Tuesday",Wed:"Wednesday",Thu:"Thursday",Fri:"Friday",Sat:"Saturday",Sun:"Sunday"};
+            {dayKeys.filter(d=>!mgrSchedDay||d===mgrSchedDay).map((day,idx)=>{
+              const dateIso = weekDates[idx];
               const working=employees.filter(e=>e.is_manager||(e.workdays||[]).includes(day));
               const off=employees.filter(e=>!e.is_manager&&!(e.workdays||[]).includes(day));
-              const dayDels=deliveries.filter(d=>{
-                const iso=d.delivery_date;
-                if(!iso) return false;
-                const dow=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][new Date(iso+"T12:00:00").getDay()];
-                return dow===day;
-              });
+              const dayDels=deliveries.filter(d=>d.delivery_date===dateIso);
+              const isToday=dateIso===new Date().toISOString().split("T")[0];
               return(
-                <div key={day} style={{...C.card,marginBottom:10,overflow:"hidden"}}>
-                  <div style={{padding:"10px 16px",background:"#0a1628",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                    <div style={{fontWeight:700,fontSize:14,color:"#f1f5f9"}}>{dayFull[day]}</div>
+                <div key={day} style={{...C.card,marginBottom:10,overflow:"hidden",borderColor:isToday?"#3b82f6":"#1e2d3d"}}>
+                  <div style={{padding:"10px 16px",background:isToday?"#0c1f38":"#0a1628",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                    <div style={{fontWeight:700,fontSize:14,color:isToday?"#60a5fa":"#f1f5f9"}}>{dayFull[day]} {isToday?"• Today":""} <span style={{fontSize:11,color:"#475569",fontWeight:400}}>{new Date(dateIso+"T12:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric"})}</span></div>
                     <div style={{display:"flex",gap:10}}>
                       {dayDels.length>0&&<span style={{fontSize:11,color:"#60a5fa"}}>{dayDels.length} deliveries</span>}
                       <span style={{fontSize:11,color:"#22c55e"}}>{working.length} working</span>
@@ -2996,402 +3137,189 @@ export default function App() {
           );
         })()}
 
-        {/* CSV IMPORT */}
+        {/* IMPORT */}
         {tab==="import"&&(
           <div className="fade">
-            <div style={{fontWeight:700,fontSize:15,color:"#f1f5f9",marginBottom:4}}>📥 Import Deliveries</div>
-            <div style={{fontSize:12,color:"#475569",marginBottom:16}}>Upload a Pick List PDF from EZ Process Pro, or import from CSV.</div>
+            <div style={{fontWeight:700,fontSize:15,color:"#f1f5f9",marginBottom:4}}>📥 Add Deliveries</div>
+            <div style={{fontSize:12,color:"#475569",marginBottom:14}}>Quickly add multiple deliveries for today. Fill in each field and click Add to queue, then Import All when ready.</div>
 
-            {/* PDF PICK LIST IMPORT */}
-            <div style={{...C.card,padding:"16px 18px",marginBottom:16,borderColor:"#1e3a5f"}}>
-              <div style={{fontWeight:700,fontSize:13,color:"#60a5fa",marginBottom:4}}>📄 Upload Daily Route PDF</div>
-              <div style={{fontSize:12,color:"#475569",marginBottom:12}}>Upload your EZ Process Pro delivery receipt PDF each morning — all deliveries import automatically with manufacturer, piece#, driver, and instructions.</div>
-              <input type="file" accept=".pdf" onChange={async(e)=>{
-                const file=e.target.files[0];
-                if(!file) return;
-                setPdfImporting(true);
-                setPdfResult(null);
-                const reader=new FileReader();
-                reader.onload=async(ev)=>{
-                  try {
-                    const base64=ev.target.result.split(",")[1];
-                    const res=await fetch("/.netlify/functions/ai",{
-                      method:"POST",
-                      headers:{"Content-Type":"application/json"},
-                      body:JSON.stringify({
-                        model:"claude-sonnet-4-5",
-                        max_tokens:2000,
-                        messages:[{
-                          role:"user",
-                          content:[
-                            {type:"document",source:{type:"base64",media_type:"application/pdf",data:base64}},
-                            {type:"text",text:`This is an America's Mattress EZ Process Pro delivery receipt PDF. It may contain MULTIPLE deliveries (one per page or section). Extract ALL of them.
-
-For each delivery extract:
-- sale_number: the Sale Number (e.g. 30503)
-- memo_number: the Memo # (e.g. 50249)  
-- customer: first + last name
-- address: full street address, city, state, zip
-- phone: home phone number
-- delivery_date: Estimated Date of Delivery as YYYY-MM-DD
-- delivery_window: time of day (Morning, Afternoon, or specific time range)
-- driver: Delivery Man field (e.g. "frank ricky")
-- notes: the Instruction field text
-- route: Route # number
-- items: array of all items, each with:
-  - qty: quantity shipped
-  - name: Item Description
-  - manufacturer: Man# field (e.g. SERTA, SIMMONS, BEDGEAR)
-  - piece_number: Piece# field (e.g. 500833819-7550)
-- is_transfer: true if instructions mention transfer, CPU, pickup, or store transfer
-
-Return ONLY a valid JSON array of all deliveries found:
-[{sale_number,memo_number,customer,address,phone,delivery_date,delivery_window,driver,notes,route,is_transfer,items:[{qty,name,manufacturer,piece_number}]}]`}
-                          ]
-                        }]
-                      })
-                    });
-                    const data=await res.json();
-                    if(data.error){alert("AI Error: "+data.error.message);setPdfImporting(false);return;}
-                    const txt=data.content.map(b=>b.text||"").join("").trim();
-                    const parsed=JSON.parse(txt.replace(/```json|```/g,"").trim());
-                    // Handle both single object and array
-                    setPdfResult(Array.isArray(parsed)?parsed:[parsed]);
-                  } catch(err) {
-                    console.error(err);
-                    alert("Could not read PDF: "+err.message+". Try again.");
-                  }
-                  setPdfImporting(false);
-                };
-                reader.readAsDataURL(file);
-              }} style={{...C.inp,padding:"8px",marginBottom:10}}/>
-              {pdfImporting&&(
-                <div style={{...C.card,padding:"14px 16px",marginBottom:10,borderColor:"#1e3a5f",textAlign:"center"}}>
-                  <div style={{fontSize:13,color:"#60a5fa",marginBottom:4}}>⏳ Reading PDF with AI...</div>
-                  <div style={{fontSize:11,color:"#475569"}}>Extracting all deliveries, items, manufacturers and drivers...</div>
+            {/* Quick add form */}
+            <div style={{...C.card,padding:"16px 18px",marginBottom:14,borderColor:"#1e3a5f"}}>
+              <div style={{fontWeight:600,fontSize:13,color:"#60a5fa",marginBottom:12}}>➕ Quick Add Delivery</div>
+              {[
+                {l:"Sale #",f:"ticket_number",ph:"30503",half:true},
+                {l:"Customer Name",f:"customer",ph:"John Smith",half:true},
+                {l:"Address",f:"address",ph:"123 Main St NE, Albuquerque NM 87110"},
+                {l:"Phone",f:"phone",ph:"505-555-0100",half:true},
+                {l:"Time Window",f:"delivery_window",ph:"Morning / 9AM-11AM",half:true},
+              ].map(x=>(
+                <div key={x.f} style={{marginBottom:8,width:x.half?"50%":"100%",display:"inline-block",paddingRight:x.half?8:0}}>
+                  <div style={{fontSize:10,color:"#475569",marginBottom:3}}>{x.l}</div>
+                  <input value={pdfResult?.[0]?.[x.f]||""} onChange={e=>setPdfResult(prev=>[{...(prev?.[0]||{}),[x.f]:e.target.value}])}
+                    placeholder={x.ph} style={C.inp}/>
                 </div>
-              )}
-              {pdfResult&&Array.isArray(pdfResult)&&(
-                <div>
-                  <div style={{fontSize:12,color:"#22c55e",fontWeight:600,marginBottom:10}}>
-                    ✅ Found {pdfResult.length} deliveries — Review then import all at once
-                  </div>
-                  {pdfResult.map((del,di)=>{
-                    const matchedDriver = employees.find(e=>
-                      (del.driver||"").toLowerCase().split(" ").some(n=>e.name.toLowerCase().includes(n))&&!e.is_manager
-                    );
-                    return(
-                      <div key={di} style={{...C.card,padding:"14px 16px",marginBottom:12,borderColor:del.is_transfer?"#f59e0b":"#1e3a5f"}}>
-                        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10,flexWrap:"wrap",gap:6}}>
-                          <div>
-                            <div style={{fontWeight:700,fontSize:14,color:"#f1f5f9"}}>{del.customer}</div>
-                            <div style={{fontSize:11,color:"#475569"}}>{del.address}</div>
-                          </div>
-                          <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
-                            {del.sale_number&&<span style={{fontSize:11,background:"#1e3a5f",color:"#60a5fa",borderRadius:4,padding:"2px 7px"}}>Sale #{del.sale_number}</span>}
-                            {del.is_transfer&&<span style={{fontSize:11,background:"#1c1500",color:"#f59e0b",borderRadius:4,padding:"2px 7px"}}>⚠️ Transfer/Pickup</span>}
-                            <span style={{fontSize:11,background:"#052e16",color:"#4ade80",borderRadius:4,padding:"2px 7px"}}>{del.delivery_window||"Morning"}</span>
-                          </div>
-                        </div>
-                        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:7,marginBottom:10}}>
-                          <div>
-                            <div style={{fontSize:10,color:"#475569",marginBottom:2}}>Phone</div>
-                            <input value={del.phone||""} onChange={e=>{const r=[...pdfResult];r[di]={...r[di],phone:e.target.value};setPdfResult(r);}} style={{...C.inp}}/>
-                          </div>
-                          <div>
-                            <div style={{fontSize:10,color:"#475569",marginBottom:2}}>Date</div>
-                            <input type="date" value={del.delivery_date||""} onChange={e=>{const r=[...pdfResult];r[di]={...r[di],delivery_date:e.target.value};setPdfResult(r);}} style={{...C.inp,colorScheme:"dark"}}/>
-                          </div>
-                          <div>
-                            <div style={{fontSize:10,color:"#475569",marginBottom:2}}>Window</div>
-                            <input value={del.delivery_window||""} onChange={e=>{const r=[...pdfResult];r[di]={...r[di],delivery_window:e.target.value};setPdfResult(r);}} style={{...C.inp}}/>
-                          </div>
-                          <div>
-                            <div style={{fontSize:10,color:"#475569",marginBottom:2}}>Driver</div>
-                            <select value={del.assigned_to||matchedDriver?.id||1} onChange={e=>{const r=[...pdfResult];r[di]={...r[di],assigned_to:Number(e.target.value)};setPdfResult(r);}} style={C.sel}>
-                              {employees.map(e=><option key={e.id} value={e.id}>{e.name}{e.is_manager?" 👑":""}</option>)}
-                            </select>
-                          </div>
-                        </div>
-                        {del.notes&&<div style={{fontSize:11,color:"#f59e0b",background:"#1c1500",borderRadius:6,padding:"5px 9px",marginBottom:8}}>📋 {del.notes}</div>}
-                        <div style={{marginBottom:6}}>
-                          <div style={{fontSize:10,color:"#475569",marginBottom:4}}>Items</div>
-                          {(del.items||[]).map((item,ii)=>(
-                            <div key={ii} style={{background:"#0a1628",borderRadius:6,padding:"6px 10px",marginBottom:5}}>
-                              <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:2}}>
-                                <span style={{background:"#1e2d3d",color:"#60a5fa",borderRadius:4,padding:"1px 6px",fontSize:11,fontWeight:700}}>{item.qty}x</span>
-                                <span style={{fontSize:12,color:"#e2e8f0",flex:1}}>{item.name}</span>
-                              </div>
-                              {(item.manufacturer||item.piece_number)&&(
-                                <div style={{display:"flex",gap:8,paddingLeft:28}}>
-                                  {item.manufacturer&&<span style={{fontSize:10,color:"#60a5fa"}}>{item.manufacturer}</span>}
-                                  {item.piece_number&&<span style={{fontSize:10,color:"#475569"}}>#{item.piece_number}</span>}
-                                </div>
-                              )}
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    );
-                  })}
-                  <button className="btn" onClick={async()=>{
-                    let stop = deliveries.length+1;
-                    const added = [];
-                    for(const del of pdfResult){
-                      const matchedDriver = employees.find(e=>
-                        (del.driver||"").toLowerCase().split(" ").some(n=>n.length>2&&e.name.toLowerCase().includes(n))&&!e.is_manager
-                      );
-                      const isTransfer = !!del.is_transfer;
-                      // Store manufacturer/piece# on first item for display
-                      const items = (del.items||[]).map(item=>({
-                        qty:item.qty||1,
-                        name:item.name||"",
-                        manufacturer:item.manufacturer||"",
-                        piece_number:item.piece_number||"",
-                      }));
-                      const nid = `D-${String(stop).padStart(3,"0")}-${Date.now()}`;
-                      const manufacturer = items[0]?.manufacturer||"";
-                      const piece_number = items[0]?.piece_number||"";
-                      const newRow={
-                        id:nid,
-                        customer:del.customer,
-                        address:del.address,
-                        phone:del.phone||"",
-                        items,
-                        delivery_window:del.delivery_window||"Morning",
-                        assigned_to:del.assigned_to||matchedDriver?.id||1,
-                        status:isTransfer?"Transfer":"Scheduled",
-                        notes:del.notes||"",
-                        floor:"1",elevator:false,
-                        removal_requested:false,
-                        transfer_scheduled:isTransfer,
-                        route_notes:"",
-                        stop_order:stop,
-                        delivery_date:del.delivery_date||new Date().toISOString().split("T")[0],
-                        ticket_number:String(del.sale_number||del.memo_number||""),
-                        helper_id:0,
-                        manufacturer,
-                        piece_number,
-                      };
-                      await sb.from("deliveries").insert(newRow);
-                      added.push(newRow);
-                      stop++;
-                    }
-                    setDeliveries(prev=>[...prev,...added]);
-                    setPdfResult(null);
-                    alert("✅ "+added.length+" deliveries imported!");
-                  }} style={{width:"100%",background:"linear-gradient(135deg,#059669,#047857)",color:"#fff",padding:"13px",fontSize:14,fontWeight:700,marginTop:4}}>
-                    ✅ Import All {pdfResult.length} Deliveries
-                  </button>
-                  <button className="btn" onClick={()=>setPdfResult(null)} style={{width:"100%",background:"#1e2d3d",color:"#94a3b8",padding:"9px",fontSize:13,marginTop:8}}>
-                    Cancel
-                  </button>
-                </div>
-              )}
-            </div>
-
-            <div style={{fontWeight:700,fontSize:13,color:"#f1f5f9",marginBottom:8}}>📊 Or Import from CSV</div>
-
-            {/* Format guide */}
-            <div style={{...C.card,padding:"14px 16px",marginBottom:16,borderColor:"#1e3a5f"}}>
-              <div style={{fontWeight:600,fontSize:12,color:"#60a5fa",marginBottom:8}}>📋 Expected CSV Format</div>
-              <div style={{fontFamily:"monospace",fontSize:11,color:"#94a3b8",background:"#0a1628",borderRadius:8,padding:"10px 12px",lineHeight:1.8}}>
-                ticket,customer,address,phone,items,window,driver,date<br/>
-                1042,John Smith,123 Main St,505-555-0100,"Queen Mattress x1",9AM-11AM,Frank,2026-04-18<br/>
-                1043,Maria Lopez,456 Oak Ave,505-555-0200,"King Mattress x1, Bed Frame x1",1PM-3PM,Max,2026-04-18
+              ))}
+              <div style={{marginBottom:8}}>
+                <div style={{fontSize:10,color:"#475569",marginBottom:3}}>Delivery Date</div>
+                <input type="date" value={pdfResult?.[0]?.delivery_date||new Date().toISOString().split("T")[0]}
+                  onChange={e=>setPdfResult(prev=>[{...(prev?.[0]||{}),delivery_date:e.target.value}])}
+                  style={{...C.inp,colorScheme:"dark"}}/>
               </div>
-              <div style={{fontSize:11,color:"#475569",marginTop:8}}>
-                Columns: ticket, customer, address, phone, items, window, driver, date — order matters. Items format: "Name x Qty" separated by commas.
+              <div style={{marginBottom:8}}>
+                <div style={{fontSize:10,color:"#475569",marginBottom:3}}>Driver</div>
+                <select value={pdfResult?.[0]?.assigned_to||1} onChange={e=>setPdfResult(prev=>[{...(prev?.[0]||{}),assigned_to:Number(e.target.value)}])} style={C.sel}>
+                  {employees.map(e=><option key={e.id} value={e.id}>{e.name}{e.is_manager?" 👑":""}</option>)}
+                </select>
               </div>
-            </div>
-
-            {/* File upload */}
-            <div style={{...C.card,padding:"14px 16px",marginBottom:14}}>
-              <div style={{fontWeight:600,fontSize:12,color:"#f1f5f9",marginBottom:10}}>Upload CSV File</div>
-              <input type="file" accept=".csv,.txt" onChange={e=>{
-                const file=e.target.files[0];
-                if(!file) return;
-                const reader=new FileReader();
-                reader.onload=ev=>{
-                  const text=ev.target.result;
-                  setCsvText(text);
-                  // Parse preview
-                  const lines=text.trim().split("\n").filter(l=>l.trim());
-                  const dataLines=lines[0].toLowerCase().includes("customer")||lines[0].toLowerCase().includes("ticket")?lines.slice(1):lines;
-                  const parsed=dataLines.map(line=>{
-                    const cols=line.match(/(".*?"|[^,]+)(?=\s*,|\s*$)/g)||[];
-                    const clean=cols.map(c=>c.replace(/^"|"$/g,"").trim());
-                    return {
-                      ticket_number:clean[0]||"",
-                      customer:clean[1]||"",
-                      address:clean[2]||"",
-                      phone:clean[3]||"",
-                      rawItems:clean[4]||"",
-                      delivery_window:clean[5]||"",
-                      driverName:clean[6]||"",
-                      delivery_date:clean[7]||new Date().toISOString().split("T")[0],
-                    };
-                  }).filter(r=>r.customer);
-                  setCsvPreview(parsed);
-                };
-                reader.readAsText(file);
-              }} style={{...C.inp,padding:"8px"}}/>
-            </div>
-
-            {/* Manual paste */}
-            <div style={{...C.card,padding:"14px 16px",marginBottom:14}}>
-              <div style={{fontWeight:600,fontSize:12,color:"#f1f5f9",marginBottom:8}}>Or Paste CSV Text</div>
-              <textarea value={csvText} onChange={e=>{
-                setCsvText(e.target.value);
-                const lines=e.target.value.trim().split("\n").filter(l=>l.trim());
-                const dataLines=lines[0]&&(lines[0].toLowerCase().includes("customer")||lines[0].toLowerCase().includes("ticket"))?lines.slice(1):lines;
-                const parsed=dataLines.map(line=>{
-                  const cols=line.match(/(".*?"|[^,]+)(?=\s*,|\s*$)/g)||[];
-                  const clean=cols.map(c=>c.replace(/^"|"$/g,"").trim());
-                  return {
-                    ticket_number:clean[0]||"",
-                    customer:clean[1]||"",
-                    address:clean[2]||"",
-                    phone:clean[3]||"",
-                    rawItems:clean[4]||"",
-                    delivery_window:clean[5]||"",
-                    driverName:clean[6]||"",
-                    delivery_date:clean[7]||new Date().toISOString().split("T")[0],
-                  };
-                }).filter(r=>r.customer);
-                setCsvPreview(parsed);
-              }} placeholder="Paste your CSV data here..." rows={6} style={{...C.inp,resize:"vertical",fontFamily:"monospace",fontSize:12}}/>
-            </div>
-
-            {/* Preview */}
-            {csvPreview.length>0&&(
-              <div style={{...C.card,overflow:"hidden",marginBottom:14}}>
-                <div style={{padding:"10px 16px",background:"#0a1628",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                  <div style={{fontSize:12,fontWeight:700,color:"#f1f5f9"}}>Preview — {csvPreview.length} deliveries found</div>
-                  <button className="btn" onClick={()=>{setCsvPreview([]);setCsvText("");}} style={{background:"#1e2d3d",color:"#64748b",padding:"4px 10px",fontSize:11}}>Clear</button>
-                </div>
-                {csvPreview.map((row,i)=>{
-                  const matchedDriver=employees.find(e=>e.name.toLowerCase().includes((row.driverName||"").toLowerCase())&&!e.is_manager);
-                  // Parse items: "Queen Mattress x1, King x2" or "Queen Mattress x1"
-                  const parsedItems=(row.rawItems||"").split(",").map(it=>{
-                    it=it.trim();
-                    const xMatch=it.match(/^(.*?)\s*[xX](\d+)$/);
-                    if(xMatch) return {qty:Number(xMatch[2]),name:xMatch[1].trim()};
-                    const numMatch=it.match(/^(\d+)\s*[xX]\s*(.+)$/);
-                    if(numMatch) return {qty:Number(numMatch[1]),name:numMatch[2].trim()};
-                    return {qty:1,name:it};
-                  }).filter(it=>it.name);
-                  return(
-                    <div key={i} style={{padding:"10px 16px",borderTop:i>0?"1px solid #131f2e":"none",display:"flex",gap:10,flexWrap:"wrap",alignItems:"flex-start"}}>
-                      <div style={{flex:1,minWidth:140}}>
-                        {row.ticket_number&&<span style={{fontSize:10,background:"#1e3a5f",color:"#60a5fa",borderRadius:4,padding:"1px 6px",marginRight:6}}>#{row.ticket_number}</span>}
-                        <span style={{fontWeight:600,fontSize:13,color:"#f1f5f9"}}>{row.customer}</span>
-                        <div style={{fontSize:11,color:"#64748b",marginTop:2}}>{row.address} · {row.phone}</div>
-                        <div style={{display:"flex",gap:5,marginTop:4,flexWrap:"wrap"}}>
-                          {parsedItems.map((item,ii)=>(
-                            <span key={ii} style={{fontSize:11,background:"#1e2d3d",color:"#94a3b8",borderRadius:5,padding:"2px 7px"}}>{item.qty}x {item.name}</span>
-                          ))}
-                        </div>
-                      </div>
-                      <div style={{fontSize:11,color:"#a78bfa"}}>{row.delivery_window}</div>
-                      <div style={{fontSize:11,color:matchedDriver?"#22c55e":"#f87171"}}>{matchedDriver?matchedDriver.name:(row.driverName||"⚠️ No match")}</div>
-                      <div style={{fontSize:11,color:"#475569"}}>{row.delivery_date}</div>
+              <div style={{marginBottom:8}}>
+                <div style={{fontSize:10,color:"#475569",marginBottom:3}}>Notes / Instructions</div>
+                <textarea value={pdfResult?.[0]?.notes||""} onChange={e=>setPdfResult(prev=>[{...(prev?.[0]||{}),notes:e.target.value}])}
+                  rows={2} placeholder="Special instructions, call ahead, etc." style={{...C.inp,resize:"vertical"}}/>
+              </div>
+              <div style={{marginBottom:10}}>
+                <div style={{fontSize:10,color:"#475569",marginBottom:5}}>Items</div>
+                {((pdfResult?.[0]?.items)||[{qty:1,name:"",manufacturer:"",piece_number:""}]).map((item,idx)=>(
+                  <div key={idx} style={{background:"#0a1628",borderRadius:7,padding:"9px 11px",marginBottom:6,border:"1px solid #1e2d3d"}}>
+                    <div style={{display:"flex",gap:6,marginBottom:6}}>
+                      <input type="number" min="1" value={item.qty||1}
+                        onChange={e=>{const items=[...(pdfResult?.[0]?.items||[{qty:1,name:""}])];items[idx]={...items[idx],qty:Number(e.target.value)};setPdfResult(prev=>[{...(prev?.[0]||{}),items}]);}}
+                        style={{...C.inp,width:55,textAlign:"center"}}/>
+                      <input value={item.name||""}
+                        onChange={e=>{const items=[...(pdfResult?.[0]?.items||[{qty:1,name:""}])];items[idx]={...items[idx],name:e.target.value};setPdfResult(prev=>[{...(prev?.[0]||{}),items}]);}}
+                        placeholder="Item description" style={{...C.inp,flex:1}}/>
+                      {(pdfResult?.[0]?.items||[]).length>1&&<button className="btn" onClick={()=>{const items=(pdfResult?.[0]?.items||[]).filter((_,i)=>i!==idx);setPdfResult(prev=>[{...(prev?.[0]||{}),items}]);}} style={{background:"#2d0a0a",color:"#f87171",padding:"5px 8px",fontSize:11}}>✕</button>}
                     </div>
-                  );
-                })}
+                    <div style={{display:"flex",gap:6}}>
+                      <input value={item.manufacturer||""} onChange={e=>{const items=[...(pdfResult?.[0]?.items||[])];items[idx]={...items[idx],manufacturer:e.target.value};setPdfResult(prev=>[{...(prev?.[0]||{}),items}]);}} placeholder="Manufacturer (e.g. Serta)" style={{...C.inp,flex:1,fontSize:12}}/>
+                      <input value={item.piece_number||""} onChange={e=>{const items=[...(pdfResult?.[0]?.items||[])];items[idx]={...items[idx],piece_number:e.target.value};setPdfResult(prev=>[{...(prev?.[0]||{}),items}]);}} placeholder="Piece # (e.g. 500833819-7550)" style={{...C.inp,flex:1,fontSize:12}}/>
+                    </div>
+                  </div>
+                ))}
+                <button className="btn" onClick={()=>setPdfResult(prev=>[{...(prev?.[0]||{}),items:[...(prev?.[0]?.items||[{qty:1,name:""}]),{qty:1,name:"",manufacturer:"",piece_number:""}]}])}
+                  style={{background:"#1e2d3d",color:"#60a5fa",padding:"5px 12px",fontSize:12}}>➕ Add Item</button>
               </div>
-            )}
-
-            {csvPreview.length>0&&(
-              <button className="btn" disabled={csvImporting||csvDone} onClick={async()=>{
-                setCsvImporting(true);
-                let stop=deliveries.length+1;
-                for(const row of csvPreview){
-                  const matchedDriver=employees.find(e=>e.name.toLowerCase().includes((row.driverName||"").toLowerCase())&&!e.is_manager);
-                  const parsedItems=(row.rawItems||"").split(",").map(it=>{
-                    it=it.trim();
-                    const xMatch=it.match(/^(.*?)\s*[xX](\d+)$/);
-                    if(xMatch) return {qty:Number(xMatch[2]),name:xMatch[1].trim()};
-                    const numMatch=it.match(/^(\d+)\s*[xX]\s*(.+)$/);
-                    if(numMatch) return {qty:Number(numMatch[1]),name:numMatch[2].trim()};
-                    return {qty:1,name:it};
-                  }).filter(it=>it.name);
-                  const nid=`D-${String(stop).padStart(3,"0")}-${Date.now()}`;
+              <div style={{display:"flex",gap:7}}>
+                <button className="btn" onClick={async()=>{
+                  const d = pdfResult?.[0]||{};
+                  if(!d.customer) {alert("Please enter a customer name.");return;}
+                  const today = new Date().toISOString().split("T")[0];
+                  const todayCount = deliveries.filter(x=>x.delivery_date===(d.delivery_date||today)).length;
+                  const nid=`D-${String(Date.now()).slice(-6)}`;
+                  const manufacturer = (d.items||[])[0]?.manufacturer||"";
+                  const piece_number = (d.items||[])[0]?.piece_number||"";
                   const newRow={
-                    id:nid, customer:row.customer, address:row.address, phone:row.phone,
-                    items:parsedItems.length>0?parsedItems:[{qty:1,name:"See notes"}],
-                    delivery_window:row.delivery_window, assigned_to:matchedDriver?.id||1,
-                    status:"Scheduled", notes:"", floor:"1", elevator:false,
-                    removal_requested:false, transfer_scheduled:false, route_notes:"",
-                    stop_order:stop, delivery_date:row.delivery_date,
-                    ticket_number:row.ticket_number, helper_id:0,
+                    id:nid,customer:d.customer,address:d.address||"",phone:d.phone||"",
+                    items:(d.items||[{qty:1,name:""}]).map(i=>({qty:i.qty||1,name:i.name||"",manufacturer:i.manufacturer||"",piece_number:i.piece_number||""})),
+                    delivery_window:d.delivery_window||"Morning",
+                    assigned_to:Number(d.assigned_to)||1,status:"Scheduled",
+                    notes:d.notes||"",floor:"1",elevator:false,
+                    removal_requested:false,transfer_scheduled:false,route_notes:"",
+                    stop_order:todayCount+1,
+                    delivery_date:d.delivery_date||today,
+                    ticket_number:String(d.ticket_number||""),
+                    helper_id:0,manufacturer,piece_number,
                   };
                   await sb.from("deliveries").insert(newRow);
                   setDeliveries(prev=>[...prev,newRow]);
-                  stop++;
-                }
-                setCsvImporting(false);
-                setCsvDone(true);
-                setCsvPreview([]);
-                setCsvText("");
-                setTimeout(()=>setCsvDone(false),4000);
-              }} style={{width:"100%",background:csvDone?"linear-gradient(135deg,#059669,#047857)":csvImporting?"#1e2d3d":"linear-gradient(135deg,#2563eb,#1d4ed8)",color:csvImporting?"#475569":"#fff",padding:"13px",fontSize:14,fontWeight:700}}>
-                {csvDone?"✅ Imported Successfully!":csvImporting?`⏳ Importing ${csvPreview.length} deliveries...`:`📥 Import ${csvPreview.length} Deliveries`}
-              </button>
-            )}
+                  // Clear form for next entry
+                  setPdfResult([{customer:"",address:"",phone:"",ticket_number:"",delivery_window:"",notes:"",delivery_date:d.delivery_date||today,assigned_to:d.assigned_to||1,items:[{qty:1,name:"",manufacturer:"",piece_number:""}]}]);
+                  alert("✅ "+d.customer+" added! Form cleared for next delivery.");
+                }} style={{flex:1,background:"linear-gradient(135deg,#059669,#047857)",color:"#fff",padding:"11px",fontSize:13,fontWeight:700}}>
+                  ✅ Add Delivery
+                </button>
+                <button className="btn" onClick={()=>setPdfResult(null)} style={{background:"#1e2d3d",color:"#94a3b8",padding:"11px 14px",fontSize:13}}>Clear</button>
+              </div>
+            </div>
 
-            {/* ROUTE OPTIMIZATION */}
-            {deliveries.length>0&&(
-              <div style={{...C.card,padding:"16px 18px",marginTop:14,borderColor:"#1e3a5f"}}>
-                <div style={{fontWeight:700,fontSize:13,color:"#60a5fa",marginBottom:6}}>🗺️ Route Optimizer</div>
-                <div style={{fontSize:12,color:"#475569",marginBottom:12}}>AI reads all delivery notes to detect real deliveries vs store transfers/pickups, then sorts by location and time window for the most efficient route.</div>
-                <button className="btn" onClick={async()=>{
-                  const today = new Date().toISOString().split("T")[0];
-                  const todayDels = deliveries.filter(d=>(d.delivery_date||today)===today);
-                  if(todayDels.length===0){alert("No deliveries for today to optimize.");return;}
-                  const delSummary = todayDels.map((d,i)=>({
-                    id:d.id, stop:i+1, customer:d.customer, address:d.address,
-                    window:d.delivery_window||"", notes:d.notes||"", items:(d.items||[]).map(x=>x.name).join(", ")
-                  }));
-                  try {
-                    const res = await fetch("/.netlify/functions/ai",{
-                      method:"POST",headers:{"Content-Type":"application/json"},
-                      body:JSON.stringify({
-                        model:"claude-haiku-4-5", max_tokens:800,
-                        messages:[{role:"user",content:`You are optimizing a mattress delivery route in Albuquerque NM. Analyze these deliveries and return an optimized stop order.
-
-Rules:
-1. Flag any delivery as "skip" if notes say: store transfer, CPU (customer pick up), pickup, transfer to store, or similar
-2. Group deliveries by geographic area (Rio Rancho, East Side, South Valley, etc.)
-3. Within same area, sort by time window (morning before afternoon)
-4. Return ONLY valid JSON array: [{"id":"delivery_id","stop_order":1,"area":"area name","type":"delivery or skip","reason":"why skip if applicable"}]
-
-Deliveries: ${JSON.stringify(delSummary)}`}]
-                      })
-                    });
-                    const data = await res.json();
-                    const text = data.content.map(b=>b.text||"").join("").trim();
-                    const optimized = JSON.parse(text.replace(/\`\`\`json|\`\`\`/g,"").trim());
-                    // Apply optimized order
-                    for(const item of optimized){
-                      if(item.type==="skip"){
-                        await sb.from("deliveries").update({status:"Transfer",notes:(item.reason||"Store Transfer/Pickup")}).eq("id",item.id);
-                      } else {
-                        await sb.from("deliveries").update({stop_order:item.stop_order}).eq("id",item.id);
+            {/* Today's imported deliveries */}
+            {(()=>{
+              const today=new Date().toISOString().split("T")[0];
+              const todayDels=deliveries.filter(d=>d.delivery_date===today).sort((a,b)=>(a.stop_order||0)-(b.stop_order||0));
+              if(todayDels.length===0) return null;
+              return(
+                <div style={{...C.card,overflow:"hidden",marginBottom:14}}>
+                  <div style={{padding:"10px 16px",background:"#0a1628",fontSize:11,fontWeight:700,letterSpacing:".08em",color:"#22c55e",textTransform:"uppercase",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                    <span>✅ Today's Deliveries ({todayDels.length})</span>
+                    <button className="btn" onClick={async()=>{
+                      if(!window.confirm("Reset all stop numbers to 1-"+todayDels.length+" for today?")) return;
+                      for(let i=0;i<todayDels.length;i++){
+                        await sb.from("deliveries").update({stop_order:i+1}).eq("id",todayDels[i].id);
                       }
-                    }
-                    const updated = await sb.from("deliveries").select("*");
-                    if(updated.data) setDeliveries(updated.data);
-                    const skipped = optimized.filter(x=>x.type==="skip").length;
-                    alert("✅ Route optimized! " + (optimized.length-skipped) + " deliveries sorted. " + (skipped>0?skipped+" flagged as transfers/pickups.":""));
-                  } catch(e){ alert("Error optimizing route: "+e.message); }
-                }} style={{width:"100%",background:"linear-gradient(135deg,#7c3aed,#4f46e5)",color:"#fff",padding:"11px",fontSize:14,fontWeight:700}}>
-                  🗺️ Optimize Today's Route with AI
+                      const {data}=await sb.from("deliveries").select("*");
+                      if(data) setDeliveries(data);
+                    }} style={{background:"#1c1500",color:"#f59e0b",padding:"3px 8px",fontSize:10}}>🔄 Reset #s</button>
+                  </div>
+                  {todayDels.map((d,i)=>{
+                    const emp=employees.find(e=>e.id===d.assigned_to);
+                    return(
+                      <div key={d.id} style={{padding:"10px 16px",borderTop:i>0?"1px solid #131f2e":"none",display:"flex",alignItems:"center",gap:9,flexWrap:"wrap"}}>
+                        <span style={{fontSize:11,color:"#64748b",fontFamily:"monospace",flexShrink:0}}>#{d.stop_order}</span>
+                        <div style={{flex:1}}>
+                          <div style={{fontWeight:600,fontSize:13,color:"#f1f5f9"}}>{d.customer}</div>
+                          <div style={{fontSize:11,color:"#475569"}}>{(d.items||[]).map(x=>x.qty+"x "+x.name).join(", ")}</div>
+                        </div>
+                        <span style={{fontSize:11,color:"#94a3b8"}}>{emp?.name}</span>
+                        <button className="btn" onClick={async()=>{
+                          await sb.from("deliveries").delete().eq("id",d.id);
+                          setDeliveries(prev=>prev.filter(x=>x.id!==d.id));
+                        }} style={{background:"#2d0a0a",color:"#f87171",padding:"3px 7px",fontSize:10}}>✕</button>
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()}
+
+            {/* Route optimizer */}
+            {deliveries.filter(d=>d.delivery_date===new Date().toISOString().split("T")[0]).length>0&&(
+              <div style={{...C.card,padding:"14px 16px",borderColor:"#1e3a5f"}}>
+                <div style={{fontWeight:600,fontSize:13,color:"#60a5fa",marginBottom:6}}>🗺️ Smart Route Optimizer</div>
+                <div style={{fontSize:12,color:"#475569",marginBottom:10}}>Sorts today's deliveries by area and time window. Marks transfers/pickups automatically.</div>
+                <button className="btn" onClick={async()=>{
+                  const today=new Date().toISOString().split("T")[0];
+                  const todayDels=deliveries.filter(d=>d.delivery_date===today&&d.status!=="Transfer");
+                  // Simple geo sort: group by area keywords then by time window
+                  const getArea=(d)=>{
+                    const addr=(d.address||"").toLowerCase();
+                    const notes=(d.notes||"").toLowerCase();
+                    if(notes.includes("transfer")||notes.includes("cpu")||notes.includes("pickup")) return "ZZZ_TRANSFER";
+                    if(addr.includes("rio rancho")||addr.includes("corrales")) return "A_RIO_RANCHO";
+                    if(addr.includes("west")||addr.includes("coors")||addr.includes("unser")) return "B_WESTSIDE";
+                    if(addr.includes("north")||addr.includes("paseo")||addr.includes("montgomery")) return "C_NORTH";
+                    if(addr.includes("east")||addr.includes("wyoming")||addr.includes("eubank")) return "D_EAST";
+                    if(addr.includes("south")||addr.includes("isleta")||addr.includes("broadway")) return "E_SOUTH";
+                    return "C_CENTRAL";
+                  };
+                  const getTimeScore=(d)=>{
+                    const w=(d.delivery_window||"").toLowerCase();
+                    if(w.includes("8am")||w.includes("9am")||w.includes("10am")) return 1;
+                    if(w.includes("morning")) return 2;
+                    if(w.includes("11am")||w.includes("12pm")||w.includes("noon")) return 3;
+                    if(w.includes("afternoon")) return 4;
+                    if(w.includes("1pm")||w.includes("2pm")||w.includes("3pm")) return 5;
+                    if(w.includes("4pm")||w.includes("5pm")||w.includes("6pm")) return 6;
+                    return 3;
+                  };
+                  const sorted=[...todayDels].sort((a,b)=>{
+                    const areaA=getArea(a),areaB=getArea(b);
+                    if(areaA!==areaB) return areaA.localeCompare(areaB);
+                    return getTimeScore(a)-getTimeScore(b);
+                  });
+                  for(let i=0;i<sorted.length;i++){
+                    const isTransfer=getArea(sorted[i])==="ZZZ_TRANSFER";
+                    await sb.from("deliveries").update({stop_order:i+1,...(isTransfer?{status:"Transfer"}:{})}).eq("id",sorted[i].id);
+                  }
+                  const {data}=await sb.from("deliveries").select("*");
+                  if(data) setDeliveries(data);
+                  alert("✅ Route optimized! "+sorted.length+" deliveries sorted by area and time.");
+                }} style={{width:"100%",background:"linear-gradient(135deg,#7c3aed,#4f46e5)",color:"#fff",padding:"11px",fontSize:13,fontWeight:700}}>
+                  🗺️ Optimize Today's Route
                 </button>
               </div>
             )}
           </div>
         )}
+
 
         {/* SIGNATURES */}
         {tab==="signatures"&&(
