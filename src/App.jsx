@@ -3038,7 +3038,7 @@ export default function App() {
               );
             })}
           </div>
-        );}
+          );
         })()}
 
         {/* MANAGER PREP */}
