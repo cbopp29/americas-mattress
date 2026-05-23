@@ -1,3 +1,4 @@
+// v2.1 - PDF parser fix, 2-route import, problems tab fix
 import React, { useState, useEffect, useRef } from "react";
 import { createClient } from "@supabase/supabase-js";
 
