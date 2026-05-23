@@ -3160,38 +3160,115 @@ export default function App() {
                 if(!file) return;
                 setPdfImporting(true);
                 setPdfResult(null);
-                const reader=new FileReader();
-                reader.onload=async(ev)=>{
-                  try {
-                    const base64=ev.target.result.split(",")[1];
-                    const res=await fetch("/.netlify/functions/ai",{
-                      method:"POST",
-                      headers:{"Content-Type":"application/json"},
-                      body:JSON.stringify({
-                        model:"claude-haiku-4-5",
-                        max_tokens:4000,
-                        messages:[{
-                          role:"user",
-                          content:[
-                            {type:"document",source:{type:"base64",media_type:"application/pdf",data:base64}},
-                            {type:"text",text:"This is an America's Mattress EZ Process Pro delivery receipt PDF with MULTIPLE deliveries (one per page). Extract ALL deliveries. For each one extract: sale_number (Sale Number field), memo_number (Memo # field), customer (First + Last name), address (full street + city + state + zip), phone (Tel.Home), delivery_date (Estimated Date of Delivery as YYYY-MM-DD), delivery_window (Morning/Afternoon/time range from the date field), notes (full Instruction field text), is_transfer (true if memo says PICK UP MEMO or instructions say CPU/pickup/transfer/will pick up/PU), is_haul_off (true if DISPOSALFEE in items), floor (apartment floor number if mentioned in address or instructions), items array (only actual mattresses/bases/protectors/accessories - skip DISPOSALFEE/ABQDELIVERY/RIORANCHODELIVERY/LOSLUNAS etc delivery fee line items), and for each item: qty, name (Item Description), manufacturer (Man# column), piece_number (Piece# column). Return ONLY a valid JSON array, no other text: [{sale_number,memo_number,customer,address,phone,delivery_date,delivery_window,notes,is_transfer,is_haul_off,floor,items:[{qty,name,manufacturer,piece_number}]}]"}
-                          ]
-                        }]
-                      })
+                try {
+                  // Load PDF.js from CDN
+                  if(!window.pdfjsLib) {
+                    await new Promise((res,rej)=>{
+                      const s=document.createElement("script");
+                      s.src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
+                      s.onload=res; s.onerror=rej;
+                      document.head.appendChild(s);
                     });
-                    const data=await res.json();
-                    if(data.error){alert("Error: "+data.error.message);setPdfImporting(false);return;}
-                    const txt=data.content.map(b=>b.text||"").join("").trim();
-                    const parsed=JSON.parse(txt.replace(/```json|```/g,"").trim());
-                    setPdfResult(Array.isArray(parsed)?parsed:[parsed]);
-                  } catch(err) {
-                    console.error(err);
-                    alert("Could not read PDF: "+err.message);
+                    window.pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
                   }
-                  setPdfImporting(false);
-                  e.target.value="";
-                };
-                reader.readAsDataURL(file);
+                  const arrayBuf = await file.arrayBuffer();
+                  const pdf = await window.pdfjsLib.getDocument({data:arrayBuf}).promise;
+                  
+                  // Extract text from all pages
+                  const pages = [];
+                  for(let i=1;i<=pdf.numPages;i++){
+                    const page = await pdf.getPage(i);
+                    const tc = await page.getTextContent();
+                    const text = tc.items.map(x=>x.str).join(" ");
+                    pages.push(text);
+                  }
+                  
+                  // Parse each page as a delivery
+                  const parseDelivery = (text) => {
+                    const d = {};
+                    // Skip non-delivery pages
+                    if(!text.includes("Last Name:")) return null;
+                    
+                    // Customer name
+                    let m = text.match(/Last Name:\s*(\S+)\s+First Name:\s*(\S+)/);
+                    if(m) d.customer = m[2]+" "+m[1];
+                    else return null;
+                    
+                    // Address
+                    m = text.match(/Address\(Street\):\s*(.+?)\s+City:\s*(.+?)\s+State:\s*(\w+)\s+Zip:\s*(\w+)/);
+                    if(m) d.address = m[1].trim()+", "+m[2].trim()+", "+m[3]+" "+m[4];
+                    
+                    // Phone
+                    m = text.match(/Tel\.Home\s+([\(\d\)\s\-\.]{10,14})/);
+                    if(m) d.phone = m[1].trim();
+                    
+                    // Date and window
+                    m = text.match(/Estimated Date of Delivery:\s*(\d+)\/(\d+)\/(\d+)\s+(Morning|Afternoon|[\d:AaPpMm\s\-]+)/);
+                    if(m){
+                      const yr = m[3].length===2?"20"+m[3]:m[3];
+                      d.delivery_date = yr+"-"+m[1].padStart(2,"0")+"-"+m[2].padStart(2,"0");
+                      d.delivery_window = m[4].trim();
+                    }
+                    
+                    // Sale and memo numbers
+                    m = text.match(/Sale Number:\s*(\d+)/);
+                    if(m) d.sale_number = m[1];
+                    m = text.match(/Memo #:\s*(\d+)/);
+                    if(m) d.memo_number = m[1];
+                    
+                    // Instructions
+                    m = text.match(/Instruction:\s*([\s\S]+?)(?:Client Comment|Copy to be signed)/);
+                    if(m) d.notes = m[1].trim().replace(/\s+/g," ").substring(0,400);
+                    
+                    // Transfer/pickup detection
+                    const allText = (d.notes||""+text).toLowerCase();
+                    d.is_transfer = text.includes("PICK UP MEMO") || 
+                      /(cpu|pick up|pickup|will pu|transfer to|pu on|customer will pu)/.test(allText);
+                    d.is_haul_off = /disposalfee/i.test(text);
+                    
+                    // Floor detection
+                    m = (d.notes||"").match(/(\d+)(st|nd|rd|th)\s+floor/i) || 
+                        text.match(/Apt\.:\s*(\d+)/);
+                    if(m) d.floor = m[1];
+                    
+                    // Parse items - look for manufacturer/piece# pattern
+                    const SKIP_ITEMS = ["DISPOSALFEE","ABQDELIVERY","RIORANCHODELIVERY","LOSLUNAS","SANTA_FE","RIORANCHODELIVERY","BELENDELIVERY"];
+                    const items = [];
+                    // Match rows like: SERTA 500100092-1050 1 PSX 24 KNOX PL TT Queen
+                    const itemRegex = /([A-Z][A-Z0-9]+)\s+([\w\.\-]+)\s+(\d+)\s+([A-Z][^\d]{5,60}?)(?=\s+[A-Z]{2,}|\s+Back Order|Reg \d|$)/g;
+                    let im;
+                    while((im=itemRegex.exec(text))!==null){
+                      const man = im[1], piece = im[2], qty = parseInt(im[3]), name = im[4].trim();
+                      if(!SKIP_ITEMS.some(s=>man.includes(s)||name.toUpperCase().includes(s))){
+                        if(name.length>3) items.push({qty,name,manufacturer:man,piece_number:piece});
+                      }
+                    }
+                    // Fallback: simpler item detection
+                    if(items.length===0){
+                      const lines = text.split(/\s{2,}/);
+                      lines.forEach(line=>{
+                        const lm = line.match(/^(\d+)\s+(.{5,50})$/);
+                        if(lm&&!SKIP_ITEMS.some(s=>line.toUpperCase().includes(s))){
+                          items.push({qty:parseInt(lm[1]),name:lm[2].trim(),manufacturer:"",piece_number:""});
+                        }
+                      });
+                    }
+                    d.items = items.length>0?items:[{qty:1,name:"See delivery notes",manufacturer:"",piece_number:""}];
+                    return d;
+                  };
+                  
+                  const delivs = pages.map(parseDelivery).filter(Boolean);
+                  if(delivs.length===0){
+                    alert("Could not find deliveries in PDF. Make sure this is an EZ Process Pro delivery receipt.");
+                  } else {
+                    setPdfResult(delivs);
+                  }
+                } catch(err){
+                  console.error(err);
+                  alert("Error reading PDF: "+err.message);
+                }
+                setPdfImporting(false);
+                e.target.value="";
               }} style={{...C.inp,padding:"8px",marginBottom:10}}/>
 
               {pdfImporting&&(
