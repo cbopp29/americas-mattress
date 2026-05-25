@@ -3187,74 +3187,50 @@ export default function App() {
                   // Parse each page as a delivery
                   const parseDelivery = (text) => {
                     const d = {};
-                    // Skip non-delivery pages
                     if(!text.includes("Last Name:")) return null;
-                    
-                    // Customer name
                     let m = text.match(/Last Name:\s*(\S+)\s+First Name:\s*(\S+)/);
-                    if(m) d.customer = m[2]+" "+m[1];
-                    else return null;
-                    
-                    // Address
+                    if(m) d.customer = m[2]+" "+m[1]; else return null;
                     m = text.match(/Address\(Street\):\s*(.+?)\s+City:\s*(.+?)\s+State:\s*(\w+)\s+Zip:\s*(\w+)/);
                     if(m) d.address = m[1].trim()+", "+m[2].trim()+", "+m[3]+" "+m[4];
-                    
-                    // Phone
-                    m = text.match(/Tel\.Home\s+([\(\d\)\s\-\.]{10,14})/);
-                    if(m) d.phone = m[1].trim();
-                    
-                    // Date and window
-                    m = text.match(/Estimated Date of Delivery:\s*(\d+)\/(\d+)\/(\d+)\s+(Morning|Afternoon|[\d:AaPpMm\s\-]+)/);
-                    if(m){
-                      const yr = m[3].length===2?"20"+m[3]:m[3];
-                      d.delivery_date = yr+"-"+m[1].padStart(2,"0")+"-"+m[2].padStart(2,"0");
-                      d.delivery_window = m[4].trim();
-                    }
-                    
-                    // Sale and memo numbers
-                    m = text.match(/Sale Number:\s*(\d+)/);
-                    if(m) d.sale_number = m[1];
-                    m = text.match(/Memo #:\s*(\d+)/);
-                    if(m) d.memo_number = m[1];
-                    
-                    // Instructions
-                    m = text.match(/Instruction:\s*([\s\S]+?)(?:Client Comment|Copy to be signed)/);
-                    if(m) d.notes = m[1].trim().replace(/\s+/g," ").substring(0,400);
-                    
-                    // Transfer/pickup detection
-                    const allText = (d.notes||""+text).toLowerCase();
-                    d.is_transfer = text.includes("PICK UP MEMO") || 
-                      /(cpu|pick up|pickup|will pu|transfer to|pu on|customer will pu)/.test(allText);
-                    d.is_haul_off = /disposalfee/i.test(text);
-                    
-                    // Floor detection
-                    m = (d.notes||"").match(/(\d+)(st|nd|rd|th)\s+floor/i) || 
-                        text.match(/Apt\.:\s*(\d+)/);
-                    if(m) d.floor = m[1];
-                    
-                    // Parse items - look for manufacturer/piece# pattern
-                    const SKIP_ITEMS = ["DISPOSALFEE","ABQDELIVERY","RIORANCHODELIVERY","LOSLUNAS","SANTA_FE","RIORANCHODELIVERY","BELENDELIVERY"];
-                    const items = [];
-                    // Match rows like: SERTA 500100092-1050 1 PSX 24 KNOX PL TT Queen
-                    const itemRegex = /([A-Z][A-Z0-9]+)\s+([\w\.\-]+)\s+(\d+)\s+([A-Z][^\d]{5,60}?)(?=\s+[A-Z]{2,}|\s+Back Order|Reg \d|$)/g;
-                    let im;
-                    while((im=itemRegex.exec(text))!==null){
-                      const man = im[1], piece = im[2], qty = parseInt(im[3]), name = im[4].trim();
-                      if(!SKIP_ITEMS.some(s=>man.includes(s)||name.toUpperCase().includes(s))){
-                        if(name.length>3) items.push({qty,name,manufacturer:man,piece_number:piece});
+                    m = text.match(/Apt\.:\s*(\S+)\s+Apt\. Complex/);
+                    if(m&&m[1]&&m[1]!=="Apt."&&!/^[A-Za-z]{2,}$/.test(m[1])&&m[1].length<15) d.address=(d.address||"")+" Apt "+m[1];
+                    m = text.match(/Tel\.Home\s+([\(\d\)\s\-\.]{7,15})/);
+                    if(m) d.phone = m[1].trim().replace(/\s/g,"");
+                    m = text.match(/Estimated Date of Delivery:\s*(\d+)\/(\d+)\/(\d+)\s*(Morning|Afternoon|[\d:AaPpMm\s\-]+)/);
+                    if(m){const yr=m[3].length===2?"20"+m[3]:m[3];d.delivery_date=yr+"-"+m[1].padStart(2,"0")+"-"+m[2].padStart(2,"0");d.delivery_window=m[4].trim();}
+                    m=text.match(/Sale Number:\s*(\d+)/);if(m)d.sale_number=m[1];
+                    m=text.match(/Memo #:\s*(\d+)/);if(m)d.memo_number=m[1];
+                    m=text.match(/Instruction:\s*([\s\S]+?)(?:Client Comment|Copy to be signed)/);
+                    if(m)d.notes=m[1].trim().replace(/\s+/g," ").substring(0,400);
+                    const allT=((d.notes||"")+" "+text).toLowerCase();
+                    d.is_transfer=text.includes("PICK UP MEMO")||/(\bcpu\b|pick up|pickup|will pu|transfer to|pu on|customer will pu)/.test(allT);
+                    d.is_haul_off=/disposalfee/i.test(text);
+                    m=(d.notes||"").match(/(\d+)(st|nd|rd|th)\s*floor/i);if(m)d.floor=m[1];
+                    const SKIP=["DISPOSALFEE","ABQDELIVERY","RIORANCHODELIVERY","LOSLUNAS","BELENDELIVERY","SANTA_FE_LOCAL","LOCAL","DELIVERY"];
+                    const items=[];
+                    const parseSection=(sec)=>{
+                      if(!sec)return;
+                      // Fix split piece numbers: "500100092- 1050" -> "500100092-1050"
+                      const s=sec.replace(/(\d+)-\s+(\d{3,})/g,"$1-$2");
+                      // Match: rowNum MANUFACTURER PIECE# QTY DESCRIPTION
+                      const re=/(?:^|\s)(\d{1,2})\s+([A-Z][A-Z0-9]{1,10})\s+([A-Z0-9][\w\-\.]{2,24})\s+(\d{1,2})\s+([A-Z].{4,80}?)(?=\s+\d{1,2}\s+[A-Z]{2,}|\s*$)/gm;
+                      let im;
+                      while((im=re.exec(s))!==null){
+                        const man=im[2],piece=im[3],qty=parseInt(im[4]);
+                        let name=im[5].trim().replace(/\s+/g," ");
+                        if(SKIP.some(x=>man.toUpperCase().startsWith(x)))continue;
+                        if(SKIP.some(x=>name.toUpperCase().includes(x)))continue;
+                        if(/delivery in|removal.*per pc|per pc.*subject/i.test(name))continue;
+                        name=name.replace(/\s+[Rr]eg\s+[\d,\.]+.*/,"").replace(/\s+[Ss]ale\s+[\d,\.]+.*/,"").trim();
+                        if(name.length<3||qty<1||qty>20)continue;
+                        if(!items.some(x=>x.piece_number===piece))items.push({qty,name:name.substring(0,80),manufacturer:man,piece_number:piece});
                       }
-                    }
-                    // Fallback: simpler item detection
-                    if(items.length===0){
-                      const lines = text.split(/\s{2,}/);
-                      lines.forEach(line=>{
-                        const lm = line.match(/^(\d+)\s+(.{5,50})$/);
-                        if(lm&&!SKIP_ITEMS.some(s=>line.toUpperCase().includes(s))){
-                          items.push({qty:parseInt(lm[1]),name:lm[2].trim(),manufacturer:"",piece_number:""});
-                        }
-                      });
-                    }
-                    d.items = items.length>0?items:[{qty:1,name:"See delivery notes",manufacturer:"",piece_number:""}];
+                    };
+                    const allSalesIdx=text.search(/ALL SALES ARE FINAL/i);
+                    const tableText=allSalesIdx>-1?text.substring(0,allSalesIdx):text;
+                    const [mainSec,backSec]=tableText.split(/Back Order Information/i);
+                    parseSection(mainSec);parseSection(backSec);
+                    d.items=items.length>0?items:[{qty:1,name:"See ticket",manufacturer:"",piece_number:""}];
                     return d;
                   };
                   
