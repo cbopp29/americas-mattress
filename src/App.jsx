@@ -230,7 +230,7 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
   const [newDel, setNewDel] = useState({id:"",customer:"",address:"",phone:"",items:[{qty:1,name:""}],delivery_window:"",assigned_to:user.id,status:"Scheduled",notes:"",floor:"1",elevator:false,removal_requested:false,transfer_scheduled:false,route_notes:"",stop_order:1,delivery_date:new Date().toISOString().split("T")[0],ticket_number:"",helper_id:0});
   const [prepDate, setPrepDate] = useState(()=>{ const t=new Date(); t.setDate(t.getDate()+1); return t.toISOString().split("T")[0]; });
   const [msgInput, setMsgInput] = useState("");
-  const [probInput, setProbInput] = useState({ description:"", type:"customer" });
+  const [probInput, setProbInput] = useState({ description:"", type:"customer", customer:"", ticket_number:"" });
   const fileRef = React.useRef();
   const [uploadingFor, setUploadingFor] = useState(null);
   const [signingDel, setSigningDel] = useState(null);
@@ -308,10 +308,10 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
 
   const logProb = async () => {
     if (!probInput.description.trim()) return;
-    const p = { id:Date.now(), emp_name:user.name, description:probInput.description, type:probInput.type, escalation_step:0, time:new Date().toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}), resolved:false };
+    const p = { id:Date.now(), emp_name:user.name, emp_id:user.id, customer:probInput.customer||"", ticket_number:probInput.ticket_number||"", description:probInput.description, type:probInput.type, escalation_step:0, time:new Date().toLocaleDateString("en-US"), resolved:false, status:"Open" };
     try { await sb.from("problems").insert(p); } catch(e) {}
     onLogProblem(p);
-    setProbInput({ description:"", type:"customer" });
+    setProbInput({ description:"", type:"customer", customer:"", ticket_number:"" });
   };
 
   // Live GPS tracking
@@ -682,9 +682,9 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
           user={user}
           isEs={isEs}
           onClose={()=>setSigningDel(null)}
-          onSigned={(url,at)=>{
+          onSigned={(url,at,signedBy)=>{
             onStatusUpdate(signingDel.id,"Delivered");
-            onSaveSignature(signingDel.id, url, at);
+            onSaveSignature(signingDel.id, url, at, signedBy);
             setSigningDel(null);
           }}
         />
@@ -850,19 +850,30 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
           <div>
             <div style={{...cardStyle,padding:14,marginBottom:12}}>
               <div style={{fontWeight:700,fontSize:14,color:"#f87171",marginBottom:12}}>⚠️ {isEs?"Reportar un Problema":"Report a Problem"}</div>
-              <select value={probInput.type} onChange={e=>setProbInput(p=>({...p,type:e.target.value}))} style={{...inputStyle,marginBottom:10}}>
+              <div style={{marginBottom:8}}>
+                <div style={{fontSize:11,color:"#475569",marginBottom:4}}>{isEs?"Cliente (opcional)":"Customer (optional)"}</div>
+                <input value={probInput.customer||""} onChange={e=>setProbInput(p=>({...p,customer:e.target.value}))} placeholder="Customer name" style={inputStyle}/>
+              </div>
+              <div style={{marginBottom:8}}>
+                <div style={{fontSize:11,color:"#475569",marginBottom:4}}>{isEs?"Ticket # (opcional)":"Ticket # (optional)"}</div>
+                <input value={probInput.ticket_number||""} onChange={e=>setProbInput(p=>({...p,ticket_number:e.target.value}))} placeholder="e.g. 30503" style={inputStyle}/>
+              </div>
+              <select value={probInput.type} onChange={e=>setProbInput(p=>({...p,type:e.target.value}))} style={{...inputStyle,marginBottom:8}}>
                 <option value="customer">{isEs?"Problema con Cliente":"Customer Issue"}</option>
                 <option value="product">{isEs?"Problema con Producto":"Product / Vendor"}</option>
+                <option value="delivery">{isEs?"Problema de Entrega":"Delivery Issue"}</option>
+                <option value="warranty">{isEs?"Garantía":"Warranty"}</option>
               </select>
               <textarea value={probInput.description} onChange={e=>setProbInput(p=>({...p,description:e.target.value}))}
-                placeholder={isEs?"Describe el problema...":"Describe the problem..."} rows={4} style={{...inputStyle,resize:"vertical",marginBottom:10}}/>
+                placeholder={isEs?"Describe el problema...":"Describe the problem in detail..."} rows={3} style={{...inputStyle,resize:"vertical",marginBottom:10}}/>
               <button className="btn" onClick={logProb} style={{width:"100%",background:"linear-gradient(135deg,#dc2626,#b91c1c)",color:"#fff",padding:13,fontSize:14,fontWeight:700}}>
-                ⚠️ {isEs?"Reportar":"Report Problem"}
+                ⚠️ {isEs?"Reportar":"Submit to Manager"}
               </button>
+              <div style={{fontSize:11,color:"#475569",textAlign:"center",marginTop:8}}>{isEs?"El gerente revisará esto.":"Manager will review this in the Challenge Log."}</div>
             </div>
             {problems.filter(p=>p.emp_name===user.name||p.emp_id===user.id).length===0?(
               <div style={{...cardStyle,padding:24,textAlign:"center",color:"#475569",fontSize:13,marginTop:8}}>
-                {isEs?"No has reportado problemas.":"No problems reported yet."}
+                {isEs?"No has reportado problemas.":"No problems submitted yet."}
               </div>
             ):problems.filter(p=>p.emp_name===user.name||p.emp_id===user.id).map(p=>(
               <div key={p.id} style={{...cardStyle,padding:"13px 15px",marginBottom:10,borderColor:p.resolved?"#1e3a20":"#3d1515"}}>
@@ -1568,7 +1579,7 @@ function SignaturePad({ delivery, user, onSigned, onClose, isEs }) {
             items: delivery.items||[],
           };
           await sb.from("signatures").insert(sigRecord);
-          onSigned(url, now);
+          onSigned(url, now, printedName.trim());
         }
         setSaving(false);
       }, "image/png");
@@ -2065,8 +2076,8 @@ export default function App() {
       onLogProblem={(p)=>setProblems(prev=>[...prev,p])}
       onSaveDelivery={saveDelivery}
       smsTemplates={smsTemplates}
-      onSaveSignature={(delId, url, at)=>{
-        setDeliveries(prev=>prev.map(d=>d.id===delId?{...d,signature_url:url,signed_at:at,status:"Delivered"}:d));
+      onSaveSignature={(delId, url, at, signedBy)=>{
+        setDeliveries(prev=>prev.map(d=>d.id===delId?{...d,signature_url:url,signed_at:at,signed_by:signedBy,status:"Delivered"}:d));
         sb.from("signatures").select("*").order("signed_at",{ascending:false}).then(({data})=>{if(data)setSignatures(data);});
       }}
     />
@@ -2363,7 +2374,7 @@ export default function App() {
                 }} style={{background:"#1c1500",color:"#f59e0b",padding:"7px 13px",fontSize:12,fontWeight:600}}>
                   🔄 New Day Reset
                 </button>
-                <button className="btn" onClick={()=>setEditingDelivery({id:"",customer:"",address:"",phone:"",items:[{qty:1,name:""}],delivery_window:"",assigned_to:1,status:"Scheduled",notes:"",floor:"1",elevator:false,removal_requested:false,transfer_scheduled:false,route_notes:"",stop_order:(deliveries.filter(d=>d.delivery_date===new Date().toISOString().split("T")[0]).length)+1,delivery_date:new Date().toISOString().split("T")[0],ticket_number:"",helper_id:0})} style={{background:"linear-gradient(135deg,#2563eb,#1d4ed8)",color:"#fff",padding:"7px 15px",fontSize:13}}>➕ Add Delivery</button>
+                <button className="btn" onClick={()=>setEditingDelivery({id:"",customer:"",address:"",phone:"",items:[{qty:1,name:""}],delivery_window:"",assigned_to:0,status:"Scheduled",notes:"",floor:"1",elevator:false,removal_requested:false,transfer_scheduled:false,route_notes:"",stop_order:(deliveries.filter(d=>d.delivery_date===new Date().toISOString().split("T")[0]).length)+1,delivery_date:new Date().toISOString().split("T")[0],ticket_number:"",helper_id:0})} style={{background:"linear-gradient(135deg,#2563eb,#1d4ed8)",color:"#fff",padding:"7px 15px",fontSize:13}}>➕ Add Delivery</button>
               </div>
             </div>
             {editingDelivery&&(
@@ -2550,7 +2561,7 @@ export default function App() {
           </div>
         )}
 
-        {/* PROBLEMS */}
+        {/* PROBLEMS & CHALLENGE LOG */}
         {tab==="problems"&&(
           <div className="fade">{(()=>{
           const filteredProbs = problems.filter(p=>{
@@ -2562,42 +2573,45 @@ export default function App() {
           const saveNewProblem = async () => {
             if(!newProb.description.trim()) return;
             const p = {
-              id:Date.now(),emp_name:currentUser.name,emp_id:currentUser.id,
-              customer:newProb.customer,ticket_number:newProb.ticket_number,
-              eta:newProb.eta,description:newProb.description,
-              what_to_do:newProb.what_to_do,type:newProb.type,
-              escalation_step:0,time:new Date().toLocaleDateString("en-US"),
-              resolved:false,status:newProb.status||"Open",
+              id:Date.now(), emp_name:currentUser.name, emp_id:currentUser.id,
+              customer:newProb.customer, ticket_number:newProb.ticket_number,
+              eta:newProb.eta, description:newProb.description,
+              what_to_do:newProb.what_to_do, type:newProb.type,
+              escalation_step:0, time:new Date().toLocaleDateString("en-US"),
+              resolved:false, status:newProb.status||"Open",
             };
             await sb.from("problems").insert(p);
             setProblems(prev=>[p,...prev]);
             setNewProb({customer:"",ticket_number:"",eta:"",description:"",what_to_do:"",type:"customer",status:"Open"});
           };
+
           const updateProblem = async (id, updates) => {
             await sb.from("problems").update(updates).eq("id",id);
             setProblems(prev=>prev.map(p=>p.id===id?{...p,...updates}:p));
             setEditingProb(null);
           };
+
           const exportCSV = () => {
             const rows = [["CUSTOMER","TICKET #","ETA","PROBLEM","WHAT NEEDS TO BE DONE?","STATUS","DATE","REPORTED BY","TYPE"]];
             problems.forEach(p=>{
               rows.push([p.customer||"",p.ticket_number||"",p.eta||"",p.description||"",p.what_to_do||"",p.resolved?"done":(p.status||"Open"),p.time||"",p.emp_name||"",p.type||""]);
             });
-            const csv = rows.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(",")).join("\n");
-            const blob = new Blob([csv],{type:"text/csv"});
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement("a");
-            a.href=url; a.download="problems_"+new Date().toISOString().split("T")[0]+".csv"; a.click();
+            const csv=rows.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(",")).join("\n");
+            const blob=new Blob([csv],{type:"text/csv"});
+            const url=URL.createObjectURL(blob);
+            const a=document.createElement("a");
+            a.href=url;a.download="challenge_log_"+new Date().toISOString().split("T")[0]+".csv";a.click();
           };
 
           return(
-          <div className="fade">
+          <div>
             {/* Header */}
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12,flexWrap:"wrap",gap:8}}>
-              <div style={{fontWeight:700,fontSize:15,color:"#f1f5f9"}}>⚠️ Problem Log</div>
-              <div style={{display:"flex",gap:7}}>
-                <button className="btn" onClick={exportCSV} style={{background:"#1e2d3d",color:"#60a5fa",padding:"6px 12px",fontSize:11}}>📥 Export CSV</button>
+              <div>
+                <div style={{fontWeight:700,fontSize:15,color:"#f1f5f9"}}>⚠️ Challenge Log</div>
+                <div style={{fontSize:12,color:"#475569",marginTop:2}}>Matches your Google Sheet format. Manager access only.</div>
               </div>
+              <button className="btn" onClick={exportCSV} style={{background:"#1e2d3d",color:"#22c55e",padding:"6px 12px",fontSize:11,fontWeight:600}}>📥 Export CSV → Google Sheets</button>
             </div>
 
             {/* Add new problem */}
@@ -2614,7 +2628,7 @@ export default function App() {
                 </div>
                 <div>
                   <div style={{fontSize:10,color:"#475569",marginBottom:3}}>ETA / Expected Date</div>
-                  <input value={newProb.eta} onChange={e=>setNewProb(p=>({...p,eta:e.target.value}))} placeholder="e.g. Next week" style={C.inp}/>
+                  <input value={newProb.eta} onChange={e=>setNewProb(p=>({...p,eta:e.target.value}))} placeholder="e.g. Next week / 5/20" style={C.inp}/>
                 </div>
                 <div>
                   <div style={{fontSize:10,color:"#475569",marginBottom:3}}>Type</div>
@@ -2623,13 +2637,15 @@ export default function App() {
                     <option value="product">📦 Product / Vendor</option>
                     <option value="delivery">🚛 Delivery Issue</option>
                     <option value="internal">🏢 Internal</option>
+                    <option value="warranty">🔍 Warranty</option>
+                    <option value="layaway">💰 Layaway</option>
                   </select>
                 </div>
               </div>
               <div style={{marginBottom:8}}>
                 <div style={{fontSize:10,color:"#475569",marginBottom:3}}>Problem Description</div>
                 <textarea value={newProb.description} onChange={e=>setNewProb(p=>({...p,description:e.target.value}))}
-                  placeholder="Describe the problem in detail..." rows={3} style={{...C.inp,resize:"vertical"}}/>
+                  placeholder="Describe the problem..." rows={2} style={{...C.inp,resize:"vertical"}}/>
               </div>
               <div style={{marginBottom:10}}>
                 <div style={{fontSize:10,color:"#475569",marginBottom:3}}>What Needs To Be Done?</div>
@@ -2660,7 +2676,7 @@ export default function App() {
               </div>
             ):(
               filteredProbs.map(p=>(
-                <div key={p.id} style={{...C.card,marginBottom:10,padding:"14px 16px",borderColor:p.resolved?"#1e3a20":p.type==="delivery"?"#1c1500":"#3d1515"}}>
+                <div key={p.id} style={{...C.card,marginBottom:10,padding:"14px 16px",borderLeft:`3px solid ${p.resolved?"#22c55e":p.type==="warranty"?"#f59e0b":p.type==="delivery"?"#60a5fa":"#f87171"}`}}>
                   {editingProb===p.id?(
                     <div>
                       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:7,marginBottom:8}}>
@@ -2671,6 +2687,7 @@ export default function App() {
                             <option>In Progress</option>
                             <option>Waiting on Vendor</option>
                             <option>Waiting on Customer</option>
+                            <option>Waiting on Brian/Scott</option>
                             <option>Done</option>
                           </select>
                         </div>
@@ -2680,38 +2697,35 @@ export default function App() {
                         </div>
                       </div>
                       <div style={{marginBottom:8}}>
-                        <div style={{fontSize:10,color:"#475569",marginBottom:2}}>What Needs To Be Done</div>
-                        <textarea defaultValue={p.what_to_do||""} id={`wtd-${p.id}`} rows={2} style={{...C.inp,resize:"vertical"}}/>
+                        <div style={{fontSize:10,color:"#475569",marginBottom:2}}>What Needs To Be Done / Update</div>
+                        <textarea defaultValue={p.what_to_do||""} id={`wtd-${p.id}`} rows={3} style={{...C.inp,resize:"vertical"}}/>
                       </div>
                       <div style={{display:"flex",gap:7}}>
                         <button className="btn" onClick={()=>{
                           const status=document.getElementById(`status-${p.id}`).value;
                           const eta=document.getElementById(`eta-${p.id}`).value;
                           const what_to_do=document.getElementById(`wtd-${p.id}`).value;
-                          const resolved=status==="Done";
-                          updateProblem(p.id,{status,eta,what_to_do,resolved});
-                        }} style={{flex:1,background:"linear-gradient(135deg,#059669,#047857)",color:"#fff",padding:"8px",fontSize:12,fontWeight:600}}>💾 Save</button>
+                          updateProblem(p.id,{status,eta,what_to_do,resolved:status==="Done"});
+                        }} style={{flex:1,background:"linear-gradient(135deg,#059669,#047857)",color:"#fff",padding:"8px",fontSize:12,fontWeight:600}}>💾 Save Update</button>
                         <button className="btn" onClick={()=>setEditingProb(null)} style={{background:"#1e2d3d",color:"#94a3b8",padding:"8px 12px",fontSize:12}}>Cancel</button>
                       </div>
                     </div>
                   ):(
                     <div>
-                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8,flexWrap:"wrap",gap:6}}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:6,flexWrap:"wrap",gap:6}}>
                         <div style={{flex:1}}>
                           <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:4,flexWrap:"wrap"}}>
                             {p.customer&&<span style={{fontWeight:700,fontSize:14,color:"#f1f5f9"}}>{p.customer}</span>}
                             {p.ticket_number&&<span style={{fontSize:11,background:"#1e3a5f",color:"#60a5fa",borderRadius:4,padding:"2px 7px"}}>#{p.ticket_number}</span>}
-                            <span style={{fontSize:11,background:p.type==="customer"?"#0c2340":p.type==="delivery"?"#1c1500":"#1a0a2e",color:p.type==="customer"?"#60a5fa":p.type==="delivery"?"#f59e0b":"#c084fc",borderRadius:4,padding:"2px 7px"}}>
-                              {p.type==="customer"?"👤":p.type==="delivery"?"🚛":"📦"} {p.type}
-                            </span>
-                            <span style={{fontSize:11,background:p.resolved?"#052e16":p.status==="In Progress"?"#0c2340":"#1c1500",color:p.resolved?"#4ade80":p.status==="In Progress"?"#60a5fa":"#f59e0b",borderRadius:4,padding:"2px 7px",fontWeight:600}}>
+                            <span style={{fontSize:11,background:"#1e2d3d",color:"#94a3b8",borderRadius:4,padding:"2px 6px"}}>{p.type}</span>
+                            <span style={{fontSize:11,background:p.resolved?"#052e16":p.status==="In Progress"?"#0c2340":p.status==="Waiting on Vendor"?"#1c1500":"#2d0a0a",color:p.resolved?"#4ade80":p.status==="In Progress"?"#60a5fa":p.status==="Waiting on Vendor"?"#f59e0b":"#f87171",borderRadius:4,padding:"2px 7px",fontWeight:600}}>
                               {p.resolved?"✅ Done":(p.status||"Open")}
                             </span>
                           </div>
-                          <div style={{fontSize:13,color:"#e2e8f0",marginBottom:4,lineHeight:1.5}}>{p.description}</div>
+                          <div style={{fontSize:13,color:"#e2e8f0",marginBottom:p.what_to_do?6:0,lineHeight:1.5}}>{p.description}</div>
                           {p.what_to_do&&<div style={{fontSize:12,color:"#60a5fa",background:"#0c1f38",borderRadius:6,padding:"5px 9px",marginBottom:4}}>→ {p.what_to_do}</div>}
-                          <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
-                            {p.eta&&<span style={{fontSize:11,color:"#a78bfa"}}>📅 ETA: {p.eta}</span>}
+                          <div style={{display:"flex",gap:10,flexWrap:"wrap",marginTop:4}}>
+                            {p.eta&&<span style={{fontSize:11,color:"#a78bfa"}}>📅 {p.eta}</span>}
                             <span style={{fontSize:11,color:"#475569"}}>{p.time} · {p.emp_name}</span>
                           </div>
                         </div>
@@ -2729,6 +2743,7 @@ export default function App() {
           );
           })()}</div>
         )}
+
 
         {/* SMS */}
         {tab==="comms"&&(
@@ -3210,8 +3225,11 @@ export default function App() {
                     const items=[];
                     const parseSection=(sec)=>{
                       if(!sec)return;
-                      // Fix split piece numbers: "500100092- 1050" -> "500100092-1050"
-                      const s=sec.replace(/(\d+)-\s+(\d{3,})/g,"$1-$2");
+                      // Fix split piece numbers across lines: "500100092- 1050" or "BD500124399-\n6050"
+                      const s=sec
+                        .replace(/(\w+)-\s+(\d{3,})/g,"$1-$2")  // "500100092- 1050"
+                        .replace(/(\w+)-\n\s*(\w+)/g,"$1-$2")   // split across newline
+                        .replace(/([A-Z]{2,}\d+)-([\s\n]+)(\d)/g,"$1-$3"); // "BD500124399- 6050"
                       // Match: rowNum MANUFACTURER PIECE# QTY DESCRIPTION
                       const re=/(?:^|\s)(\d{1,2})\s+([A-Z][A-Z0-9]{1,10})\s+([A-Z0-9][\w\-\.]{2,24})\s+(\d{1,2})\s+([A-Z].{4,80}?)(?=\s+\d{1,2}\s+[A-Z]{2,}|\s*$)/gm;
                       let im;
@@ -3306,7 +3324,7 @@ export default function App() {
                           id:nid,customer:del.customer,address:del.address,phone:del.phone||"",
                           items:realItems.length>0?realItems:[{qty:1,name:"See notes"}],
                           delivery_window:del.delivery_window||"Morning",
-                          assigned_to:1,status:isTransfer?"Transfer":"Scheduled",
+                          assigned_to:0,status:isTransfer?"Transfer":"Scheduled",
                           notes:del.notes||"",
                           floor:del.floor||"1",
                           elevator:false,
