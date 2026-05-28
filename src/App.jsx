@@ -221,7 +221,7 @@ function LoginScreen({ employees, onLogin }) {
 }
 
 // ─── DRIVER VIEW ──────────────────────────────────────────────────────────────
-function DriverView({ user, deliveries, customTasks, baseTasks, messages, problems, employees, onStatusUpdate, onLogout, onSendMessage, onLogProblem, onSaveDelivery, onSaveSignature, smsTemplates }) {
+function DriverView({ user, deliveries, customTasks, baseTasks, messages, problems, employees, onStatusUpdate, onLogout, onSendMessage, onLogProblem, onSaveDelivery, onSaveSignature, smsTemplates, trainingFiles=[], completions=[], setCompletions }) {
   const [tab, setTab] = useState("deliveries");
   const [openDel, setOpenDel] = useState(null);
   const [schedDay, setSchedDay] = useState(null);
@@ -711,6 +711,8 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
           {key:"schedule",label:isEs?"Horario":"Schedule",icon:"📅"},
           {key:"prep",label:isEs?"Prep":"Prep",icon:"📋"},
           {key:"inspection",label:isEs?"Inspección":"Inspect",icon:"🔍"},
+          {key:"receiving",label:isEs?"Recibir":"Receiving",icon:"📬"},
+          {key:"training-view",label:isEs?"Entren.":"Training",icon:"🎬"},
         ].map(t=>(
           <button key={t.key} className="btn" onClick={()=>setTab(t.key)}
             style={{flexShrink:0,padding:"12px 10px",fontSize:11,fontWeight:600,color:tab===t.key?"#60a5fa":"#64748b",borderBottom:tab===t.key?"2px solid #3b82f6":"2px solid transparent",background:"none",borderRadius:0,textAlign:"center",minWidth:60}}>
@@ -1806,6 +1808,18 @@ export default function App() {
   const [showLiabilityPad, setShowLiabilityPad] = useState(null);
   const [driverMode, setDriverMode] = useState(false);
   const [smsReplies, setSmsReplies] = useState([]);
+  const [receipts, setReceipts] = useState([]);
+  const [receivingLog, setReceivingLog] = useState([]);
+  const [trainingFiles, setTrainingFiles] = useState([]);
+  const [newReceipt, setNewReceipt] = useState({reason:"",amount:"",receipt_date:new Date().toISOString().split("T")[0],photo_url:""});
+  const [receiptUploading, setReceiptUploading] = useState(false);
+  const [newReceiving, setNewReceiving] = useState({received_date:new Date().toISOString().split("T")[0],vendor:"",received_by:"",quantity:1,notes:"",manufacturer:"",items:""});
+  const [receivingSearch, setReceivingSearch] = useState("");
+  const [bolUploading, setBolUploading] = useState(false);
+  const [receiptMonth, setReceiptMonth] = useState(new Date().toISOString().slice(0,7));
+  const [newTrainingFile, setNewTrainingFile] = useState({title:"",content:"",category:"New Hire",video_url:"",requires_signature:false});
+  const [showAddTraining, setShowAddTraining] = useState(false);
+  const [viewingTraining, setViewingTraining] = useState(null);
   const [probFilter, setProbFilter] = useState("open");
   const [editingProb, setEditingProb] = useState(null);
   const [newProb, setNewProb] = useState({customer:"",ticket_number:"",eta:"",description:"",what_to_do:"",type:"customer",status:"Open"});
@@ -1859,6 +1873,15 @@ export default function App() {
         if (mR.data) setMessages(mR.data);
         if (sigR.data) setSignatures(sigR.data);
         if (insR.data) setInspections(insR.data);
+        // Load receipts, receiving log, training files
+        const [recRes, rvRes, tfRes] = await Promise.all([
+          sb.from("receipts").select("*").order("receipt_date",{ascending:false}),
+          sb.from("receiving_log").select("*").order("received_date",{ascending:false}),
+          sb.from("training_files").select("*").order("created_at",{ascending:false}),
+        ]);
+        if(recRes.data) setReceipts(recRes.data);
+        if(rvRes.data) setReceivingLog(rvRes.data);
+        if(tfRes.data) setTrainingFiles(tfRes.data);
         if (trR.data) setTrainings(trR.data);
         if (tcR.data) setCompletions(tcR.data);
         if (lfR.data) setLiabilityForms(lfR.data);
@@ -2059,6 +2082,9 @@ export default function App() {
         onLogProblem={(p)=>setProblems(prev=>[...prev,p])}
         onSaveDelivery={saveDelivery}
         smsTemplates={smsTemplates}
+      trainingFiles={trainingFiles}
+      completions={completions}
+      setCompletions={setCompletions}
         onSaveSignature={(delId, url, at)=>{
           setDeliveries(prev=>prev.map(d=>d.id===delId?{...d,signature_url:url,signed_at:at,status:"Delivered"}:d));
           sb.from("signatures").select("*").order("signed_at",{ascending:false}).then(({data})=>{if(data)setSignatures(data);});
@@ -2135,6 +2161,9 @@ export default function App() {
             {key:"sms-setup",label:"SMS Setup",icon:"📱"},
             {key:"sms-replies",label:"Replies",icon:"💬"},
             {key:"weekly-report",label:"Weekly",icon:"📊"},
+            {key:"receipts",label:"Receipts",icon:"🧾"},
+            {key:"receiving",label:"Receiving",icon:"📬"},
+            {key:"training-files",label:"Training",icon:"🎬"},
           ].map(t=>(
             <button key={t.key} className="btn" onClick={()=>setTab(t.key)}
               style={{padding:"12px 13px",fontSize:12,fontWeight:500,whiteSpace:"nowrap",color:tab===t.key?"#60a5fa":"#64748b",borderBottom:tab===t.key?"2px solid #3b82f6":"2px solid transparent",background:"none",borderRadius:0}}>
@@ -2909,7 +2938,7 @@ export default function App() {
                         {!emp.is_manager&&(
                           <button className="btn" onClick={()=>{setEditingEmp(emp.id);setEditEmpVals({});}} style={{background:"#1e2d3d",color:"#60a5fa",padding:"4px 9px",fontSize:11}}>✏️ Edit</button>
                         )}
-                        {!emp.is_manager?(
+                        {(!emp.is_manager||emp.id!==0)&&emp.id!==0?(
                           confirmDelete===emp.id?(
                             <div style={{display:"flex",flexDirection:"column",gap:4}}>
                               <div style={{fontSize:10,color:"#f87171"}}>Remove?</div>
@@ -2922,7 +2951,7 @@ export default function App() {
                             <button className="btn" onClick={()=>setConfirmDelete(emp.id)} style={{background:"#1e2d3d",color:"#64748b",padding:"4px 9px",fontSize:11}}>✕ Remove</button>
                           )
                         ):(
-                          <span style={{fontSize:10,color:"#7c3aed",background:"#1e1038",borderRadius:5,padding:"4px 7px",fontWeight:600}}>Owner</span>
+                          <span style={{fontSize:10,color:"#7c3aed",background:"#1e1038",borderRadius:5,padding:"4px 7px",fontWeight:600}}>👑 Owner</span>
                         )}
                       </div>
                     </div>
@@ -4153,6 +4182,404 @@ export default function App() {
             </div>
           );
         })()}
+
+        {/* RECEIPTS */}
+        {tab==="receipts"&&(
+          <div className="fade">
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12,flexWrap:"wrap",gap:8}}>
+              <div>
+                <div style={{fontWeight:700,fontSize:15,color:"#f1f5f9"}}>🧾 Receipt Log</div>
+                <div style={{fontSize:12,color:"#475569",marginTop:2}}>Track expenses. Export monthly report to send to owner.</div>
+              </div>
+              <input type="month" value={receiptMonth} onChange={e=>setReceiptMonth(e.target.value)} style={{...C.inp,width:"auto",colorScheme:"dark",fontSize:12}}/>
+            </div>
+
+            {/* Add receipt */}
+            <div style={{...C.card,padding:"14px 16px",marginBottom:14,borderColor:"#1e3a5f"}}>
+              <div style={{fontWeight:600,fontSize:13,color:"#60a5fa",marginBottom:10}}>➕ Add Receipt</div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+                <div>
+                  <div style={{fontSize:10,color:"#475569",marginBottom:3}}>Date</div>
+                  <input type="date" value={newReceipt.receipt_date} onChange={e=>setNewReceipt(p=>({...p,receipt_date:e.target.value}))} style={{...C.inp,colorScheme:"dark"}}/>
+                </div>
+                <div>
+                  <div style={{fontSize:10,color:"#475569",marginBottom:3}}>Amount ($)</div>
+                  <input type="number" step="0.01" value={newReceipt.amount} onChange={e=>setNewReceipt(p=>({...p,amount:e.target.value}))} placeholder="0.00" style={C.inp}/>
+                </div>
+              </div>
+              <div style={{marginBottom:8}}>
+                <div style={{fontSize:10,color:"#475569",marginBottom:3}}>Reason / Description</div>
+                <input value={newReceipt.reason} onChange={e=>setNewReceipt(p=>({...p,reason:e.target.value}))} placeholder="e.g. Truck fuel, supplies, lunch for crew..." style={C.inp}/>
+              </div>
+              <div style={{marginBottom:10}}>
+                <div style={{fontSize:10,color:"#475569",marginBottom:3}}>Receipt Photo</div>
+                <input type="file" accept="image/*" onChange={async(e)=>{
+                  const file=e.target.files[0];
+                  if(!file)return;
+                  setReceiptUploading(true);
+                  const reader=new FileReader();
+                  reader.onload=async(ev)=>{
+                    const img=new Image();
+                    img.onload=async()=>{
+                      const MAX=1200;let w=img.width,h=img.height;
+                      if(w>MAX){h=Math.round(h*MAX/w);w=MAX;}
+                      const canvas=document.createElement("canvas");canvas.width=w;canvas.height=h;
+                      canvas.getContext("2d").drawImage(img,0,0,w,h);
+                      canvas.toBlob(async(blob)=>{
+                        const path=`receipts/${Date.now()}.jpg`;
+                        const {error}=await sb.storage.from("photos").upload(path,blob,{contentType:"image/jpeg"});
+                        if(!error){const url=sb.storage.from("photos").getPublicUrl(path).data.publicUrl;setNewReceipt(p=>({...p,photo_url:url}));}
+                        setReceiptUploading(false);
+                      },"image/jpeg",0.85);
+                    };
+                    img.src=ev.target.result;
+                  };
+                  reader.readAsDataURL(file);
+                }} style={{...C.inp,padding:"8px"}}/>
+                {receiptUploading&&<div style={{fontSize:11,color:"#60a5fa",marginTop:4}}>⏳ Uploading...</div>}
+                {newReceipt.photo_url&&<img src={newReceipt.photo_url} alt="receipt" style={{width:120,height:80,objectFit:"cover",borderRadius:6,marginTop:6,border:"1px solid #1e2d3d"}}/>}
+              </div>
+              <button className="btn" onClick={async()=>{
+                if(!newReceipt.reason||!newReceipt.amount)return alert("Please enter reason and amount.");
+                const r={id:Date.now(),reason:newReceipt.reason,amount:parseFloat(newReceipt.amount),receipt_date:newReceipt.receipt_date,photo_url:newReceipt.photo_url||"",submitted_by:currentUser.name,created_at:new Date().toISOString()};
+                await sb.from("receipts").insert(r);
+                setReceipts(prev=>[r,...prev]);
+                setNewReceipt({reason:"",amount:"",receipt_date:new Date().toISOString().split("T")[0],photo_url:""});
+              }} style={{width:"100%",background:"linear-gradient(135deg,#2563eb,#1d4ed8)",color:"#fff",padding:"11px",fontSize:13,fontWeight:700}}>
+                💾 Save Receipt
+              </button>
+            </div>
+
+            {/* Monthly summary + export */}
+            {(()=>{
+              const monthReceipts=receipts.filter(r=>r.receipt_date&&r.receipt_date.startsWith(receiptMonth));
+              const total=monthReceipts.reduce((a,r)=>a+(parseFloat(r.amount)||0),0);
+              return(
+                <div>
+                  <div style={{...C.card,padding:"12px 16px",marginBottom:12,display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8}}>
+                    <div>
+                      <div style={{fontSize:12,color:"#475569"}}>Month Total — {new Date(receiptMonth+"-15").toLocaleDateString("en-US",{month:"long",year:"numeric"})}</div>
+                      <div style={{fontWeight:700,fontSize:22,color:"#22c55e",fontFamily:"monospace"}}>${total.toFixed(2)}</div>
+                      <div style={{fontSize:11,color:"#475569"}}>{monthReceipts.length} receipts</div>
+                    </div>
+                    <button className="btn" onClick={()=>{
+                      const rows=[["Date","Reason","Amount","Submitted By"]];
+                      monthReceipts.forEach(r=>rows.push([r.receipt_date,r.reason,"$"+parseFloat(r.amount).toFixed(2),r.submitted_by||""]));
+                      rows.push(["","TOTAL","$"+total.toFixed(2),""]);
+                      const csv=rows.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(",")).join("\n");
+                      const blob=new Blob([csv],{type:"text/csv"});
+                      const url=URL.createObjectURL(blob);
+                      const a=document.createElement("a");
+                      a.href=url;a.download=`receipts_${receiptMonth}.csv`;a.click();
+                    }} style={{background:"linear-gradient(135deg,#7c3aed,#4f46e5)",color:"#fff",padding:"8px 14px",fontSize:12,fontWeight:600}}>
+                      📄 Export Monthly Report
+                    </button>
+                  </div>
+                  {monthReceipts.length===0?(
+                    <div style={{...C.card,padding:36,textAlign:"center",color:"#475569"}}>
+                      <div style={{fontSize:28,marginBottom:8}}>🧾</div>
+                      <div>No receipts for {new Date(receiptMonth+"-15").toLocaleDateString("en-US",{month:"long",year:"numeric"})}.</div>
+                    </div>
+                  ):(
+                    monthReceipts.map((r,i)=>(
+                      <div key={r.id} style={{...C.card,padding:"12px 16px",marginBottom:8,display:"flex",gap:12,alignItems:"flex-start"}}>
+                        {r.photo_url&&<img src={r.photo_url} alt="receipt" onClick={()=>window.open(r.photo_url,"_blank")} style={{width:70,height:70,objectFit:"cover",borderRadius:6,flexShrink:0,cursor:"pointer",border:"1px solid #1e2d3d"}}/>}
+                        <div style={{flex:1}}>
+                          <div style={{fontWeight:600,fontSize:13,color:"#f1f5f9"}}>{r.reason}</div>
+                          <div style={{fontSize:11,color:"#475569",marginTop:2}}>{r.receipt_date} · {r.submitted_by}</div>
+                        </div>
+                        <div style={{fontWeight:700,fontSize:16,color:"#22c55e",fontFamily:"monospace",flexShrink:0}}>${parseFloat(r.amount||0).toFixed(2)}</div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              );
+            })()}
+          </div>
+        )}
+
+        {/* RECEIVING LOG */}
+        {tab==="receiving"&&(
+          <div className="fade">
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12,flexWrap:"wrap",gap:8}}>
+              <div>
+                <div style={{fontWeight:700,fontSize:15,color:"#f1f5f9"}}>📬 Receiving Log</div>
+                <div style={{fontSize:12,color:"#475569",marginTop:2}}>Log incoming shipments. Search by manufacturer to find BOL photos.</div>
+              </div>
+            </div>
+
+            {/* Add receiving entry */}
+            <div style={{...C.card,padding:"14px 16px",marginBottom:14,borderColor:"#1e3a5f"}}>
+              <div style={{fontWeight:600,fontSize:13,color:"#60a5fa",marginBottom:10}}>➕ Log Received Shipment</div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+                <div>
+                  <div style={{fontSize:10,color:"#475569",marginBottom:3}}>Date Received</div>
+                  <input type="date" value={newReceiving.received_date} onChange={e=>setNewReceiving(p=>({...p,received_date:e.target.value}))} style={{...C.inp,colorScheme:"dark"}}/>
+                </div>
+                <div>
+                  <div style={{fontSize:10,color:"#475569",marginBottom:3}}>Vendor / Supplier</div>
+                  <input value={newReceiving.vendor} onChange={e=>setNewReceiving(p=>({...p,vendor:e.target.value}))} placeholder="e.g. Serta, Simmons, Bedgear" style={C.inp}/>
+                </div>
+                <div>
+                  <div style={{fontSize:10,color:"#475569",marginBottom:3}}>Manufacturer</div>
+                  <input value={newReceiving.manufacturer} onChange={e=>setNewReceiving(p=>({...p,manufacturer:e.target.value}))} placeholder="e.g. SERTA, SIMMONS" style={C.inp}/>
+                </div>
+                <div>
+                  <div style={{fontSize:10,color:"#475569",marginBottom:3}}>Received By</div>
+                  <select value={newReceiving.received_by} onChange={e=>setNewReceiving(p=>({...p,received_by:e.target.value}))} style={C.sel}>
+                    <option value="">Select...</option>
+                    {employees.map(e=><option key={e.id} value={e.name}>{e.name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <div style={{fontSize:10,color:"#475569",marginBottom:3}}>Quantity (pieces)</div>
+                  <input type="number" min="1" value={newReceiving.quantity} onChange={e=>setNewReceiving(p=>({...p,quantity:Number(e.target.value)}))} style={C.inp}/>
+                </div>
+              </div>
+              <div style={{marginBottom:8}}>
+                <div style={{fontSize:10,color:"#475569",marginBottom:3}}>Items / Description</div>
+                <input value={newReceiving.items} onChange={e=>setNewReceiving(p=>({...p,items:e.target.value}))} placeholder="e.g. 2x Knox Queen, 1x Silver Base TXL" style={C.inp}/>
+              </div>
+              <div style={{marginBottom:10}}>
+                <div style={{fontSize:10,color:"#475569",marginBottom:3}}>Notes / Problems</div>
+                <textarea value={newReceiving.notes} onChange={e=>setNewReceiving(p=>({...p,notes:e.target.value}))} placeholder="Any damage, missing items, discrepancies..." rows={2} style={{...C.inp,resize:"vertical"}}/>
+              </div>
+              <div style={{marginBottom:10}}>
+                <div style={{fontSize:10,color:"#475569",marginBottom:3}}>📄 BOL Photo</div>
+                <input type="file" accept="image/*,application/pdf" onChange={async(e)=>{
+                  const file=e.target.files[0];
+                  if(!file)return;
+                  setBolUploading(true);
+                  const reader=new FileReader();
+                  reader.onload=async(ev)=>{
+                    const isImg=file.type.startsWith("image/");
+                    if(isImg){
+                      const img=new Image();
+                      img.onload=async()=>{
+                        const MAX=1600;let w=img.width,h=img.height;
+                        if(w>MAX){h=Math.round(h*MAX/w);w=MAX;}
+                        const canvas=document.createElement("canvas");canvas.width=w;canvas.height=h;
+                        canvas.getContext("2d").drawImage(img,0,0,w,h);
+                        canvas.toBlob(async(blob)=>{
+                          const path=`bol/${Date.now()}.jpg`;
+                          const {error}=await sb.storage.from("photos").upload(path,blob,{contentType:"image/jpeg"});
+                          if(!error){const url=sb.storage.from("photos").getPublicUrl(path).data.publicUrl;setNewReceiving(p=>({...p,bol_photo_url:url}));}
+                          setBolUploading(false);
+                        },"image/jpeg",0.9);
+                      };
+                      img.src=ev.target.result;
+                    }
+                  };
+                  reader.readAsDataURL(file);
+                }} style={{...C.inp,padding:"8px"}}/>
+                {bolUploading&&<div style={{fontSize:11,color:"#60a5fa",marginTop:4}}>⏳ Uploading BOL...</div>}
+                {newReceiving.bol_photo_url&&<div style={{marginTop:6,display:"flex",alignItems:"center",gap:8}}>
+                  <img src={newReceiving.bol_photo_url} alt="BOL" onClick={()=>window.open(newReceiving.bol_photo_url,"_blank")} style={{width:100,height:70,objectFit:"cover",borderRadius:6,cursor:"pointer",border:"1px solid #22c55e"}}/>
+                  <span style={{fontSize:11,color:"#22c55e"}}>✅ BOL uploaded</span>
+                </div>}
+              </div>
+              <button className="btn" onClick={async()=>{
+                if(!newReceiving.vendor)return alert("Please enter a vendor.");
+                const r={id:Date.now(),received_date:newReceiving.received_date,vendor:newReceiving.vendor,manufacturer:newReceiving.manufacturer,received_by:newReceiving.received_by,quantity:newReceiving.quantity,items:newReceiving.items,notes:newReceiving.notes,bol_photo_url:newReceiving.bol_photo_url||"",created_at:new Date().toISOString()};
+                await sb.from("receiving_log").insert(r);
+                setReceivingLog(prev=>[r,...prev]);
+                setNewReceiving({received_date:new Date().toISOString().split("T")[0],vendor:"",received_by:"",quantity:1,notes:"",manufacturer:"",items:"",bol_photo_url:""});
+              }} style={{width:"100%",background:"linear-gradient(135deg,#059669,#047857)",color:"#fff",padding:"11px",fontSize:13,fontWeight:700}}>
+                📬 Log Shipment
+              </button>
+            </div>
+
+            {/* Search */}
+            <input value={receivingSearch} onChange={e=>setReceivingSearch(e.target.value)}
+              placeholder="🔍 Search by manufacturer, vendor, date, or item..."
+              style={{...C.inp,marginBottom:12,fontSize:14}}/>
+
+            {/* Log entries */}
+            {receivingLog.filter(r=>{
+              if(!receivingSearch.trim())return true;
+              const q=receivingSearch.toLowerCase();
+              return (r.manufacturer||"").toLowerCase().includes(q)||(r.vendor||"").toLowerCase().includes(q)||(r.items||"").toLowerCase().includes(q)||(r.received_date||"").includes(q)||(r.notes||"").toLowerCase().includes(q);
+            }).length===0?(
+              <div style={{...C.card,padding:36,textAlign:"center",color:"#475569"}}>
+                <div style={{fontSize:28,marginBottom:8}}>📬</div>
+                <div>{receivingSearch?"No results found.":"No shipments logged yet."}</div>
+              </div>
+            ):(
+              receivingLog.filter(r=>{
+                if(!receivingSearch.trim())return true;
+                const q=receivingSearch.toLowerCase();
+                return (r.manufacturer||"").toLowerCase().includes(q)||(r.vendor||"").toLowerCase().includes(q)||(r.items||"").toLowerCase().includes(q)||(r.received_date||"").includes(q)||(r.notes||"").toLowerCase().includes(q);
+              }).map(r=>(
+                <div key={r.id} style={{...C.card,padding:"14px 16px",marginBottom:10}}>
+                  <div style={{display:"flex",gap:12,alignItems:"flex-start"}}>
+                    {r.bol_photo_url&&(
+                      <img src={r.bol_photo_url} alt="BOL" onClick={()=>window.open(r.bol_photo_url,"_blank")}
+                        style={{width:80,height:80,objectFit:"cover",borderRadius:8,flexShrink:0,cursor:"pointer",border:"2px solid #1e3a5f"}}/>
+                    )}
+                    <div style={{flex:1}}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:6,marginBottom:6}}>
+                        <div>
+                          <div style={{fontWeight:700,fontSize:14,color:"#f1f5f9"}}>{r.vendor}</div>
+                          {r.manufacturer&&<span style={{fontSize:11,background:"#1e3a5f",color:"#60a5fa",borderRadius:4,padding:"2px 7px",marginRight:6}}>{r.manufacturer}</span>}
+                          <span style={{fontSize:11,color:"#475569"}}>{r.received_date}</span>
+                        </div>
+                        <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                          <span style={{fontSize:13,fontWeight:700,color:"#a78bfa",background:"#1e1038",borderRadius:6,padding:"3px 10px"}}>{r.quantity} pcs</span>
+                        </div>
+                      </div>
+                      {r.items&&<div style={{fontSize:12,color:"#e2e8f0",marginBottom:4}}>{r.items}</div>}
+                      {r.notes&&<div style={{fontSize:12,color:"#f59e0b",background:"#1c1500",borderRadius:5,padding:"4px 8px",marginBottom:4}}>⚠️ {r.notes}</div>}
+                      <div style={{fontSize:11,color:"#475569"}}>Received by: {r.received_by}</div>
+                    </div>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        )}
+
+        {/* TRAINING FILES */}
+        {tab==="training-files"&&(
+          <div className="fade">
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12,flexWrap:"wrap",gap:8}}>
+              <div>
+                <div style={{fontWeight:700,fontSize:15,color:"#f1f5f9"}}>🎬 Training Library</div>
+                <div style={{fontSize:12,color:"#475569",marginTop:2}}>Add training videos and documents. Employees watch and sign off.</div>
+              </div>
+              <button className="btn" onClick={()=>setShowAddTraining(p=>!p)} style={{background:"linear-gradient(135deg,#2563eb,#1d4ed8)",color:"#fff",padding:"7px 14px",fontSize:12}}>
+                {showAddTraining?"✕ Cancel":"➕ Add Training"}
+              </button>
+            </div>
+
+            {showAddTraining&&(
+              <div style={{...C.card,padding:"14px 16px",marginBottom:14,borderColor:"#3b82f6"}}>
+                <div style={{fontWeight:600,fontSize:13,color:"#60a5fa",marginBottom:10}}>New Training</div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+                  <div>
+                    <div style={{fontSize:10,color:"#475569",marginBottom:3}}>Title</div>
+                    <input value={newTrainingFile.title} onChange={e=>setNewTrainingFile(p=>({...p,title:e.target.value}))} placeholder="e.g. Delivery Safety Procedures" style={C.inp}/>
+                  </div>
+                  <div>
+                    <div style={{fontSize:10,color:"#475569",marginBottom:3}}>Category</div>
+                    <select value={newTrainingFile.category} onChange={e=>setNewTrainingFile(p=>({...p,category:e.target.value}))} style={C.sel}>
+                      {["New Hire","Safety","Delivery","Product Knowledge","Customer Service","Warehouse","Compliance"].map(c=><option key={c}>{c}</option>)}
+                    </select>
+                  </div>
+                </div>
+                <div style={{marginBottom:8}}>
+                  <div style={{fontSize:10,color:"#475569",marginBottom:3}}>Video URL (YouTube, Vimeo, or direct link)</div>
+                  <input value={newTrainingFile.video_url} onChange={e=>setNewTrainingFile(p=>({...p,video_url:e.target.value}))} placeholder="https://youtube.com/watch?v=... or https://vimeo.com/..." style={C.inp}/>
+                </div>
+                <div style={{marginBottom:10}}>
+                  <div style={{fontSize:10,color:"#475569",marginBottom:3}}>Description / Notes</div>
+                  <textarea value={newTrainingFile.content} onChange={e=>setNewTrainingFile(p=>({...p,content:e.target.value}))} placeholder="What this training covers, key points..." rows={3} style={{...C.inp,resize:"vertical"}}/>
+                </div>
+                <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",marginBottom:12}}>
+                  <input type="checkbox" checked={newTrainingFile.requires_signature} onChange={e=>setNewTrainingFile(p=>({...p,requires_signature:e.target.checked}))} style={{width:16,height:16}}/>
+                  <span style={{fontSize:13,color:"#94a3b8"}}>Require employee signature after watching</span>
+                </label>
+                <button className="btn" onClick={async()=>{
+                  if(!newTrainingFile.title)return alert("Please enter a title.");
+                  const t={id:Date.now(),title:newTrainingFile.title,content:newTrainingFile.content,category:newTrainingFile.category,video_url:newTrainingFile.video_url,requires_signature:newTrainingFile.requires_signature,created_at:new Date().toISOString(),updated_at:new Date().toISOString()};
+                  await sb.from("training_files").insert(t);
+                  setTrainingFiles(prev=>[t,...prev]);
+                  setNewTrainingFile({title:"",content:"",category:"New Hire",video_url:"",requires_signature:false});
+                  setShowAddTraining(false);
+                }} style={{width:"100%",background:"linear-gradient(135deg,#059669,#047857)",color:"#fff",padding:"11px",fontSize:13,fontWeight:700}}>
+                  💾 Save Training
+                </button>
+              </div>
+            )}
+
+            {/* Category groups */}
+            {(()=>{
+              const cats=[...new Set(trainingFiles.map(t=>t.category))];
+              if(trainingFiles.length===0) return(
+                <div style={{...C.card,padding:40,textAlign:"center",color:"#475569"}}>
+                  <div style={{fontSize:32,marginBottom:8}}>🎬</div>
+                  <div>No training materials yet. Click "➕ Add Training" to get started.</div>
+                </div>
+              );
+              return cats.map(cat=>(
+                <div key={cat} style={{marginBottom:14}}>
+                  <div style={{fontSize:11,color:"#475569",fontWeight:700,letterSpacing:".08em",textTransform:"uppercase",marginBottom:8}}>{cat}</div>
+                  {trainingFiles.filter(t=>t.category===cat).map(t=>{
+                    const completed=completions.filter(c=>c.training_id===t.id);
+                    const getEmbedUrl=(url)=>{
+                      if(!url)return null;
+                      const ytMatch=url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([^&\s]+)/);
+                      if(ytMatch)return`https://www.youtube.com/embed/${ytMatch[1]}`;
+                      const vimeoMatch=url.match(/vimeo\.com\/(\d+)/);
+                      if(vimeoMatch)return`https://player.vimeo.com/video/${vimeoMatch[1]}`;
+                      return url;
+                    };
+                    const embedUrl=getEmbedUrl(t.video_url);
+                    return(
+                      <div key={t.id} style={{...C.card,marginBottom:10,overflow:"hidden"}}>
+                        <div style={{padding:"12px 16px",display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:6}}>
+                          <div style={{flex:1}}>
+                            <div style={{fontWeight:700,fontSize:13,color:"#f1f5f9",marginBottom:4}}>{t.title}</div>
+                            {t.content&&<div style={{fontSize:12,color:"#475569",marginBottom:4}}>{t.content.substring(0,100)}{t.content.length>100?"...":""}</div>}
+                            <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                              {t.requires_signature&&<span style={{fontSize:10,background:"#1c1500",color:"#f59e0b",borderRadius:4,padding:"2px 6px"}}>✍️ Signature required</span>}
+                              {completed.length>0&&<span style={{fontSize:10,background:"#052e16",color:"#4ade80",borderRadius:4,padding:"2px 6px"}}>✅ {completed.length}/{employees.length} signed</span>}
+                              {t.video_url&&<span style={{fontSize:10,background:"#0c2340",color:"#60a5fa",borderRadius:4,padding:"2px 6px"}}>🎬 Video</span>}
+                            </div>
+                          </div>
+                          <div style={{display:"flex",gap:6}}>
+                            <button className="btn" onClick={()=>setViewingTraining(viewingTraining===t.id?null:t.id)} style={{background:"#1e2d3d",color:"#60a5fa",padding:"5px 10px",fontSize:11}}>
+                              {viewingTraining===t.id?"▲ Close":"▼ View"}
+                            </button>
+                            <button className="btn" onClick={async()=>{
+                              if(!window.confirm("Delete this training?"))return;
+                              await sb.from("training_files").delete().eq("id",t.id);
+                              setTrainingFiles(prev=>prev.filter(x=>x.id!==t.id));
+                            }} style={{background:"#2d0a0a",color:"#f87171",padding:"5px 9px",fontSize:11}}>✕</button>
+                          </div>
+                        </div>
+                        {viewingTraining===t.id&&(
+                          <div style={{borderTop:"1px solid #1e2d3d"}}>
+                            {embedUrl&&(
+                              <div style={{position:"relative",paddingBottom:"56.25%",height:0,overflow:"hidden"}}>
+                                <iframe src={embedUrl} style={{position:"absolute",top:0,left:0,width:"100%",height:"100%",border:0}} allowFullScreen title={t.title}/>
+                              </div>
+                            )}
+                            {t.content&&<div style={{padding:"12px 16px",fontSize:13,color:"#94a3b8",lineHeight:1.6,borderTop:embedUrl?"1px solid #1e2d3d":"none"}}>{t.content}</div>}
+                            {t.requires_signature&&(
+                              <div style={{padding:"12px 16px",borderTop:"1px solid #1e2d3d"}}>
+                                <div style={{fontSize:11,color:"#475569",marginBottom:8,textTransform:"uppercase",letterSpacing:".07em"}}>Employee Completions</div>
+                                <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                                  {employees.map(emp=>{
+                                    const signed=completed.find(c=>c.emp_id===emp.id);
+                                    return(
+                                      <div key={emp.id} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 10px",background:signed?"#052e16":"#0a1628",borderRadius:7,border:`1px solid ${signed?"#22c55e":"#1e2d3d"}`}}>
+                                        <div style={{width:26,height:26,borderRadius:"50%",background:avatarBg(emp),display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:700,color:"#fff"}}>{emp.avatar}</div>
+                                        <div style={{flex:1,fontSize:12,color:"#f1f5f9"}}>{emp.name}</div>
+                                        {signed?(
+                                          <span style={{fontSize:11,color:"#4ade80"}}>✅ {new Date(signed.completed_at).toLocaleDateString()}</span>
+                                        ):(
+                                          <button className="btn" onClick={async()=>{
+                                            const c={id:Date.now(),training_id:t.id,emp_id:emp.id,emp_name:emp.name,completed_at:new Date().toISOString(),signature_url:""};
+                                            await sb.from("training_completions").insert(c);
+                                            setCompletions(prev=>[...prev,c]);
+                                          }} style={{background:"#1e3a5f",color:"#60a5fa",padding:"4px 10px",fontSize:11}}>Mark Complete</button>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              ));
+            })()}
+          </div>
+        )}
 
         {/* TEMPLATES */}
         {tab==="basetasks"&&(
