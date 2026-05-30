@@ -2093,7 +2093,7 @@ export default function App() {
     </div>
   );
 
-  if (!currentUser.is_manager&&!currentUser.isManager) return (
+  if (!currentUser.is_manager&&!currentUser.isManager&&currentUser.role!=='Manager') return (
     <DriverView
       user={currentUser} deliveries={deliveries} customTasks={customTasks} baseTasks={baseTasks}
       messages={messages} problems={problems} employees={employees}
@@ -3231,56 +3231,109 @@ export default function App() {
                   // Parse each page as a delivery
                   const parseDelivery = (text) => {
                     const d = {};
-                    if(!text.includes("Last Name:")) return null;
-                    let m = text.match(/Last Name:\s*(\S+)\s+First Name:\s*(\S+)/);
-                    if(m) d.customer = m[2]+" "+m[1]; else return null;
-                    m = text.match(/Address\(Street\):\s*(.+?)\s+City:\s*(.+?)\s+State:\s*(\w+)\s+Zip:\s*(\w+)/);
-                    if(m) d.address = m[1].trim()+", "+m[2].trim()+", "+m[3]+" "+m[4];
-                    m = text.match(/Apt\.:\s*(\S+)\s+Apt\. Complex/);
-                    if(m&&m[1]&&m[1]!=="Apt."&&!/^[A-Za-z]{2,}$/.test(m[1])&&m[1].length<15) d.address=(d.address||"")+" Apt "+m[1];
-                    m = text.match(/Tel\.Home\s+([\(\d\)\s\-\.]{7,15})/);
-                    if(m) d.phone = m[1].trim().replace(/\s/g,"");
-                    m = text.match(/Estimated Date of Delivery:\s*(\d+)\/(\d+)\/(\d+)\s*(Morning|Afternoon|[\d:AaPpMm\s\-]+)/);
-                    if(m){const yr=m[3].length===2?"20"+m[3]:m[3];d.delivery_date=yr+"-"+m[1].padStart(2,"0")+"-"+m[2].padStart(2,"0");d.delivery_window=m[4].trim();}
-                    m=text.match(/Sale Number:\s*(\d+)/);if(m)d.sale_number=m[1];
-                    m=text.match(/Memo #:\s*(\d+)/);if(m)d.memo_number=m[1];
-                    m=text.match(/Instruction:\s*([\s\S]+?)(?:Client Comment|Copy to be signed)/);
-                    if(m)d.notes=m[1].trim().replace(/\s+/g," ").substring(0,400);
-                    const allT=((d.notes||"")+" "+text).toLowerCase();
-                    d.is_transfer=text.includes("PICK UP MEMO")||/(\bcpu\b|pick up|pickup|will pu|transfer to|pu on|customer will pu)/.test(allT);
-                    d.is_haul_off=/disposalfee/i.test(text);
-                    m=(d.notes||"").match(/(\d+)(st|nd|rd|th)\s*floor/i);if(m)d.floor=m[1];
-                    const SKIP=["DISPOSALFEE","ABQDELIVERY","RIORANCHODELIVERY","LOSLUNAS","BELENDELIVERY","SANTA_FE_LOCAL","LOCAL","DELIVERY"];
-                    const items=[];
-                    const parseSection=(sec)=>{
-                      if(!sec)return;
-                      // Fix split piece numbers across lines: "500100092- 1050" or "BD500124399-\n6050"
-                      const s=sec
-                        .replace(/(\w+)-\s+(\d{3,})/g,"$1-$2")  // "500100092- 1050"
-                        .replace(/(\w+)-\n\s*(\w+)/g,"$1-$2")   // split across newline
-                        .replace(/([A-Z]{2,}\d+)-([\s\n]+)(\d)/g,"$1-$3"); // "BD500124399- 6050"
-                      // Match: rowNum MANUFACTURER PIECE# QTY DESCRIPTION
-                      const re=/(?:^|\s)(\d{1,2})\s+([A-Z][A-Z0-9]{1,10})\s+([A-Z0-9][\w\-\.]{2,24})\s+(\d{1,2})\s+([A-Z].{4,80}?)(?=\s+\d{1,2}\s+[A-Z]{2,}|\s*$)/gm;
-                      let im;
-                      while((im=re.exec(s))!==null){
-                        const man=im[2],piece=im[3],qty=parseInt(im[4]);
-                        let name=im[5].trim().replace(/\s+/g," ");
-                        if(SKIP.some(x=>man.toUpperCase().startsWith(x)))continue;
-                        if(SKIP.some(x=>name.toUpperCase().includes(x)))continue;
-                        if(/delivery in|removal.*per pc|per pc.*subject/i.test(name))continue;
-                        name=name.replace(/\s+[Rr]eg\s+[\d,\.]+.*/,"").replace(/\s+[Ss]ale\s+[\d,\.]+.*/,"").trim();
-                        if(name.length<3||qty<1||qty>20)continue;
-                        if(!items.some(x=>x.piece_number===piece))items.push({qty,name:name.substring(0,80),manufacturer:man,piece_number:piece});
+                    if (!text.includes("Last Name:")) return null;
+
+                    // Normalize: collapse multiple spaces to single, but keep newlines
+                    const t = text.replace(/[ \t]+/g, " ");
+
+                    // Customer name
+                    let m = t.match(/Last Name:\s*(\S+)\s+First Name:\s*(\S+)/);
+                    if (m) d.customer = m[2] + " " + m[1]; else return null;
+
+                    // Address
+                    m = t.match(/Address\(Street\):\s*(.+?)\s+City:\s*(.+?)\s+State:\s*(\w+)\s+Zip:\s*(\w+)/);
+                    if (m) d.address = m[1].trim() + ", " + m[2].trim() + ", " + m[3] + " " + m[4];
+
+                    // Apt number — only if it looks like a number or unit
+                    m = t.match(/Apt\.:\s*([^\s][^\s]*)\s+Apt\. Complex/);
+                    if (m && m[1] && m[1] !== "Apt." && /[\d#]/.test(m[1]) && m[1].length < 10) {
+                      d.address = (d.address || "") + " Apt " + m[1];
+                    }
+
+                    // Phone
+                    m = t.match(/Tel\.Home\s+([\(\d\)\-\.\s]{7,15})/);
+                    if (m) d.phone = m[1].trim().replace(/\s/g, "");
+
+                    // Date + window
+                    m = t.match(/Estimated Date of Delivery:\s*(\d+)\/(\d+)\/(\d+)\s*(Morning|Afternoon|[\d:AaPpMm\s\-]+)/);
+                    if (m) {
+                      const yr = m[3].length === 2 ? "20" + m[3] : m[3];
+                      d.delivery_date = yr + "-" + m[1].padStart(2,"0") + "-" + m[2].padStart(2,"0");
+                      d.delivery_window = m[4].trim();
+                    }
+
+                    m = t.match(/Sale Number:\s*(\d+)/); if (m) d.sale_number = m[1];
+                    m = t.match(/Memo #:\s*(\d+)/); if (m) d.memo_number = m[1];
+
+                    // Instructions
+                    m = t.match(/Instruction:\s*([\s\S]+?)(?:Client Comment|Copy to be signed)/);
+                    if (m) d.notes = m[1].trim().replace(/\s+/g, " ").substring(0, 500);
+
+                    const allTxt = ((d.notes || "") + " " + t).toLowerCase();
+                    d.is_transfer = t.includes("PICK UP MEMO") ||
+                      /(\bcpu\b|pick up|pickup|will pu|transfer to|pu on|customer will pu)/.test(allTxt);
+                    d.is_haul_off = /disposalfee/i.test(t);
+
+                    m = (d.notes || "").match(/(\d+)(st|nd|rd|th)\s*floor/i);
+                    if (m) d.floor = m[1];
+
+                    // ── ITEM EXTRACTION ──────────────────────────────────
+                    const SKIP_LIST = ["DISPOSALFEE","ABQDELIVERY","RIORANCHODELIVERY",
+                      "LOSLUNAS","BELENDELIVERY","SANTA_FE_LOCAL","COORSBDELIVERY",
+                      "ABQDELIV","RIORANCHO","DELIVERY","LOCAL"];
+
+                    const items = [];
+
+                    const extractFromSection = (sec) => {
+                      if (!sec || sec.length < 5) return;
+                      // Fix split piece numbers: "500100092- 1050" or "BD500124399- 6050"
+                      const s = sec
+                        .replace(/([A-Z0-9]+)-\s+(\d{3,})/g, "$1-$2")
+                        .replace(/([A-Z0-9]+)-\n\s*([A-Z0-9])/g, "$1-$2");
+
+                      // Strategy: find each row by the pattern: NUMBER MANUFACTURER PIECE# QTY
+                      // then grab everything after QTY until the next row number or end of section
+                      // Row pattern: start of line or whitespace, 1-2 digit row#, CAPS manufacturer, piece#, 1-2 digit qty
+                      const rowPattern = /(?:^|\n| )(\d{1,2}) ([A-Z][A-Z0-9]{1,12}) ([A-Z0-9][\w\-.]{2,25}) (\d{1,2}) /g;
+                      let match;
+                      const rows = [];
+                      while ((match = rowPattern.exec(s)) !== null) {
+                        rows.push({ idx: match.index + match[0].length - match[5].length - 1,
+                          rowNum: match[1], man: match[2], piece: match[3], qty: parseInt(match[4]),
+                          nameStart: match.index + match[0].length });
                       }
+                      rows.forEach((row, ri) => {
+                        const nameEnd = ri < rows.length - 1 ? rows[ri+1].idx : s.length;
+                        let name = s.substring(row.nameStart, nameEnd).trim().replace(/\s+/g, " ");
+                        // Skip fee items
+                        if (SKIP_LIST.some(x => row.man.toUpperCase().startsWith(x))) return;
+                        if (SKIP_LIST.some(x => name.toUpperCase().startsWith(x))) return;
+                        if (/^(Removal|Delivery in|Per Pc|Subject to)/i.test(name)) return;
+                        // Clean trailing price/note info
+                        name = name
+                          .replace(/\s+[Rr]eg\.?\s+[\d,\.]+.*/g, "")
+                          .replace(/\s+[Ss]ale\.?\s+[\d,\.]+.*/g, "")
+                          .replace(/\s+\$[\d,\.]+.*/g, "")
+                          .replace(/\s+(Reg|Sale|price match|appeasement|included with|king size set|bogo)[\s\S]*/gi, "")
+                          .trim();
+                        if (name.length < 3 || row.qty < 1 || row.qty > 20) return;
+                        if (!items.some(x => x.piece_number === row.piece && row.piece.length > 3)) {
+                          items.push({ qty: row.qty, name: name.substring(0, 150),
+                            manufacturer: row.man, piece_number: row.piece });
+                        }
+                      });
                     };
-                    const allSalesIdx=text.search(/ALL SALES ARE FINAL/i);
-                    const tableText=allSalesIdx>-1?text.substring(0,allSalesIdx):text;
-                    const [mainSec,backSec]=tableText.split(/Back Order Information/i);
-                    parseSection(mainSec);parseSection(backSec);
-                    d.items=items.length>0?items:[{qty:1,name:"See ticket",manufacturer:"",piece_number:""}];
+
+                    // Split at ALL SALES text, then split main vs back order
+                    const allSalesIdx = t.search(/ALL SALES ARE FINAL/i);
+                    const tableText = allSalesIdx > -1 ? t.substring(0, allSalesIdx) : t;
+                    const parts = tableText.split(/Back Order Information/i);
+                    extractFromSection(parts[0] || "");
+                    extractFromSection(parts[1] || "");
+
+                    d.items = items.length > 0 ? items : [{ qty: 1, name: "See ticket — check PDF", manufacturer: "", piece_number: "" }];
                     return d;
                   };
-                  
                   const delivs = pages.map(parseDelivery).filter(Boolean);
                   if(delivs.length===0){
                     alert("Could not find deliveries in PDF. Make sure this is an EZ Process Pro delivery receipt.");
@@ -3304,81 +3357,130 @@ export default function App() {
 
               {pdfResult&&Array.isArray(pdfResult)&&(
                 <div>
-                  <div style={{fontSize:13,color:"#22c55e",fontWeight:600,marginBottom:10}}>
-                    ✅ Found {pdfResult.length} deliveries for Route {pdfRoute} — Review then import all
+                  <div style={{fontSize:13,color:"#22c55e",fontWeight:600,marginBottom:6}}>
+                    ✅ Found {pdfResult.length} deliveries — assign route & driver per delivery, then import
                   </div>
-                  <div style={{maxHeight:400,overflowY:"auto",display:"flex",flexDirection:"column",gap:8,marginBottom:10}}>
+
+                  {/* Quick assign bar */}
+                  <div style={{...C.card,padding:"10px 14px",marginBottom:10,borderColor:"#1e2d3d"}}>
+                    <div style={{fontSize:11,color:"#475569",marginBottom:6,fontWeight:600}}>Quick assign all unassigned:</div>
+                    <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                      {[1,2].map(r=>(
+                        <div key={r} style={{display:"flex",gap:6,alignItems:"center",flex:1,minWidth:200}}>
+                          <span style={{fontSize:11,color:r===1?"#60a5fa":"#a78bfa",fontWeight:700,flexShrink:0}}>R{r}:</span>
+                          <select onChange={e=>{if(!e.target.value)return;const v=Number(e.target.value);setPdfResult(prev=>prev.map(x=>(x._route||pdfRoute)===r&&!x._driver?{...x,_driver:v}:x));}} style={{...C.sel,flex:1,fontSize:11}}>
+                            <option value="">Assign driver to Route {r}...</option>
+                            {employees.map(e=><option key={e.id} value={e.id}>{e.name}{e.is_manager?" 👑":""}</option>)}
+                          </select>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div style={{maxHeight:500,overflowY:"auto",display:"flex",flexDirection:"column",gap:8,marginBottom:10}}>
                     {pdfResult.map((del,di)=>{
-                      const realItems=(del.items||[]).filter(i=>i.name&&!["DISPOSALFEE","ABQDELIVERY","RIORANCHODELIVERY","LOSLUNAS","SANTA_FE","delivery","Delivery"].some(skip=>i.name.includes(skip)));
+                      const route=del._route||pdfRoute;
+                      const driverName=employees.find(e=>e.id===del._driver)?.name;
                       return(
-                        <div key={di} style={{...C.card,padding:"12px 14px",borderColor:del.is_transfer?"#f59e0b":"#1e3a5f"}}>
-                          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:6,marginBottom:6}}>
-                            <div>
+                        <div key={di} style={{...C.card,padding:"12px 14px",borderColor:del.is_transfer?"#f59e0b":route===2?"#4f46e5":"#1e3a5f",borderWidth:2}}>
+                          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:6,marginBottom:8}}>
+                            <div style={{flex:1}}>
                               <div style={{fontWeight:700,fontSize:13,color:"#f1f5f9"}}>{del.customer}</div>
-                              <div style={{fontSize:11,color:"#64748b"}}>{del.address} · {del.phone}</div>
+                              <div style={{fontSize:11,color:"#64748b"}}>{del.address}</div>
+                              <div style={{fontSize:11,color:"#64748b"}}>{del.phone} · {del.delivery_window}</div>
                             </div>
-                            <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+                            <div style={{display:"flex",gap:4,flexWrap:"wrap",flexShrink:0}}>
                               {del.sale_number&&<span style={{fontSize:10,background:"#1e3a5f",color:"#60a5fa",borderRadius:4,padding:"2px 6px"}}>#{del.sale_number}</span>}
                               {del.is_transfer&&<span style={{fontSize:10,background:"#1c1500",color:"#f59e0b",borderRadius:4,padding:"2px 6px"}}>⚠️ Pickup</span>}
                               {del.is_haul_off&&<span style={{fontSize:10,background:"#1e1038",color:"#c084fc",borderRadius:4,padding:"2px 6px"}}>♻️ Haul Off</span>}
-                              <span style={{fontSize:10,background:"#052e16",color:"#4ade80",borderRadius:4,padding:"2px 6px"}}>{del.delivery_window}</span>
                             </div>
                           </div>
-                          {del.notes&&<div style={{fontSize:11,color:"#f59e0b",background:"#1c1500",borderRadius:5,padding:"4px 8px",marginBottom:5}}>📋 {del.notes.substring(0,120)}{del.notes.length>120?"...":""}</div>}
-                          <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
-                            {realItems.map((item,ii)=>(
-                              <div key={ii} style={{background:"#0a1628",borderRadius:5,padding:"3px 8px"}}>
-                                <span style={{fontSize:11,color:"#60a5fa",fontWeight:700}}>{item.qty}x</span>
-                                <span style={{fontSize:11,color:"#e2e8f0",marginLeft:4}}>{item.name}</span>
-                                {item.manufacturer&&<span style={{fontSize:10,color:"#475569",marginLeft:4}}>{item.manufacturer}</span>}
+
+                          {del.notes&&<div style={{fontSize:11,color:"#f59e0b",background:"#1c1500",borderRadius:5,padding:"4px 8px",marginBottom:8}}>📋 {del.notes}</div>}
+
+                          {/* Items */}
+                          <div style={{marginBottom:8}}>
+                            {(del.items||[]).map((item,ii)=>(
+                              <div key={ii} style={{display:"flex",alignItems:"center",gap:6,marginBottom:3}}>
+                                <span style={{fontSize:11,color:"#60a5fa",fontWeight:700,background:"#0c2340",borderRadius:4,padding:"1px 5px",flexShrink:0}}>{item.qty}x</span>
+                                <span style={{fontSize:11,color:"#e2e8f0"}}>{item.name}</span>
+                                {item.manufacturer&&<span style={{fontSize:10,color:"#475569",flexShrink:0}}>{item.manufacturer}</span>}
+                                {item.piece_number&&<span style={{fontSize:10,color:"#334155",flexShrink:0}}>#{item.piece_number}</span>}
                               </div>
                             ))}
+                          </div>
+
+                          {/* Route + Driver per delivery */}
+                          <div style={{display:"flex",gap:7,alignItems:"center",flexWrap:"wrap"}}>
+                            <div style={{display:"flex",gap:4}}>
+                              {[1,2].map(r=>(
+                                <button key={r} className="btn" onClick={()=>setPdfResult(prev=>prev.map((x,i)=>i===di?{...x,_route:r}:x))}
+                                  style={{padding:"5px 12px",fontSize:11,fontWeight:700,background:route===r?(r===1?"linear-gradient(135deg,#2563eb,#1d4ed8)":"linear-gradient(135deg,#7c3aed,#4f46e5)"):"#0a1628",color:route===r?"#fff":"#475569",border:`1px solid ${route===r?(r===1?"#3b82f6":"#7c3aed"):"#1e2d3d"}`}}>
+                                  🚛 R{r}
+                                </button>
+                              ))}
+                            </div>
+                            <select value={del._driver||""} onChange={e=>setPdfResult(prev=>prev.map((x,i)=>i===di?{...x,_driver:Number(e.target.value)}:x))}
+                              style={{...C.sel,flex:1,fontSize:11}}>
+                              <option value="">Assign driver...</option>
+                              {employees.map(e=><option key={e.id} value={e.id}>{e.name}{e.is_manager?" 👑":""}</option>)}
+                            </select>
+                            {driverName&&<span style={{fontSize:10,color:"#22c55e",flexShrink:0}}>✓ {driverName}</span>}
                           </div>
                         </div>
                       );
                     })}
                   </div>
+
+                  {/* Summary before import */}
+                  <div style={{...C.card,padding:"10px 14px",marginBottom:10,background:"#0a1628"}}>
+                    <div style={{fontSize:12,color:"#94a3b8"}}>
+                      Route 1: <span style={{color:"#60a5fa",fontWeight:600}}>{pdfResult.filter(d=>(d._route||pdfRoute)===1).length} deliveries</span>
+                      {" · "}
+                      Route 2: <span style={{color:"#a78bfa",fontWeight:600}}>{pdfResult.filter(d=>d._route===2).length} deliveries</span>
+                      {" · "}
+                      Unassigned drivers: <span style={{color:pdfResult.filter(d=>!d._driver).length>0?"#f87171":"#22c55e",fontWeight:600}}>{pdfResult.filter(d=>!d._driver).length}</span>
+                    </div>
+                  </div>
+
                   <div style={{display:"flex",gap:8}}>
                     <button className="btn" onClick={async()=>{
                       const today=new Date().toISOString().split("T")[0];
-                      const route1Count=deliveries.filter(d=>d.delivery_date===today&&d.route_number!==2).length;
-                      const route2Count=deliveries.filter(d=>d.delivery_date===today&&d.route_number===2).length;
-                      let stop=pdfRoute===1?route1Count+1:route2Count+1;
+                      const stopCounters={1:deliveries.filter(d=>d.delivery_date===today&&(d.route_number||1)===1).length+1, 2:deliveries.filter(d=>d.delivery_date===today&&d.route_number===2).length+1};
                       const added=[];
                       for(const del of pdfResult){
-                        const realItems=(del.items||[]).filter(i=>i.name&&!["DISPOSALFEE","ABQDELIVERY","RIORANCHODELIVERY","LOSLUNAS","SANTA_FE"].some(skip=>i.name.toUpperCase().includes(skip.toUpperCase())));
-                        const nid=`D-${String(Date.now()).slice(-6)}-${stop}`;
+                        const route=del._route||pdfRoute;
+                        const driverId=del._driver||0;
+                        const stop=stopCounters[route]||1;
+                        stopCounters[route]=(stopCounters[route]||1)+1;
                         const isTransfer=!!del.is_transfer;
+                        const nid=`D-${Date.now().toString(36)}-${stop}`;
                         const newRow={
-                          id:nid,customer:del.customer,address:del.address,phone:del.phone||"",
-                          items:realItems.length>0?realItems:[{qty:1,name:"See notes"}],
+                          id:nid,customer:del.customer,address:del.address||"",phone:del.phone||"",
+                          items:del.items&&del.items.length>0?del.items:[{qty:1,name:"See notes"}],
                           delivery_window:del.delivery_window||"Morning",
-                          assigned_to:0,status:isTransfer?"Transfer":"Scheduled",
-                          notes:del.notes||"",
-                          floor:del.floor||"1",
-                          elevator:false,
-                          removal_requested:!!del.is_haul_off,
-                          transfer_scheduled:isTransfer,
-                          route_notes:"",
-                          stop_order:stop,
-                          delivery_date:del.delivery_date||today,
+                          assigned_to:driverId,status:isTransfer?"Transfer":"Scheduled",
+                          notes:del.notes||"",floor:del.floor||"1",elevator:false,
+                          removal_requested:!!del.is_haul_off,transfer_scheduled:isTransfer,route_notes:"",
+                          stop_order:stop,delivery_date:del.delivery_date||today,
                           ticket_number:String(del.sale_number||del.memo_number||""),
                           helper_id:0,
-                          manufacturer:realItems[0]?.manufacturer||"",
-                          piece_number:realItems[0]?.piece_number||"",
-                          route_number:pdfRoute,
+                          manufacturer:(del.items||[])[0]?.manufacturer||"",
+                          piece_number:(del.items||[])[0]?.piece_number||"",
+                          route_number:route,
                         };
                         await sb.from("deliveries").insert(newRow);
                         added.push(newRow);
-                        stop++;
                       }
                       setDeliveries(prev=>[...prev,...added]);
                       setPdfResult(null);
-                      alert("✅ "+added.length+" deliveries imported to Route "+pdfRoute+"!");
-                    }} style={{flex:1,background:"linear-gradient(135deg,#059669,#047857)",color:"#fff",padding:"11px",fontSize:13,fontWeight:700}}>
-                      ✅ Import All to Route {pdfRoute}
+                      const r1=added.filter(x=>x.route_number===1).length;
+                      const r2=added.filter(x=>x.route_number===2).length;
+                      alert(`✅ Imported! Route 1: ${r1} · Route 2: ${r2}`);
+                    }} style={{flex:1,background:"linear-gradient(135deg,#059669,#047857)",color:"#fff",padding:"12px",fontSize:13,fontWeight:700}}>
+                      ✅ Import All {pdfResult.length} Deliveries
                     </button>
-                    <button className="btn" onClick={()=>setPdfResult(null)} style={{background:"#1e2d3d",color:"#94a3b8",padding:"11px 14px",fontSize:12}}>Cancel</button>
+                    <button className="btn" onClick={()=>setPdfResult(null)} style={{background:"#1e2d3d",color:"#94a3b8",padding:"12px 14px",fontSize:12}}>Cancel</button>
                   </div>
                 </div>
               )}
@@ -4346,31 +4448,35 @@ export default function App() {
               </div>
               <div style={{marginBottom:10}}>
                 <div style={{fontSize:10,color:"#475569",marginBottom:3}}>📄 BOL Photo</div>
-                <input type="file" accept="image/*,application/pdf" onChange={async(e)=>{
+                <input type="file" accept="image/*" onChange={async(e)=>{
                   const file=e.target.files[0];
                   if(!file)return;
                   setBolUploading(true);
-                  const reader=new FileReader();
-                  reader.onload=async(ev)=>{
-                    const isImg=file.type.startsWith("image/");
-                    if(isImg){
-                      const img=new Image();
-                      img.onload=async()=>{
-                        const MAX=1600;let w=img.width,h=img.height;
-                        if(w>MAX){h=Math.round(h*MAX/w);w=MAX;}
-                        const canvas=document.createElement("canvas");canvas.width=w;canvas.height=h;
-                        canvas.getContext("2d").drawImage(img,0,0,w,h);
-                        canvas.toBlob(async(blob)=>{
-                          const path=`bol/${Date.now()}.jpg`;
-                          const {error}=await sb.storage.from("photos").upload(path,blob,{contentType:"image/jpeg"});
-                          if(!error){const url=sb.storage.from("photos").getPublicUrl(path).data.publicUrl;setNewReceiving(p=>({...p,bol_photo_url:url}));}
-                          setBolUploading(false);
-                        },"image/jpeg",0.9);
+                  try {
+                    const blob = await new Promise((res)=>{
+                      const reader=new FileReader();
+                      reader.onload=async(ev)=>{
+                        const img=new Image();
+                        img.onload=()=>{
+                          const MAX=1600;let w=img.width,h=img.height;
+                          if(w>MAX){h=Math.round(h*MAX/w);w=MAX;}
+                          const canvas=document.createElement("canvas");canvas.width=w;canvas.height=h;
+                          canvas.getContext("2d").drawImage(img,0,0,w,h);
+                          canvas.toBlob((b)=>res(b),"image/jpeg",0.9);
+                        };
+                        img.src=ev.target.result;
                       };
-                      img.src=ev.target.result;
-                    }
-                  };
-                  reader.readAsDataURL(file);
+                      reader.readAsDataURL(file);
+                    });
+                    const path=`bol/${Date.now()}.jpg`;
+                    const {error}=await sb.storage.from("photos").upload(path,blob,{contentType:"image/jpeg"});
+                    if(!error){
+                      const url=sb.storage.from("photos").getPublicUrl(path).data.publicUrl;
+                      setNewReceiving(p=>({...p,bol_photo_url:url}));
+                    } else { alert("Upload failed: "+error.message); }
+                  } catch(err){ alert("Error: "+err.message); }
+                  setBolUploading(false);
+                  e.target.value="";
                 }} style={{...C.inp,padding:"8px"}}/>
                 {bolUploading&&<div style={{fontSize:11,color:"#60a5fa",marginTop:4}}>⏳ Uploading BOL...</div>}
                 {newReceiving.bol_photo_url&&<div style={{marginTop:6,display:"flex",alignItems:"center",gap:8}}>
