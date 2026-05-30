@@ -3298,9 +3298,11 @@ export default function App() {
                       let match;
                       const rows = [];
                       while ((match = rowPattern.exec(s)) !== null) {
-                        rows.push({ idx: match.index + match[0].length - match[5].length - 1,
-                          rowNum: match[1], man: match[2], piece: match[3], qty: parseInt(match[4]),
-                          nameStart: match.index + match[0].length });
+                        rows.push({
+                          idx: match.index,
+                          man: match[2], piece: match[3], qty: parseInt(match[4]),
+                          nameStart: match.index + match[0].length
+                        });
                       }
                       rows.forEach((row, ri) => {
                         const nameEnd = ri < rows.length - 1 ? rows[ri+1].idx : s.length;
