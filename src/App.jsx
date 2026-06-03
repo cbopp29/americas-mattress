@@ -4223,37 +4223,77 @@ export default function App() {
         {/* SMS REPLIES */}
         {tab==="sms-replies"&&(
           <div className="fade">
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,flexWrap:"wrap",gap:8}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,flexWrap:"wrap",gap:8}}>
               <div>
                 <div style={{fontWeight:700,fontSize:15,color:"#f1f5f9"}}>💬 Customer Replies</div>
-                <div style={{fontSize:12,color:"#475569",marginTop:2}}>Incoming SMS replies from customers. Twilio forwards these automatically.</div>
+                <div style={{fontSize:12,color:"#475569",marginTop:2}}>{smsReplies.length} replies stored</div>
               </div>
-              <button className="btn" onClick={async()=>{
-                const r = await sb.from("sms_replies").select("*").order("received_at",{ascending:false}).limit(50);
-                if(r.data) setSmsReplies(r.data);
-              }} style={{background:"#1e2d3d",color:"#60a5fa",padding:"6px 12px",fontSize:12}}>🔄 Refresh</button>
+              <div style={{display:"flex",gap:7}}>
+                <button className="btn" onClick={async()=>{
+                  const r=await sb.from("sms_replies").select("*").order("received_at",{ascending:false}).limit(100);
+                  if(r.data)setSmsReplies(r.data);
+                }} style={{background:"#1e2d3d",color:"#60a5fa",padding:"6px 12px",fontSize:12}}>🔄 Refresh</button>
+                <button className="btn" onClick={async()=>{
+                  try{
+                    const res=await fetch("/.netlify/functions/fetch-replies",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"});
+                    const data=await res.json();
+                    if(data.error){alert("Error: "+data.error);return;}
+                    alert(`✅ Fetched ${data.count} messages from Twilio. ${data.saved} new replies saved.`);
+                    const r=await sb.from("sms_replies").select("*").order("received_at",{ascending:false}).limit(100);
+                    if(r.data)setSmsReplies(r.data);
+                  }catch(e){alert("Failed: "+e.message);}
+                }} style={{background:"linear-gradient(135deg,#7c3aed,#4f46e5)",color:"#fff",padding:"6px 12px",fontSize:12,fontWeight:600}}>📥 Fetch from Twilio</button>
+              </div>
             </div>
+
+            {/* Webhook setup instructions */}
+            <div style={{...C.card,padding:"12px 16px",marginBottom:12,borderColor:"#1e3a5f",background:"#0a1628"}}>
+              <div style={{fontWeight:600,fontSize:12,color:"#60a5fa",marginBottom:6}}>⚙️ One-time Setup — Auto-receive replies</div>
+              <div style={{fontSize:11,color:"#475569",lineHeight:1.8}}>
+                1. Go to <strong style={{color:"#94a3b8"}}>console.twilio.com → Phone Numbers → your number</strong><br/>
+                2. Under <strong style={{color:"#94a3b8"}}>Messaging → A Message Comes In</strong> set to:<br/>
+                <span style={{fontFamily:"monospace",background:"#131f2e",padding:"2px 6px",borderRadius:4,color:"#22c55e",fontSize:11,display:"inline-block",margin:"4px 0",wordBreak:"break-all"}}>https://americasmattress.netlify.app/.netlify/functions/sms-webhook</span><br/>
+                3. Click <strong style={{color:"#94a3b8"}}>Save</strong> — replies will auto-appear here from then on<br/>
+                4. Use <strong style={{color:"#a78bfa"}}>📥 Fetch from Twilio</strong> above to pull all existing replies right now
+              </div>
+            </div>
+
             {smsReplies.length===0?(
-              <div style={{...C.card,padding:40,textAlign:"center",color:"#475569"}}>
+              <div style={{...C.card,padding:36,textAlign:"center",color:"#475569"}}>
                 <div style={{fontSize:32,marginBottom:8}}>💬</div>
-                <div>No replies yet. Customer replies to your SMS messages will appear here.</div>
-                <div style={{fontSize:11,color:"#334155",marginTop:12}}>To enable: add a Twilio webhook URL pointing to your Supabase function.</div>
+                <div style={{marginBottom:8}}>No replies loaded yet.</div>
+                <button className="btn" onClick={async()=>{
+                  try{
+                    const res=await fetch("/.netlify/functions/fetch-replies",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"});
+                    const data=await res.json();
+                    if(data.error){alert("Error: "+data.error);return;}
+                    alert(`Fetched ${data.count} messages. ${data.saved} new.`);
+                    const r=await sb.from("sms_replies").select("*").order("received_at",{ascending:false}).limit(100);
+                    if(r.data)setSmsReplies(r.data);
+                  }catch(e){alert("Failed: "+e.message);}
+                }} style={{background:"linear-gradient(135deg,#7c3aed,#4f46e5)",color:"#fff",padding:"10px 20px",fontSize:13,fontWeight:600}}>
+                  📥 Pull Replies from Twilio Now
+                </button>
               </div>
             ):(
               <div style={{display:"flex",flexDirection:"column",gap:9}}>
                 {smsReplies.map(r=>{
-                  const matchedDel = deliveries.find(d=>d.id===r.delivery_id);
+                  const matchedDel=deliveries.find(d=>{
+                    const phone=(d.phone||"").replace(/\D/g,"");
+                    const from=(r.from_number||"").replace(/\D/g,"");
+                    return phone.length>9&&from.endsWith(phone.slice(-10));
+                  });
                   return(
                     <div key={r.id} style={{...C.card,padding:"13px 15px"}}>
                       <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:6,flexWrap:"wrap",gap:6}}>
                         <div>
-                          <div style={{fontWeight:700,fontSize:13,color:"#f1f5f9"}}>{r.customer_name||r.from_number}</div>
+                          <div style={{fontWeight:700,fontSize:13,color:"#f1f5f9"}}>{matchedDel?matchedDel.customer:(r.customer_name||r.from_number)}</div>
                           <div style={{fontSize:11,color:"#475569"}}>{r.from_number}</div>
                         </div>
                         <span style={{fontSize:11,color:"#475569"}}>{new Date(r.received_at).toLocaleString()}</span>
                       </div>
-                      <div style={{fontSize:13,color:"#e2e8f0",background:"#0a1628",borderRadius:8,padding:"10px 12px",lineHeight:1.5}}>{r.body}</div>
-                      {matchedDel&&<div style={{fontSize:11,color:"#60a5fa",marginTop:6}}>Re: {matchedDel.customer} — {matchedDel.address}</div>}
+                      <div style={{fontSize:14,color:"#e2e8f0",background:"#0a1628",borderRadius:8,padding:"10px 12px",lineHeight:1.5}}>{r.body}</div>
+                      {matchedDel&&<div style={{fontSize:11,color:"#60a5fa",marginTop:6}}>📦 {matchedDel.customer} — {matchedDel.address} — {matchedDel.ticket_number&&"#"+matchedDel.ticket_number}</div>}
                     </div>
                   );
                 })}
