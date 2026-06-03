@@ -245,6 +245,9 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
   const isDriver = user.role.toLowerCase().includes("driver");
   const todayISOd = new Date().toISOString().split("T")[0];
   const [showPastDels, setShowPastDels] = useState(false);
+  const [dRv, setDRv] = useState({received_date:new Date().toISOString().split("T")[0],vendor:"",received_by:user.name,quantity:1,notes:"",manufacturer:"",items:"",bol_photo_url:""});
+  const [dRvUploading, setDRvUploading] = useState(false);
+  const [dRvSaved, setDRvSaved] = useState(false);
 
   const myDeliveries = [...deliveries.filter(d=>{
     const isMine = d.assigned_to===user.id||d.helper_id===user.id;
@@ -1112,10 +1115,119 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
           </div>
         )}
 
+        {tab==="receiving"&&(
+          <div>
+            <div style={{...cardStyle,padding:14}}>
+              <div style={{fontWeight:700,fontSize:15,color:"#f1f5f9",marginBottom:12}}>📬 {isEs?"Log de Recepción":"Log Received Shipment"}</div>
+              {dRvSaved?(
+                <div style={{textAlign:"center",padding:24,color:"#4ade80",fontWeight:700,fontSize:16}}>✅ {isEs?"¡Guardado!":"Shipment Logged!"}</div>
+              ):(
+                <div>
+                  <div style={{marginBottom:10}}><div style={{fontSize:12,color:"#475569",marginBottom:4}}>{isEs?"Proveedor":"Vendor"} *</div><input value={dRv.vendor} onChange={e=>setDRv(p=>({...p,vendor:e.target.value}))} placeholder="e.g. Serta, Simmons" style={inputStyle}/></div>
+                  <div style={{marginBottom:10}}><div style={{fontSize:12,color:"#475569",marginBottom:4}}>{isEs?"Fabricante":"Manufacturer"}</div><input value={dRv.manufacturer} onChange={e=>setDRv(p=>({...p,manufacturer:e.target.value}))} placeholder="e.g. SERTA" style={inputStyle}/></div>
+                  <div style={{marginBottom:10}}><div style={{fontSize:12,color:"#475569",marginBottom:4}}>{isEs?"Artículos":"Items"}</div><input value={dRv.items} onChange={e=>setDRv(p=>({...p,items:e.target.value}))} placeholder="e.g. 2x Knox Queen" style={inputStyle}/></div>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
+                    <div><div style={{fontSize:12,color:"#475569",marginBottom:4}}>{isEs?"Cantidad":"Qty"}</div><input type="number" min="1" value={dRv.quantity} onChange={e=>setDRv(p=>({...p,quantity:Number(e.target.value)}))} style={inputStyle}/></div>
+                    <div><div style={{fontSize:12,color:"#475569",marginBottom:4}}>{isEs?"Fecha":"Date"}</div><input type="date" value={dRv.received_date} onChange={e=>setDRv(p=>({...p,received_date:e.target.value}))} style={{...inputStyle,colorScheme:"dark"}}/></div>
+                  </div>
+                  <div style={{marginBottom:10}}><div style={{fontSize:12,color:"#475569",marginBottom:4}}>{isEs?"Notas":"Notes / Problems"}</div><textarea value={dRv.notes} onChange={e=>setDRv(p=>({...p,notes:e.target.value}))} rows={2} style={{...inputStyle,resize:"vertical"}} placeholder={isEs?"Daños o problemas...":"Damage, missing items..."}/></div>
+                  <div style={{marginBottom:12}}>
+                    <div style={{fontSize:12,color:"#475569",marginBottom:4}}>📄 BOL Photo</div>
+                    <input type="file" accept="image/*" onChange={async(e)=>{
+                      const file=e.target.files[0];if(!file)return;
+                      setDRvUploading(true);
+                      try{
+                        const blob=await new Promise(res=>{const r=new FileReader();r.onload=ev=>{const img=new Image();img.onload=()=>{const MAX=1600;let w=img.width,h=img.height;if(w>MAX){h=Math.round(h*MAX/w);w=MAX;}const c=document.createElement("canvas");c.width=w;c.height=h;c.getContext("2d").drawImage(img,0,0,w,h);c.toBlob(b=>res(b),"image/jpeg",0.9);};img.src=ev.target.result;};r.readAsDataURL(file);});
+                        const path=`bol/${Date.now()}.jpg`;
+                        const {error}=await sb.storage.from("photos").upload(path,blob,{contentType:"image/jpeg"});
+                        if(!error){const url=sb.storage.from("photos").getPublicUrl(path).data.publicUrl;setDRv(p=>({...p,bol_photo_url:url}));}
+                        else alert("Upload error: "+error.message);
+                      }catch(err){alert("Error: "+err.message);}
+                      setDRvUploading(false);e.target.value="";
+                    }} style={{...inputStyle,padding:8}}/>
+                    {dRvUploading&&<div style={{fontSize:12,color:"#60a5fa",marginTop:4}}>⏳ Uploading...</div>}
+                    {dRv.bol_photo_url&&<img src={dRv.bol_photo_url} onClick={()=>window.open(dRv.bol_photo_url,"_blank")} alt="BOL" style={{width:120,height:80,objectFit:"cover",borderRadius:8,marginTop:6,cursor:"pointer",border:"2px solid #22c55e"}}/>}
+                  </div>
+                  <button className="btn" onClick={async()=>{
+                    if(!dRv.vendor)return alert("Please enter a vendor.");
+                    const r={id:Date.now(),received_date:dRv.received_date,vendor:dRv.vendor,manufacturer:dRv.manufacturer||"",received_by:user.name,quantity:dRv.quantity||1,items:dRv.items||"",notes:dRv.notes||"",bol_photo_url:dRv.bol_photo_url||"",created_at:new Date().toISOString()};
+                    const {error}=await sb.from("receiving_log").insert(r);
+                    if(error){alert("Save failed: "+error.message);return;}
+                    setDRvSaved(true);
+                    setDRv({received_date:new Date().toISOString().split("T")[0],vendor:"",received_by:user.name,quantity:1,notes:"",manufacturer:"",items:"",bol_photo_url:""});
+                    setTimeout(()=>setDRvSaved(false),3000);
+                  }} style={{width:"100%",background:"linear-gradient(135deg,#059669,#047857)",color:"#fff",padding:14,fontSize:14,fontWeight:700}}>
+                    📬 {isEs?"Guardar":"Log Shipment"}
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {tab==="training-view"&&(
+          <div>
+            {(!trainingFiles||trainingFiles.length===0)?(
+              <div style={{...cardStyle,padding:40,textAlign:"center",color:"#475569"}}>
+                <div style={{fontSize:32,marginBottom:8}}>🎬</div>
+                <div>{isEs?"No hay materiales.":"No training materials yet."}</div>
+              </div>
+            ):([...new Set(trainingFiles.map(t=>t.category))].map(cat=>(
+              <div key={cat} style={{marginBottom:14}}>
+                <div style={{fontSize:11,color:"#475569",fontWeight:700,letterSpacing:".08em",textTransform:"uppercase",marginBottom:8}}>{cat}</div>
+                {trainingFiles.filter(t=>t.category===cat).map(t=>{
+                  const signed=(completions||[]).find(c=>c.training_id===t.id&&c.emp_id===user.id);
+                  const getEmbed=url=>{if(!url)return null;const yt=url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([^&\s]+)/);if(yt)return`https://www.youtube.com/embed/${yt[1]}`;const vi=url.match(/vimeo\.com\/(\d+)/);if(vi)return`https://player.vimeo.com/video/${vi[1]}`;return url;};
+                  const embed=getEmbed(t.video_url);
+                  return(<TrainingCard key={t.id} t={t} embed={embed} signed={signed} user={user} isEs={isEs} sb={sb} completions={completions||[]} setCompletions={setCompletions} cardStyle={cardStyle}/>);
+                })}
+              </div>
+            )))}
+          </div>
+        )}
+
       </div>
     </div>
   );
 }
+function TrainingCard({ t, embed, signed, user, isEs, sb, completions, setCompletions, cardStyle }) {
+  const [open, setOpen] = React.useState(false);
+  return(
+    <div style={{...cardStyle,marginBottom:10,overflow:"hidden"}}>
+      <div style={{padding:"12px 16px",display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
+        <div style={{flex:1}}>
+          <div style={{fontWeight:600,fontSize:13,color:"#f1f5f9",marginBottom:4}}>{t.title}</div>
+          {t.content&&<div style={{fontSize:11,color:"#475569"}}>{t.content.substring(0,80)}{t.content.length>80?"...":""}</div>}
+          <div style={{display:"flex",gap:5,marginTop:4,flexWrap:"wrap"}}>
+            {signed&&<span style={{fontSize:10,background:"#052e16",color:"#4ade80",borderRadius:4,padding:"2px 6px"}}>✅ Completed</span>}
+            {t.requires_signature&&!signed&&<span style={{fontSize:10,background:"#1c1500",color:"#f59e0b",borderRadius:4,padding:"2px 6px"}}>✍️ Sign-off required</span>}
+            {t.video_url&&<span style={{fontSize:10,background:"#0c2340",color:"#60a5fa",borderRadius:4,padding:"2px 6px"}}>🎬 Video</span>}
+          </div>
+        </div>
+        <button className="btn" onClick={()=>setOpen(p=>!p)} style={{background:"#1e2d3d",color:"#60a5fa",padding:"5px 10px",fontSize:11,flexShrink:0}}>{open?"▲":"▼"}</button>
+      </div>
+      {open&&(
+        <div style={{borderTop:"1px solid #1e2d3d"}}>
+          {embed&&<div style={{position:"relative",paddingBottom:"56.25%",height:0}}><iframe src={embed} style={{position:"absolute",top:0,left:0,width:"100%",height:"100%",border:0}} allowFullScreen title={t.title}/></div>}
+          {t.content&&<div style={{padding:"12px 16px",fontSize:13,color:"#94a3b8",lineHeight:1.6}}>{t.content}</div>}
+          {t.requires_signature&&!signed&&(
+            <div style={{padding:"12px 16px",borderTop:"1px solid #1e2d3d"}}>
+              <button className="btn" onClick={async()=>{
+                const c={id:Date.now(),training_id:t.id,emp_id:user.id,emp_name:user.name,completed_at:new Date().toISOString(),signature_url:""};
+                await sb.from("training_completions").insert(c);
+                setCompletions(prev=>[...prev,c]);
+              }} style={{width:"100%",background:"linear-gradient(135deg,#059669,#047857)",color:"#fff",padding:"11px",fontSize:13,fontWeight:700}}>
+                ✅ {isEs?"Marcar como Completado":"I Have Watched This — Mark Complete"}
+              </button>
+            </div>
+          )}
+          {signed&&<div style={{padding:"10px 16px",borderTop:"1px solid #1e2d3d",textAlign:"center",color:"#4ade80",fontSize:13,fontWeight:600}}>✅ Completed {new Date(signed.completed_at).toLocaleDateString()}</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function DriverInspectionUpload({ user, onUploaded, isEs }) {
   const [notes, setNotes] = useState("");
   const [uploading, setUploading] = useState(false);
@@ -1823,6 +1935,9 @@ export default function App() {
   const [probFilter, setProbFilter] = useState("open");
   const [editingProb, setEditingProb] = useState(null);
   const [newProb, setNewProb] = useState({customer:"",ticket_number:"",eta:"",description:"",what_to_do:"",type:"customer",status:"Open"});
+  const [bouncieKey, setBouncieKey] = useState(()=>localStorage.getItem("bouncie_key")||"");
+  const [bouncieVehicles, setBouncieVehicles] = useState([]);
+  const [bouncieLoading, setBouncieLoading] = useState(false);
   const [reportWeek, setReportWeek] = useState(()=>{const d=new Date();d.setDate(d.getDate()-d.getDay());return d.toISOString().split("T")[0];});
   const [offlineQueue, setOfflineQueue] = useState([]);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
@@ -2159,11 +2274,13 @@ export default function App() {
             {key:"trainings",label:"Trainings",icon:"🎓"},
             {key:"liability",label:"Liability",icon:"📝"},
             {key:"sms-setup",label:"SMS Setup",icon:"📱"},
-            {key:"sms-replies",label:"Replies",icon:"💬"},
+            
             {key:"weekly-report",label:"Weekly",icon:"📊"},
+            {key:"daily-summary",label:"Daily",icon:"🖨️"},
             {key:"receipts",label:"Receipts",icon:"🧾"},
             {key:"receiving",label:"Receiving",icon:"📬"},
             {key:"training-files",label:"Training",icon:"🎬"},
+            {key:"bouncie",label:"Trucks",icon:"🛰️"},
           ].map(t=>(
             <button key={t.key} className="btn" onClick={()=>setTab(t.key)}
               style={{padding:"12px 13px",fontSize:12,fontWeight:500,whiteSpace:"nowrap",color:tab===t.key?"#60a5fa":"#64748b",borderBottom:tab===t.key?"2px solid #3b82f6":"2px solid transparent",background:"none",borderRadius:0}}>
@@ -4287,6 +4404,107 @@ export default function App() {
           );
         })()}
 
+        {/* DAILY SUMMARY */}
+        {tab==="daily-summary"&&(()=>{
+          const [summaryDate, setSummaryDate] = React.useState(new Date().toISOString().split("T")[0]);
+          const dayDels = deliveries.filter(d=>d.delivery_date===summaryDate).sort((a,b)=>(a.stop_order||0)-(b.stop_order||0));
+          const route1 = dayDels.filter(d=>(d.route_number||1)===1);
+          const route2 = dayDels.filter(d=>d.route_number===2);
+          const printSummary = () => {
+            const routeTable = (dels, routeNum) => {
+              if(!dels.length) return "";
+              const rows = dels.map(d=>{
+                const driver = employees.find(e=>e.id===d.assigned_to);
+                const items = (d.items||[]).map(i=>`${i.qty}x ${i.name}`).join(", ");
+                return `<tr>
+                  <td style="font-weight:700;font-size:15px">${d.stop_order||""}</td>
+                  <td><strong>${d.customer}</strong><br/><span style="font-size:11px;color:#555">${d.address}</span><br/><span style="font-size:11px">${d.phone||""}</span></td>
+                  <td style="font-size:12px">${items}</td>
+                  <td style="font-size:12px">${d.delivery_window||""}</td>
+                  <td style="font-size:12px">${driver?.name||""}</td>
+                  <td style="font-size:12px;color:${d.status==="Delivered"?"#16a34a":d.status==="Transfer"?"#d97706":"#2563eb"}">${d.status||"Scheduled"}</td>
+                  <td style="font-size:11px;color:#666">${(d.notes||"").substring(0,80)}</td>
+                </tr>`;
+              }).join("");
+              return `<h3 style="margin:16px 0 6px;color:#1e3a5f;font-size:14px">🚛 Route ${routeNum} — ${dels.length} stops</h3>
+              <table border="1" style="width:100%;border-collapse:collapse;font-size:13px;margin-bottom:16px">
+                <tr style="background:#f0f4f8"><th style="padding:6px">Stop</th><th>Customer</th><th>Items</th><th>Window</th><th>Driver</th><th>Status</th><th>Notes</th></tr>
+                ${rows}
+              </table>`;
+            };
+            const html = `<!DOCTYPE html><html><head><title>Daily Route — ${summaryDate}</title>
+            <style>body{font-family:Arial,sans-serif;margin:20px;color:#111}table td,table th{padding:6px 8px;border:1px solid #ddd;vertical-align:top}@media print{.no-print{display:none}}</style>
+            </head><body>
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px">
+              <div><h1 style="margin:0;font-size:20px">🛏 America's Mattress</h1><h2 style="margin:4px 0;color:#555;font-size:15px">Daily Delivery Route — ${new Date(summaryDate+"T12:00:00").toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric",year:"numeric"})}</h2></div>
+              <div style="font-size:12px;color:#888">Generated: ${new Date().toLocaleString()}</div>
+            </div>
+            <div style="display:flex;gap:20px;margin-bottom:12px;font-size:13px">
+              <span>Total: <strong>${dayDels.length}</strong></span>
+              <span>Delivered: <strong style="color:#16a34a">${dayDels.filter(d=>d.status==="Delivered").length}</strong></span>
+              <span>Pending: <strong style="color:#2563eb">${dayDels.filter(d=>d.status!=="Delivered"&&d.status!=="Transfer").length}</strong></span>
+              <span>Transfers: <strong style="color:#d97706">${dayDels.filter(d=>d.status==="Transfer").length}</strong></span>
+              <span>Haul Offs: <strong>${dayDels.filter(d=>d.removal_requested).length}</strong></span>
+            </div>
+            ${routeTable(route1,1)}
+            ${routeTable(route2,2)}
+            <div class="no-print" style="margin-top:16px"><button onclick="window.print()" style="padding:10px 20px;background:#2563eb;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:14px">🖨️ Print</button></div>
+            </body></html>`;
+            const w = window.open("","_blank");
+            w.document.write(html);
+            w.document.close();
+          };
+          return(
+            <div className="fade">
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,flexWrap:"wrap",gap:8}}>
+                <div>
+                  <div style={{fontWeight:700,fontSize:15,color:"#f1f5f9"}}>🖨️ Daily Summary</div>
+                  <div style={{fontSize:12,color:"#475569",marginTop:2}}>Print the day's route for your POS system or whiteboard.</div>
+                </div>
+                <button className="btn" onClick={printSummary} style={{background:"linear-gradient(135deg,#2563eb,#1d4ed8)",color:"#fff",padding:"8px 16px",fontSize:13,fontWeight:700}}>🖨️ Print / Save PDF</button>
+              </div>
+              <input type="date" value={summaryDate} onChange={e=>setSummaryDate(e.target.value)} style={{...C.inp,marginBottom:14,colorScheme:"dark",maxWidth:200}}/>
+              {dayDels.length===0?(
+                <div style={{...C.card,padding:36,textAlign:"center",color:"#475569"}}>
+                  <div style={{fontSize:28,marginBottom:8}}>📋</div>
+                  <div>No deliveries for {new Date(summaryDate+"T12:00:00").toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"})}.</div>
+                </div>
+              ):(
+                [1,2].map(routeNum=>{
+                  const rDels = dayDels.filter(d=>(d.route_number||1)===routeNum);
+                  if(!rDels.length) return null;
+                  return(
+                    <div key={routeNum} style={{marginBottom:16}}>
+                      <div style={{fontWeight:700,fontSize:13,color:routeNum===1?"#60a5fa":"#a78bfa",marginBottom:8,textTransform:"uppercase",letterSpacing:".07em"}}>🚛 Route {routeNum} — {rDels.length} stops</div>
+                      {rDels.map(d=>{
+                        const driver=employees.find(e=>e.id===d.assigned_to);
+                        return(
+                          <div key={d.id} style={{...C.card,padding:"11px 14px",marginBottom:8,display:"flex",gap:10,alignItems:"flex-start",borderLeft:`3px solid ${d.status==="Delivered"?"#22c55e":d.status==="Transfer"?"#f59e0b":"#3b82f6"}`}}>
+                            <div style={{fontSize:18,fontWeight:800,color:"#475569",minWidth:24,textAlign:"center",flexShrink:0}}>{d.stop_order||"?"}</div>
+                            <div style={{flex:1}}>
+                              <div style={{fontWeight:700,fontSize:13,color:"#f1f5f9"}}>{d.customer}</div>
+                              <div style={{fontSize:11,color:"#64748b",marginBottom:3}}>{d.address}</div>
+                              <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:d.notes?4:0}}>
+                                {(d.items||[]).map((item,ii)=><span key={ii} style={{fontSize:11,background:"#0a1628",color:"#94a3b8",borderRadius:4,padding:"1px 6px"}}>{item.qty}x {item.name}</span>)}
+                              </div>
+                              {d.notes&&<div style={{fontSize:11,color:"#f59e0b",marginTop:3}}>📋 {d.notes.substring(0,100)}</div>}
+                            </div>
+                            <div style={{flexShrink:0,textAlign:"right"}}>
+                              <div style={{fontSize:11,color:"#64748b"}}>{d.delivery_window}</div>
+                              <div style={{fontSize:11,color:"#94a3b8"}}>{driver?.name||"Unassigned"}</div>
+                              <span style={{fontSize:10,background:d.status==="Delivered"?"#052e16":d.status==="Transfer"?"#1c1500":"#0c2340",color:d.status==="Delivered"?"#4ade80":d.status==="Transfer"?"#f59e0b":"#60a5fa",borderRadius:4,padding:"2px 6px",fontWeight:600}}>{d.status||"Scheduled"}</span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          );
+        })()}
+
         {/* RECEIPTS */}
         {tab==="receipts"&&(
           <div className="fade">
@@ -4488,10 +4706,12 @@ export default function App() {
               </div>
               <button className="btn" onClick={async()=>{
                 if(!newReceiving.vendor)return alert("Please enter a vendor.");
-                const r={id:Date.now(),received_date:newReceiving.received_date,vendor:newReceiving.vendor,manufacturer:newReceiving.manufacturer,received_by:newReceiving.received_by,quantity:newReceiving.quantity,items:newReceiving.items,notes:newReceiving.notes,bol_photo_url:newReceiving.bol_photo_url||"",created_at:new Date().toISOString()};
-                await sb.from("receiving_log").insert(r);
+                const r={id:Date.now(),received_date:newReceiving.received_date,vendor:newReceiving.vendor,manufacturer:newReceiving.manufacturer,received_by:newReceiving.received_by||currentUser.name,quantity:newReceiving.quantity||1,items:newReceiving.items||"",notes:newReceiving.notes||"",bol_photo_url:newReceiving.bol_photo_url||"",created_at:new Date().toISOString()};
+                const {error}=await sb.from("receiving_log").insert(r);
+                if(error){alert("Save failed: "+error.message);return;}
                 setReceivingLog(prev=>[r,...prev]);
                 setNewReceiving({received_date:new Date().toISOString().split("T")[0],vendor:"",received_by:"",quantity:1,notes:"",manufacturer:"",items:"",bol_photo_url:""});
+                alert("✅ Shipment logged!");
               }} style={{width:"100%",background:"linear-gradient(135deg,#059669,#047857)",color:"#fff",padding:"11px",fontSize:13,fontWeight:700}}>
                 📬 Log Shipment
               </button>
@@ -4686,6 +4906,111 @@ export default function App() {
                 </div>
               ));
             })()}
+          </div>
+        )}
+
+        {/* BOUNCIE TRUCK TRACKING */}
+        {tab==="bouncie"&&(
+          <div className="fade">
+            <div style={{fontWeight:700,fontSize:15,color:"#f1f5f9",marginBottom:4}}>🛰️ Bouncie Truck Tracking</div>
+            <div style={{fontSize:12,color:"#475569",marginBottom:14}}>Connect your Bouncie GPS trackers to see live truck locations, odometer, speed and status.</div>
+
+            {/* API Key setup */}
+            <div style={{...C.card,padding:"14px 16px",marginBottom:14,borderColor:"#1e3a5f"}}>
+              <div style={{fontWeight:600,fontSize:13,color:"#60a5fa",marginBottom:8}}>🔑 Bouncie API Key</div>
+              <div style={{fontSize:12,color:"#475569",marginBottom:8}}>Get your API key from <a href="https://www.bouncie.app/developer" target="_blank" rel="noreferrer" style={{color:"#60a5fa"}}>bouncie.app/developer</a> — it's free with your subscription.</div>
+              <div style={{display:"flex",gap:8}}>
+                <input value={bouncieKey} onChange={e=>setBouncieKey(e.target.value)} placeholder="Your Bouncie API key..." style={{...C.inp,flex:1,fontFamily:"monospace"}} type="password"/>
+                <button className="btn" onClick={async()=>{
+                  if(!bouncieKey){alert("Please enter your Bouncie API key.");return;}
+                  localStorage.setItem("bouncie_key",bouncieKey);
+                  setBouncieLoading(true);
+                  try{
+                    const res=await fetch("https://api.bouncie.dev/v1/vehicles",{headers:{"Authorization":bouncieKey,"Content-Type":"application/json"}});
+                    if(!res.ok){alert("Invalid API key or connection failed. Check your key at bouncie.app/developer.");setBouncieLoading(false);return;}
+                    const data=await res.json();
+                    setBouncieVehicles(Array.isArray(data)?data:[]);
+                    if(data.length===0)alert("Connected! No vehicles found. Make sure your Bouncie devices are active.");
+                  }catch(err){alert("Connection failed: "+err.message);}
+                  setBouncieLoading(false);
+                }} style={{background:"linear-gradient(135deg,#2563eb,#1d4ed8)",color:"#fff",padding:"9px 16px",fontSize:12,fontWeight:600,flexShrink:0}}>
+                  {bouncieLoading?"⏳ Connecting...":"Connect"}
+                </button>
+              </div>
+            </div>
+
+            {bouncieVehicles.length===0&&!bouncieLoading&&bouncieKey&&(
+              <div style={{...C.card,padding:36,textAlign:"center",color:"#475569"}}>
+                <div style={{fontSize:32,marginBottom:8}}>🛰️</div>
+                <div>Click Connect to load your vehicles.</div>
+              </div>
+            )}
+
+            {bouncieVehicles.length>0&&(
+              <div>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+                  <div style={{fontSize:13,color:"#22c55e",fontWeight:600}}>{bouncieVehicles.length} vehicle{bouncieVehicles.length!==1?"s":""} connected</div>
+                  <button className="btn" onClick={async()=>{
+                    setBouncieLoading(true);
+                    try{
+                      const res=await fetch("https://api.bouncie.dev/v1/vehicles",{headers:{"Authorization":bouncieKey}});
+                      const data=await res.json();
+                      setBouncieVehicles(Array.isArray(data)?data:[]);
+                    }catch(e){}
+                    setBouncieLoading(false);
+                  }} style={{background:"#1e2d3d",color:"#60a5fa",padding:"5px 12px",fontSize:11}}>🔄 Refresh</button>
+                </div>
+                {bouncieVehicles.map(v=>{
+                  const loc=v.stats||{};
+                  const isMoving=loc.isMoving||loc.speed>2;
+                  const lat=loc.location?.lat||loc.lat;
+                  const lng=loc.location?.lon||loc.lon||loc.lng;
+                  return(
+                    <div key={v.imei||v.id} style={{...C.card,padding:"14px 16px",marginBottom:10}}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8,flexWrap:"wrap",gap:6}}>
+                        <div>
+                          <div style={{fontWeight:700,fontSize:14,color:"#f1f5f9"}}>{v.nickname||v.name||v.licensePlate||"Truck"}</div>
+                          <div style={{fontSize:11,color:"#475569",marginTop:2}}>{v.model||""} {v.year||""}</div>
+                        </div>
+                        <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                          <span style={{fontSize:11,background:isMoving?"#052e16":"#1e2d3d",color:isMoving?"#4ade80":"#475569",borderRadius:6,padding:"3px 9px",fontWeight:600}}>
+                            {isMoving?"🟢 Moving":"⚫ Parked"}
+                          </span>
+                          {loc.speed>0&&<span style={{fontSize:11,background:"#0c2340",color:"#60a5fa",borderRadius:6,padding:"3px 9px"}}>{Math.round(loc.speed)} mph</span>}
+                        </div>
+                      </div>
+                      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+                        {loc.odometer&&<div style={{background:"#0a1628",borderRadius:6,padding:"8px 10px"}}>
+                          <div style={{fontSize:10,color:"#475569",marginBottom:2}}>Odometer</div>
+                          <div style={{fontWeight:600,fontSize:13,color:"#f1f5f9"}}>{Math.round((loc.odometer||0)*0.621371).toLocaleString()} mi</div>
+                        </div>}
+                        {loc.batteryVoltage&&<div style={{background:"#0a1628",borderRadius:6,padding:"8px 10px"}}>
+                          <div style={{fontSize:10,color:"#475569",marginBottom:2}}>Battery</div>
+                          <div style={{fontWeight:600,fontSize:13,color:loc.batteryVoltage>12?"#22c55e":"#f59e0b"}}>{loc.batteryVoltage}V</div>
+                        </div>}
+                      </div>
+                      {loc.address&&<div style={{fontSize:12,color:"#64748b",marginBottom:8}}>📍 {loc.address}</div>}
+                      {lat&&lng&&(
+                        <a href={`https://www.google.com/maps?q=${lat},${lng}`} target="_blank" rel="noreferrer"
+                          style={{display:"block",textAlign:"center",background:"#0c2340",color:"#60a5fa",padding:"8px",borderRadius:8,fontSize:12,fontWeight:600,textDecoration:"none"}}>
+                          🗺️ Open in Google Maps
+                        </a>
+                      )}
+                    </div>
+                  );
+                })}
+
+                <div style={{...C.card,padding:"12px 16px",borderColor:"#1e3a5f",marginTop:4}}>
+                  <div style={{fontSize:12,color:"#475569",marginBottom:6}}>💡 Bouncie Setup Tips:</div>
+                  <div style={{fontSize:11,color:"#334155",lineHeight:1.7}}>
+                    • Vehicles update every 60 seconds while moving<br/>
+                    • API key is stored locally on this device only<br/>
+                    • For live driver tracking, drivers can also enable GPS in their delivery view<br/>
+                    • Bouncie supports geofence alerts — set up at bouncie.app
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
