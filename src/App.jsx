@@ -248,6 +248,9 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
   const [dRv, setDRv] = useState({received_date:new Date().toISOString().split("T")[0],vendor:"",received_by:user.name,quantity:1,notes:"",manufacturer:"",items:"",bol_photo_url:""});
   const [dRvUploading, setDRvUploading] = useState(false);
   const [dRvSaved, setDRvSaved] = useState(false);
+  const [dReceipt, setDReceipt] = useState({reason:"",amount:"",receipt_date:new Date().toISOString().split("T")[0],photo_url:""});
+  const [dReceiptUploading, setDReceiptUploading] = useState(false);
+  const [dReceiptSaved, setDReceiptSaved] = useState(false);
 
   const myDeliveries = [...deliveries.filter(d=>{
     const isMine = d.assigned_to===user.id||d.helper_id===user.id;
@@ -716,6 +719,7 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
           {key:"inspection",label:isEs?"Inspección":"Inspect",icon:"🔍"},
           {key:"receiving",label:isEs?"Recibir":"Receiving",icon:"📬"},
           {key:"training-view",label:isEs?"Entren.":"Training",icon:"🎬"},
+          {key:"receipts-submit",label:isEs?"Recibo":"Receipt",icon:"🧾"},
         ].map(t=>(
           <button key={t.key} className="btn" onClick={()=>setTab(t.key)}
             style={{flexShrink:0,padding:"12px 10px",fontSize:11,fontWeight:600,color:tab===t.key?"#60a5fa":"#64748b",borderBottom:tab===t.key?"2px solid #3b82f6":"2px solid transparent",background:"none",borderRadius:0,textAlign:"center",minWidth:60}}>
@@ -1158,6 +1162,63 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
                     setTimeout(()=>setDRvSaved(false),3000);
                   }} style={{width:"100%",background:"linear-gradient(135deg,#059669,#047857)",color:"#fff",padding:14,fontSize:14,fontWeight:700}}>
                     📬 {isEs?"Guardar":"Log Shipment"}
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {tab==="receipts-submit"&&(
+          <div>
+            <div style={{...cardStyle,padding:14}}>
+              <div style={{fontWeight:700,fontSize:15,color:"#f1f5f9",marginBottom:4}}>🧾 {isEs?"Enviar Recibo":"Submit Receipt"}</div>
+              <div style={{fontSize:12,color:"#475569",marginBottom:12}}>{isEs?"Registra gastos del día.":"Log expenses — fuel, supplies, etc."}</div>
+              {dReceiptSaved?(
+                <div style={{textAlign:"center",padding:24,color:"#4ade80",fontWeight:700,fontSize:16}}>✅ {isEs?"¡Recibo enviado!":"Receipt submitted!"}</div>
+              ):(
+                <div>
+                  <div style={{marginBottom:10}}>
+                    <div style={{fontSize:12,color:"#475569",marginBottom:4}}>{isEs?"Razón / Descripción":"Reason / Description"} *</div>
+                    <input value={dReceipt.reason} onChange={e=>setDReceipt(p=>({...p,reason:e.target.value}))} placeholder={isEs?"ej. Gasolina, suministros...":"e.g. Fuel, supplies, lunch..."} style={inputStyle}/>
+                  </div>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
+                    <div>
+                      <div style={{fontSize:12,color:"#475569",marginBottom:4}}>{isEs?"Monto ($)":"Amount ($)"} *</div>
+                      <input type="number" step="0.01" value={dReceipt.amount} onChange={e=>setDReceipt(p=>({...p,amount:e.target.value}))} placeholder="0.00" style={inputStyle}/>
+                    </div>
+                    <div>
+                      <div style={{fontSize:12,color:"#475569",marginBottom:4}}>{isEs?"Fecha":"Date"}</div>
+                      <input type="date" value={dReceipt.receipt_date} onChange={e=>setDReceipt(p=>({...p,receipt_date:e.target.value}))} style={{...inputStyle,colorScheme:"dark"}}/>
+                    </div>
+                  </div>
+                  <div style={{marginBottom:12}}>
+                    <div style={{fontSize:12,color:"#475569",marginBottom:4}}>📸 {isEs?"Foto del Recibo":"Receipt Photo"}</div>
+                    <input type="file" accept="image/*" onChange={async(e)=>{
+                      const file=e.target.files[0];if(!file)return;
+                      setDReceiptUploading(true);
+                      try{
+                        const blob=await new Promise(res=>{const r=new FileReader();r.onload=ev=>{const img=new Image();img.onload=()=>{const MAX=1200;let w=img.width,h=img.height;if(w>MAX){h=Math.round(h*MAX/w);w=MAX;}const c=document.createElement("canvas");c.width=w;c.height=h;c.getContext("2d").drawImage(img,0,0,w,h);c.toBlob(b=>res(b),"image/jpeg",0.85);};img.src=ev.target.result;};r.readAsDataURL(file);});
+                        const path=`receipts/${Date.now()}.jpg`;
+                        const {error}=await sb.storage.from("photos").upload(path,blob,{contentType:"image/jpeg"});
+                        if(!error){const url=sb.storage.from("photos").getPublicUrl(path).data.publicUrl;setDReceipt(p=>({...p,photo_url:url}));}
+                        else alert("Upload error: "+error.message);
+                      }catch(err){alert("Error: "+err.message);}
+                      setDReceiptUploading(false);e.target.value="";
+                    }} style={{...inputStyle,padding:8}}/>
+                    {dReceiptUploading&&<div style={{fontSize:12,color:"#60a5fa",marginTop:4}}>⏳ {isEs?"Subiendo...":"Uploading..."}</div>}
+                    {dReceipt.photo_url&&<img src={dReceipt.photo_url} onClick={()=>window.open(dReceipt.photo_url,"_blank")} alt="receipt" style={{width:120,height:80,objectFit:"cover",borderRadius:8,marginTop:6,cursor:"pointer",border:"2px solid #22c55e"}}/>}
+                  </div>
+                  <button className="btn" onClick={async()=>{
+                    if(!dReceipt.reason||!dReceipt.amount)return alert(isEs?"Ingresa razón y monto.":"Please enter reason and amount.");
+                    const r={id:Date.now(),reason:dReceipt.reason,amount:parseFloat(dReceipt.amount),receipt_date:dReceipt.receipt_date,photo_url:dReceipt.photo_url||"",submitted_by:user.name,created_at:new Date().toISOString()};
+                    const {error}=await sb.from("receipts").insert(r);
+                    if(error){alert("Save failed: "+error.message);return;}
+                    setDReceiptSaved(true);
+                    setDReceipt({reason:"",amount:"",receipt_date:new Date().toISOString().split("T")[0],photo_url:""});
+                    setTimeout(()=>setDReceiptSaved(false),3000);
+                  }} style={{width:"100%",background:"linear-gradient(135deg,#2563eb,#1d4ed8)",color:"#fff",padding:14,fontSize:14,fontWeight:700}}>
+                    💾 {isEs?"Enviar Recibo":"Submit Receipt"}
                   </button>
                 </div>
               )}
@@ -1935,6 +1996,7 @@ export default function App() {
   const [probFilter, setProbFilter] = useState("open");
   const [editingProb, setEditingProb] = useState(null);
   const [newProb, setNewProb] = useState({customer:"",ticket_number:"",eta:"",description:"",what_to_do:"",type:"customer",status:"Open"});
+  const [summaryDate, setSummaryDate] = useState(new Date().toISOString().split("T")[0]);
   const [bouncieKey, setBouncieKey] = useState(()=>localStorage.getItem("bouncie_key")||"");
   const [bouncieVehicles, setBouncieVehicles] = useState([]);
   const [bouncieLoading, setBouncieLoading] = useState(false);
@@ -2275,6 +2337,7 @@ export default function App() {
             {key:"liability",label:"Liability",icon:"📝"},
             {key:"sms-setup",label:"SMS Setup",icon:"📱"},
             
+            {key:"sms-replies",label:"Replies",icon:"💬"},
             {key:"weekly-report",label:"Weekly",icon:"📊"},
             {key:"daily-summary",label:"Daily",icon:"🖨️"},
             {key:"receipts",label:"Receipts",icon:"🧾"},
@@ -4406,7 +4469,6 @@ export default function App() {
 
         {/* DAILY SUMMARY */}
         {tab==="daily-summary"&&(()=>{
-          const [summaryDate, setSummaryDate] = React.useState(new Date().toISOString().split("T")[0]);
           const dayDels = deliveries.filter(d=>d.delivery_date===summaryDate).sort((a,b)=>(a.stop_order||0)-(b.stop_order||0));
           const route1 = dayDels.filter(d=>(d.route_number||1)===1);
           const route2 = dayDels.filter(d=>d.route_number===2);
