@@ -212,8 +212,8 @@ function LoginScreen({ employees, onLogin }) {
             Sign In →
           </button>
         </div>
-        <div style={{textAlign:"center",marginTop:14,fontSize:10,color:"#334155"}}>
-          PINs: Conner=0000 Frank=1111 Max=2222 Chris=3333 Nate=4444 Ricky=5555 Aariq=6666 Alberto=7777
+        <div style={{textAlign:"center",marginTop:14,fontSize:10,color:"#1e2d3d"}}>
+          America's Mattress · Albuquerque
         </div>
       </div>
     </div>
@@ -245,6 +245,7 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
   const isDriver = user.role.toLowerCase().includes("driver");
   const todayISOd = new Date().toISOString().split("T")[0];
   const [showPastDels, setShowPastDels] = useState(false);
+  const [driverDateFilter, setDriverDateFilter] = useState(new Date().toISOString().split("T")[0]);
   const [dRv, setDRv] = useState({received_date:new Date().toISOString().split("T")[0],vendor:"",received_by:user.name,quantity:1,notes:"",manufacturer:"",items:"",bol_photo_url:""});
   const [dRvUploading, setDRvUploading] = useState(false);
   const [dRvSaved, setDRvSaved] = useState(false);
@@ -252,16 +253,16 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
   const [dReceiptUploading, setDReceiptUploading] = useState(false);
   const [dReceiptSaved, setDReceiptSaved] = useState(false);
 
+  const activeDate = showPastDels && driverDateFilter ? driverDateFilter : todayISOd;
   const myDeliveries = [...deliveries.filter(d=>{
     const isMine = d.assigned_to===user.id||d.helper_id===user.id;
     if(!isMine) return false;
-    if(showPastDels) return true;
-    return (d.delivery_date||todayISOd)===todayISOd;
+    return (d.delivery_date||todayISOd)===activeDate;
   })].sort((a,b)=>(a.stop_order||0)-(b.stop_order||0));
   const otherDeliveries = [...deliveries.filter(d=>{
     const isMine = d.assigned_to===user.id||d.helper_id===user.id;
     if(isMine) return false;
-    return (d.delivery_date||todayISOd)===todayISOd;
+    return (d.delivery_date||todayISOd)===activeDate;
   })].sort((a,b)=>(a.stop_order||0)-(b.stop_order||0));
 
   const myTasks = [
@@ -468,7 +469,7 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
                     ))}
                     {trackingActive&&(
                       <button className="btn" onClick={async()=>{
-                        const trackUrl = `https://americasmattress.netlify.app/track/${user.id}`;
+                        const myRoute=(myDeliveries[0]?.route_number||1);const trackUrl=`https://americasmattress.netlify.app/track/${user.id}-r${myRoute}`;
                         const msg = "Track your America's Mattress delivery live: "+trackUrl;
                         const r = await sendSMS(d.phone, msg);
                         alert(r?.ok?"✅ Tracking link sent!":"❌ SMS failed");
@@ -788,10 +789,12 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
               <div style={{fontSize:11,color:"#22c55e",fontWeight:700,letterSpacing:".07em",textTransform:"uppercase"}}>
                 ✅ {isEs?"Mis Entregas":"My Deliveries"} ({myDeliveries.length})
               </div>
-              <button className="btn" onClick={()=>setShowPastDels(p=>!p)}
-                style={{background:showPastDels?"#1c1500":"#1e2d3d",color:showPastDels?"#f59e0b":"#64748b",padding:"4px 10px",fontSize:11}}>
-                {showPastDels?"📅 Showing All — Tap for Today":"🕐 Show Past Deliveries"}
-              </button>
+              <div style={{display:"flex",gap:5,alignItems:"center"}}>
+                <input type="date" value={showPastDels&&driverDateFilter?driverDateFilter:todayISOd}
+                  onChange={e=>{setDriverDateFilter(e.target.value);setShowPastDels(e.target.value!==todayISOd);}}
+                  style={{background:"#1e2d3d",color:"#94a3b8",border:"1px solid #1e2d3d",borderRadius:6,padding:"3px 7px",fontSize:11,colorScheme:"dark"}}/>
+                {showPastDels&&<button className="btn" onClick={()=>{setShowPastDels(false);setDriverDateFilter(todayISOd);}} style={{background:"#1e2d3d",color:"#60a5fa",padding:"3px 8px",fontSize:10}}>Today</button>}
+              </div>
             </div>
             {myDeliveries.map(d=>renderDeliveryCard(d,true))}
             {otherDeliveries.length>0&&(
@@ -2055,7 +2058,7 @@ export default function App() {
           sb.from("receipts").select("*").order("receipt_date",{ascending:false}),
           sb.from("receiving_log").select("*").order("received_date",{ascending:false}),
           sb.from("training_files").select("*").order("created_at",{ascending:false}),
-          sb.from("sms_replies").select("*").order("id",{ascending:false}).limit(100),
+          sb.from("sms_replies").select("*").order("id",{ascending:false}).limit(200),
         ]);
         if(recRes.data) setReceipts(recRes.data);
         if(rvRes.data) setReceivingLog(rvRes.data);
@@ -3542,8 +3545,13 @@ export default function App() {
               {pdfResult&&Array.isArray(pdfResult)&&(
                 <div>
                   <div style={{fontSize:13,color:"#22c55e",fontWeight:600,marginBottom:6}}>
-                    ✅ Found {pdfResult.length} deliveries — assign route & driver per delivery, then import
+                    ✅ Found {pdfResult.filter(d=>!d.is_transfer).length} deliveries + {pdfResult.filter(d=>d.is_transfer).length} pickups — assign route & driver, then import
                   </div>
+                  {pdfResult.filter(d=>d.is_transfer).length>0&&(
+                    <div style={{...C.card,padding:"8px 14px",marginBottom:8,borderColor:"#f59e0b",background:"#1c1500"}}>
+                      <div style={{fontSize:12,color:"#f59e0b",fontWeight:600}}>⚠️ Pickups / Transfers detected — these will be marked as "Transfer" status and appear separately on driver view</div>
+                    </div>
+                  )}
 
                   {/* Quick assign bar */}
                   <div style={{...C.card,padding:"10px 14px",marginBottom:10,borderColor:"#1e2d3d"}}>
@@ -3662,7 +3670,7 @@ export default function App() {
                       const r2=added.filter(x=>x.route_number===2).length;
                       alert(`✅ Imported! Route 1: ${r1} · Route 2: ${r2}`);
                     }} style={{flex:1,background:"linear-gradient(135deg,#059669,#047857)",color:"#fff",padding:"12px",fontSize:13,fontWeight:700}}>
-                      ✅ Import All {pdfResult.length} Deliveries
+                      ✅ Import {pdfResult.filter(d=>!d.is_transfer).length} Deliveries + {pdfResult.filter(d=>d.is_transfer).length} Pickups
                     </button>
                     <button className="btn" onClick={()=>setPdfResult(null)} style={{background:"#1e2d3d",color:"#94a3b8",padding:"12px 14px",fontSize:12}}>Cancel</button>
                   </div>
@@ -3802,47 +3810,54 @@ export default function App() {
             {/* Route optimizer */}
             {deliveries.filter(d=>d.delivery_date===new Date().toISOString().split("T")[0]).length>0&&(
               <div style={{...C.card,padding:"14px 16px",borderColor:"#1e3a5f"}}>
-                <div style={{fontWeight:600,fontSize:13,color:"#60a5fa",marginBottom:6}}>🗺️ Smart Route Optimizer</div>
-                <div style={{fontSize:12,color:"#475569",marginBottom:10}}>Sorts today's deliveries by area and time window. Marks transfers/pickups automatically.</div>
+                <div style={{fontWeight:600,fontSize:13,color:"#60a5fa",marginBottom:4}}>🗺️ Route Optimizer</div>
+                <div style={{fontSize:12,color:"#475569",marginBottom:10}}>Sorts each route separately — Route 1 gets stop 1,2,3... and Route 2 gets its own stop 1,2,3... independently.</div>
                 <button className="btn" onClick={async()=>{
                   const today=new Date().toISOString().split("T")[0];
-                  const todayDels=deliveries.filter(d=>d.delivery_date===today&&d.status!=="Transfer");
-                  // Simple geo sort: group by area keywords then by time window
+                  const todayDels=deliveries.filter(d=>d.delivery_date===today);
                   const getArea=(d)=>{
                     const addr=(d.address||"").toLowerCase();
-                    const notes=(d.notes||"").toLowerCase();
-                    if(notes.includes("transfer")||notes.includes("cpu")||notes.includes("pickup")) return "ZZZ_TRANSFER";
-                    if(addr.includes("rio rancho")||addr.includes("corrales")) return "A_RIO_RANCHO";
-                    if(addr.includes("west")||addr.includes("coors")||addr.includes("unser")) return "B_WESTSIDE";
-                    if(addr.includes("north")||addr.includes("paseo")||addr.includes("montgomery")) return "C_NORTH";
-                    if(addr.includes("east")||addr.includes("wyoming")||addr.includes("eubank")) return "D_EAST";
-                    if(addr.includes("south")||addr.includes("isleta")||addr.includes("broadway")) return "E_SOUTH";
+                    if(addr.includes("bernalillo")||addr.includes("rio rancho")||addr.includes("corrales")||addr.includes("placitas")) return "A_NORTH_FAR";
+                    if(addr.includes("rio rancho")||addr.includes("unser")||addr.includes("coors")) return "B_WESTSIDE";
+                    if(addr.includes("santa fe")) return "A_SANTA_FE";
+                    if(addr.includes("bosque farms")||addr.includes("los lunas")||addr.includes("belen")||addr.includes("isleta")||addr.includes("peralta")) return "Z_SOUTH_FAR";
+                    if(addr.includes("tijeras")||addr.includes("sandia park")||addr.includes("edgewood")) return "D_EAST_MTN";
+                    if(addr.includes("corrales")||addr.includes("alameda")||addr.includes("montgomery")||addr.includes("paseo")) return "C_NORTH";
+                    if(addr.includes("wyoming")||addr.includes("eubank")||addr.includes("tramway")) return "D_EAST";
+                    if(addr.includes("south")||addr.includes("broadway")||addr.includes("gibson")||addr.includes("yale")) return "E_SOUTH";
+                    if(addr.includes("central")||addr.includes("lomas")||addr.includes("menaul")) return "C_CENTRAL";
                     return "C_CENTRAL";
                   };
                   const getTimeScore=(d)=>{
                     const w=(d.delivery_window||"").toLowerCase();
-                    if(w.includes("8am")||w.includes("9am")||w.includes("10am")) return 1;
-                    if(w.includes("morning")) return 2;
-                    if(w.includes("11am")||w.includes("12pm")||w.includes("noon")) return 3;
-                    if(w.includes("afternoon")) return 4;
-                    if(w.includes("1pm")||w.includes("2pm")||w.includes("3pm")) return 5;
-                    if(w.includes("4pm")||w.includes("5pm")||w.includes("6pm")) return 6;
+                    if(/8\s*am|9\s*am|10\s*am/.test(w)) return 1;
+                    if(/morning/.test(w)) return 2;
+                    if(/11\s*am|12\s*pm|noon/.test(w)) return 3;
+                    if(/afternoon/.test(w)) return 4;
+                    if(/1\s*pm|2\s*pm/.test(w)) return 5;
+                    if(/3\s*pm|4\s*pm/.test(w)) return 6;
+                    if(/5\s*pm|6\s*pm|7\s*pm/.test(w)) return 7;
                     return 3;
                   };
-                  const sorted=[...todayDels].sort((a,b)=>{
-                    const areaA=getArea(a),areaB=getArea(b);
-                    if(areaA!==areaB) return areaA.localeCompare(areaB);
-                    return getTimeScore(a)-getTimeScore(b);
-                  });
-                  for(let i=0;i<sorted.length;i++){
-                    const isTransfer=getArea(sorted[i])==="ZZZ_TRANSFER";
-                    await sb.from("deliveries").update({stop_order:i+1,...(isTransfer?{status:"Transfer"}:{})}).eq("id",sorted[i].id);
+                  // Optimize each route independently
+                  for(const routeNum of [1,2]){
+                    const routeDels=todayDels.filter(d=>(d.route_number||1)===routeNum&&d.status!=="Transfer");
+                    const sorted=[...routeDels].sort((a,b)=>{
+                      const areaA=getArea(a),areaB=getArea(b);
+                      if(areaA!==areaB) return areaA.localeCompare(areaB);
+                      return getTimeScore(a)-getTimeScore(b);
+                    });
+                    for(let i=0;i<sorted.length;i++){
+                      await sb.from("deliveries").update({stop_order:i+1}).eq("id",sorted[i].id);
+                    }
                   }
                   const {data}=await sb.from("deliveries").select("*");
                   if(data) setDeliveries(data);
-                  alert("✅ Route optimized! "+sorted.length+" deliveries sorted by area and time.");
+                  const r1=todayDels.filter(d=>(d.route_number||1)===1).length;
+                  const r2=todayDels.filter(d=>d.route_number===2).length;
+                  alert(`✅ Optimized! Route 1: ${r1} stops (1-${r1}) · Route 2: ${r2} stops (1-${r2})`);
                 }} style={{width:"100%",background:"linear-gradient(135deg,#7c3aed,#4f46e5)",color:"#fff",padding:"11px",fontSize:13,fontWeight:700}}>
-                  🗺️ Optimize Today's Route
+                  🗺️ Optimize Both Routes Separately
                 </button>
               </div>
             )}
