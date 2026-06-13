@@ -2051,14 +2051,16 @@ export default function App() {
         if (sigR.data) setSignatures(sigR.data);
         if (insR.data) setInspections(insR.data);
         // Load receipts, receiving log, training files
-        const [recRes, rvRes, tfRes] = await Promise.all([
+        const [recRes, rvRes, tfRes, smsRes] = await Promise.all([
           sb.from("receipts").select("*").order("receipt_date",{ascending:false}),
           sb.from("receiving_log").select("*").order("received_date",{ascending:false}),
           sb.from("training_files").select("*").order("created_at",{ascending:false}),
+          sb.from("sms_replies").select("*").order("id",{ascending:false}).limit(100),
         ]);
         if(recRes.data) setReceipts(recRes.data);
         if(rvRes.data) setReceivingLog(rvRes.data);
         if(tfRes.data) setTrainingFiles(tfRes.data);
+        if(smsRes.data) setSmsReplies(smsRes.data);
         if (trR.data) setTrainings(trR.data);
         if (tcR.data) setCompletions(tcR.data);
         if (lfR.data) setLiabilityForms(lfR.data);
@@ -4226,11 +4228,11 @@ export default function App() {
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,flexWrap:"wrap",gap:8}}>
               <div>
                 <div style={{fontWeight:700,fontSize:15,color:"#f1f5f9"}}>💬 Customer Replies</div>
-                <div style={{fontSize:12,color:"#475569",marginTop:2}}>{smsReplies.length} replies stored</div>
+                <div style={{fontSize:12,color:"#475569",marginTop:2}}>{smsReplies.length} {smsReplies.length===1?"reply":"replies"} — {smsReplies.filter(r=>!r._seen).length>0?"🔴 New":""}</div>
               </div>
               <div style={{display:"flex",gap:7}}>
                 <button className="btn" onClick={async()=>{
-                  const r=await sb.from("sms_replies").select("*").order("received_at",{ascending:false}).limit(100);
+                  const r=await sb.from("sms_replies").select("*").order("id",{ascending:false}).limit(100);
                   if(r.data)setSmsReplies(r.data);
                 }} style={{background:"#1e2d3d",color:"#60a5fa",padding:"6px 12px",fontSize:12}}>🔄 Refresh</button>
                 <button className="btn" onClick={async()=>{
@@ -4239,7 +4241,7 @@ export default function App() {
                     const data=await res.json();
                     if(data.error){alert("Error: "+data.error);return;}
                     alert(`✅ Fetched ${data.count} messages from Twilio. ${data.saved} new replies saved.`);
-                    const r=await sb.from("sms_replies").select("*").order("received_at",{ascending:false}).limit(100);
+                    const r=await sb.from("sms_replies").select("*").order("id",{ascending:false}).limit(100);
                     if(r.data)setSmsReplies(r.data);
                   }catch(e){alert("Failed: "+e.message);}
                 }} style={{background:"linear-gradient(135deg,#7c3aed,#4f46e5)",color:"#fff",padding:"6px 12px",fontSize:12,fontWeight:600}}>📥 Fetch from Twilio</button>
@@ -4268,7 +4270,7 @@ export default function App() {
                     const data=await res.json();
                     if(data.error){alert("Error: "+data.error);return;}
                     alert(`Fetched ${data.count} messages. ${data.saved} new.`);
-                    const r=await sb.from("sms_replies").select("*").order("received_at",{ascending:false}).limit(100);
+                    const r=await sb.from("sms_replies").select("*").order("id",{ascending:false}).limit(100);
                     if(r.data)setSmsReplies(r.data);
                   }catch(e){alert("Failed: "+e.message);}
                 }} style={{background:"linear-gradient(135deg,#7c3aed,#4f46e5)",color:"#fff",padding:"10px 20px",fontSize:13,fontWeight:600}}>
@@ -4290,7 +4292,7 @@ export default function App() {
                           <div style={{fontWeight:700,fontSize:13,color:"#f1f5f9"}}>{matchedDel?matchedDel.customer:(r.customer_name||r.from_number)}</div>
                           <div style={{fontSize:11,color:"#475569"}}>{r.from_number}</div>
                         </div>
-                        <span style={{fontSize:11,color:"#475569"}}>{new Date(r.received_at).toLocaleString()}</span>
+                        <span style={{fontSize:11,color:"#475569"}}>{new Date(r.received_at||r.date_created||r.created_at||Date.now()).toLocaleString()}</span>
                       </div>
                       <div style={{fontSize:14,color:"#e2e8f0",background:"#0a1628",borderRadius:8,padding:"10px 12px",lineHeight:1.5}}>{r.body}</div>
                       {matchedDel&&<div style={{fontSize:11,color:"#60a5fa",marginTop:6}}>📦 {matchedDel.customer} — {matchedDel.address} — {matchedDel.ticket_number&&"#"+matchedDel.ticket_number}</div>}
