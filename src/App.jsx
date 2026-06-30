@@ -143,15 +143,18 @@ const ESCALATION = {
   product:  ["Driver", "Conner (Manager)", "Vendor"],
 };
 
+// PINs are intentionally NOT stored here — they must never ship in the browser
+// bundle. This list only seeds an empty database with names/roles; PINs are set
+// by the manager in the Team tab and verified server-side (verify-pin function).
 const INITIAL_EMPLOYEES = [
-  { id:0, name:"Conner",        role:"Manager",       avatar:"CO", lang:"en", workdays:["Mon","Tue","Wed","Thu","Fri","Sat"], is_manager:true,  pin:"0000" },
-  { id:1, name:"Frank Solís",   role:"Driver",        avatar:"FS", lang:"en", workdays:["Mon","Tue","Wed","Fri"],             is_manager:false, pin:"1111" },
-  { id:2, name:"Max Applegate", role:"Driver",        avatar:"MA", lang:"en", workdays:["Mon","Tue","Wed","Fri"],             is_manager:false, pin:"2222" },
-  { id:3, name:"Chris Mullis",  role:"Driver",        avatar:"CM", lang:"en", workdays:["Mon","Tue","Wed","Fri"],             is_manager:false, pin:"3333" },
-  { id:4, name:"Nate",          role:"Driver/Helper", avatar:"NA", lang:"en", workdays:["Fri","Sat"],                        is_manager:false, pin:"4444" },
-  { id:5, name:"Ricky Torres",  role:"Helper",        avatar:"RT", lang:"es", workdays:["Mon","Tue","Wed","Fri"],             is_manager:false, pin:"5555" },
-  { id:6, name:"Aariq Curtis",  role:"Helper",        avatar:"AC", lang:"en", workdays:["Mon","Tue","Wed","Fri"],             is_manager:false, pin:"6666" },
-  { id:7, name:"Alberto",       role:"Helper",        avatar:"AL", lang:"es", workdays:["Fri","Sat"],                        is_manager:false, pin:"7777" },
+  { id:0, name:"Conner",        role:"Manager",       avatar:"CO", lang:"en", workdays:["Mon","Tue","Wed","Thu","Fri","Sat"], is_manager:true  },
+  { id:1, name:"Frank Solís",   role:"Driver",        avatar:"FS", lang:"en", workdays:["Mon","Tue","Wed","Fri"],             is_manager:false },
+  { id:2, name:"Max Applegate", role:"Driver",        avatar:"MA", lang:"en", workdays:["Mon","Tue","Wed","Fri"],             is_manager:false },
+  { id:3, name:"Chris Mullis",  role:"Driver",        avatar:"CM", lang:"en", workdays:["Mon","Tue","Wed","Fri"],             is_manager:false },
+  { id:4, name:"Nate",          role:"Driver/Helper", avatar:"NA", lang:"en", workdays:["Fri","Sat"],                        is_manager:false },
+  { id:5, name:"Ricky Torres",  role:"Helper",        avatar:"RT", lang:"es", workdays:["Mon","Tue","Wed","Fri"],             is_manager:false },
+  { id:6, name:"Aariq Curtis",  role:"Helper",        avatar:"AC", lang:"en", workdays:["Mon","Tue","Wed","Fri"],             is_manager:false },
+  { id:7, name:"Alberto",       role:"Helper",        avatar:"AL", lang:"es", workdays:["Fri","Sat"],                        is_manager:false },
 ];
 
 const BASE_TASKS_EN = [
@@ -248,11 +251,27 @@ function LoginScreen({ employees, onLogin }) {
   const [sel, setSel] = useState(null);
   const [pin, setPin] = useState("");
   const [err, setErr] = useState("");
-  const go = () => {
+  const [busy, setBusy] = useState(false);
+  const go = async () => {
     const emp = employees.find(e=>e.id===sel);
     if (!emp) { setErr("Please select your name."); return; }
-    if (emp.pin && pin !== emp.pin) { setErr("Wrong PIN. Try again."); setPin(""); return; }
-    onLogin(emp);
+    setBusy(true); setErr("");
+    try {
+      // PIN is checked on the server so the browser never holds the real PINs.
+      const res = await fetch("/.netlify/functions/verify-pin", {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({ empId: emp.id, pin }),
+      });
+      const data = await res.json();
+      if (data && data.ok) { onLogin(data.employee || emp); }
+      else { setErr("Wrong PIN. Try again."); setPin(""); }
+    } catch(e) {
+      // If the server can't be reached (offline), fall back to any locally
+      // cached PIN so drivers aren't locked out in a dead zone.
+      if (emp.pin && pin === emp.pin) { onLogin(emp); }
+      else { setErr("Can't reach server. Check your connection."); }
+    }
+    setBusy(false);
   };
   return (
     <div style={{background:"#080d14",minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",padding:20,fontFamily:"'DM Sans',sans-serif"}}>
@@ -286,8 +305,8 @@ function LoginScreen({ employees, onLogin }) {
             </div>
           )}
           {err&&<div style={{color:"#f87171",fontSize:12,marginBottom:10}}>{err}</div>}
-          <button className="btn" onClick={go} style={{width:"100%",background:"linear-gradient(135deg,#2563eb,#1d4ed8)",color:"#fff",padding:14,fontSize:15,fontWeight:700,borderRadius:10}}>
-            Sign In →
+          <button className="btn" onClick={go} disabled={busy} style={{width:"100%",background:"linear-gradient(135deg,#2563eb,#1d4ed8)",color:"#fff",padding:14,fontSize:15,fontWeight:700,borderRadius:10,opacity:busy?0.7:1}}>
+            {busy?"Checking…":"Sign In →"}
           </button>
         </div>
         <div style={{textAlign:"center",marginTop:14,fontSize:10,color:"#1e2d3d"}}>
@@ -2151,7 +2170,7 @@ function CustomerTrackingPage({ driverId, employees, deliveries }) {
 }
 
 export default function App() {
-  const [currentUser, setCurrentUser] = useState(null);
+  const [currentUser, setCurrentUser] = useState(()=>cacheGet("session", null));
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [tab, setTab] = useState("dashboard");
@@ -2246,7 +2265,7 @@ export default function App() {
       setLoading(true);
       try {
         const [eR,dR,ctR,nR,pR,mR,sigR,insR,trR,tcR,lfR] = await Promise.all([
-          sb.from("employees").select("*"),
+          sb.from("employees").select("id,name,role,avatar,lang,workdays,is_manager,last_location"),
           sb.from("deliveries").select("*"),
           sb.from("custom_tasks").select("*"),
           sb.from("notes").select("*"),
@@ -2310,6 +2329,13 @@ export default function App() {
     syncNow();
     return ()=>{sb.removeChannel(ds);sb.removeChannel(ms);sb.removeChannel(ps);window.removeEventListener('online',goOnline);window.removeEventListener('offline',goOffline);clearInterval(flushIv);};
   },[]);
+
+  // Keep the signed-in user on this device so a reload in a dead zone doesn't
+  // log them out (they verified their PIN online; no need to re-check offline).
+  useEffect(()=>{
+    if (currentUser) cacheSet("session", currentUser);
+    else { try { localStorage.removeItem("am_cache_session"); } catch(e) {} }
+  },[currentUser]);
 
   const getEmpDels = (id) => deliveries.filter(d=>d.assigned_to===id);
   const working = (emp,day) => emp.is_manager||emp.isManager||(emp.workdays||[]).includes(day);
@@ -3335,8 +3361,8 @@ export default function App() {
                         </div>
                       </div>
                       <div style={{marginBottom:10}}>
-                        <div style={{fontSize:10,color:"#475569",marginBottom:5}}>PIN</div>
-                        <input value={editEmpVals.pin!==undefined?editEmpVals.pin:emp.pin||""} onChange={e=>setEditEmpVals(p=>({...p,pin:e.target.value}))} maxLength={6} placeholder="4 digits" style={{...C.inp,width:100}}/>
+                        <div style={{fontSize:10,color:"#475569",marginBottom:5}}>Set New PIN <span style={{color:"#475569"}}>(leave blank to keep current)</span></div>
+                        <input value={editEmpVals.pin!==undefined?editEmpVals.pin:""} onChange={e=>setEditEmpVals(p=>({...p,pin:e.target.value}))} maxLength={6} placeholder="••••" style={{...C.inp,width:100}}/>
                       </div>
                       <div style={{marginBottom:12}}>
                         <div style={{fontSize:10,color:"#475569",marginBottom:5}}>Work Days</div>
@@ -3354,7 +3380,9 @@ export default function App() {
                       </div>
                       <div style={{display:"flex",gap:7}}>
                         <button className="btn" onClick={async()=>{
-                          const updates={role:editEmpVals.role||emp.role,lang:editEmpVals.lang||emp.lang,pin:editEmpVals.pin!==undefined?editEmpVals.pin:emp.pin,workdays:editEmpVals.workdays||emp.workdays};
+                          const updates={role:editEmpVals.role||emp.role,lang:editEmpVals.lang||emp.lang,workdays:editEmpVals.workdays||emp.workdays};
+                          // Only change the PIN if the manager actually typed a new one.
+                          if (editEmpVals.pin) updates.pin=editEmpVals.pin;
                           await sb.from("employees").update(updates).eq("id",emp.id);
                           setEmployees(prev=>prev.map(e=>e.id===emp.id?{...e,...updates}:e));
                           setEditingEmp(null);setEditEmpVals({});
@@ -3367,7 +3395,7 @@ export default function App() {
                       <div style={{width:38,height:38,borderRadius:"50%",background:avatarBg(emp),display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:800,color:"#fff",flexShrink:0}}>{emp.avatar}</div>
                       <div style={{flex:1}}>
                         <div style={{fontWeight:700,fontSize:13,color:"#f1f5f9"}}>{emp.name}{emp.is_manager?" 👑":""}{emp.lang==="es"?" 🇲🇽":""}</div>
-                        <div style={{fontSize:11,color:"#64748b",marginTop:1}}>{emp.role} · PIN: {emp.pin||"—"}</div>
+                        <div style={{fontSize:11,color:"#64748b",marginTop:1}}>{emp.role} · PIN ••••</div>
                         <div style={{display:"flex",gap:4,marginTop:6,flexWrap:"wrap"}}>
                           {(emp.workdays||[]).map(d=><span key={d} style={{fontSize:9,background:"#0c2340",color:"#60a5fa",borderRadius:4,padding:"1px 5px",fontWeight:600}}>{d}</span>)}
                         </div>
