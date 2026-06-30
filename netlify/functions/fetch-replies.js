@@ -1,5 +1,16 @@
 const { createClient } = require("@supabase/supabase-js");
 
+// Turn a Twilio MessageSid into a stable positive integer id so re-fetching
+// the same messages never creates duplicate rows (the PK is a number).
+function sidToId(sid) {
+  if (!sid) return 0;
+  let h = 0;
+  for (let i = 0; i < sid.length; i++) {
+    h = (h * 31 + sid.charCodeAt(i)) % 1000000000000;
+  }
+  return h;
+}
+
 exports.handler = async (event) => {
   const headers = {
     "Access-Control-Allow-Origin": "*",
@@ -38,24 +49,27 @@ exports.handler = async (event) => {
       process.env.SUPABASE_SERVICE_KEY || "sb_publishable_TRQCQpgnv0NDRt7eIE6t-Q_fEINezez"
     );
 
+    // The sms_replies table only has: id, from_number, body, received_at,
+    // customer_name, delivery_id. Inserting to_number/message_sid causes
+    // every write to fail with PGRST204, which is why the table was empty.
+    // We derive a stable id from the Twilio SID and upsert so re-fetching
+    // is idempotent (no duplicates) without needing a message_sid column.
     let saved = 0;
     for (const msg of data.messages) {
-      // Check if already saved
+      const rowId = sidToId(msg.sid);
       const { data: existing } = await sb.from("sms_replies")
-        .select("id").eq("message_sid", msg.sid).limit(1);
-      
+        .select("id").eq("id", rowId).limit(1);
+
       if (!existing || existing.length === 0) {
-        await sb.from("sms_replies").insert({
-          id: Date.now() + saved,
+        const { error: insErr } = await sb.from("sms_replies").insert({
+          id: rowId,
           from_number: msg.from,
-          to_number: msg.to,
           body: msg.body,
-          message_sid: msg.sid,
           received_at: msg.date_created,
           customer_name: "",
           delivery_id: null,
         });
-        saved++;
+        if (!insErr) saved++;
       }
     }
 

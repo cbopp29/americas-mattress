@@ -238,8 +238,23 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
   const [liabilityType, setLiabilityType] = useState('headboard');
   const [warrantyDel, setWarrantyDel] = useState(null);
   const [trackingActive, setTrackingActive] = useState(false);
-  const [trackingInterval, setTrackingInterval] = useState(null);
+  const watchIdRef = useRef(null);
+  const wakeLockRef = useRef(null);
+  const lastWriteRef = useRef(0);
   const [deliveryDetails, setDeliveryDetails] = useState({});
+  const [smsReplies, setSmsReplies] = useState([]);
+
+  // Load customer SMS replies so drivers can see what customers texted back.
+  useEffect(() => {
+    let active = true;
+    const load = async () => {
+      const r = await sb.from("sms_replies").select("*").order("id",{ascending:false}).limit(200);
+      if (active && r.data) setSmsReplies(r.data);
+    };
+    load();
+    const iv = setInterval(load, 30000);
+    return () => { active = false; clearInterval(iv); };
+  }, []);
   const isEs = user.lang === "es";
   const today = todayDayName();
   const isDriver = user.role.toLowerCase().includes("driver");
@@ -321,24 +336,77 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
     setProbInput({ description:"", type:"customer", customer:"", ticket_number:"" });
   };
 
-  // Live GPS tracking
-  const startTracking = () => {
+  // Live GPS tracking.
+  // Uses a continuous watchPosition subscription + a screen Wake Lock so that
+  // briefly switching apps (change a song, take a call) and coming back resumes
+  // immediately instead of silently dropping. NOTE: phone browsers (especially
+  // iOS Safari) fully suspend a web page once the app is backgrounded or the
+  // screen locks, so guaranteed always-on background GPS requires a native app —
+  // for continuous tracking the driver should keep this screen open.
+  const pushLocation = (pos, force) => {
+    const now = Date.now();
+    if (!force && now - lastWriteRef.current < 12000) return; // throttle DB writes
+    lastWriteRef.current = now;
+    const loc = { lat: pos.coords.latitude, lng: pos.coords.longitude, ts: now };
+    sb.from("employees").update({ last_location: loc }).eq("id", user.id).then(()=>{});
+  };
+
+  const acquireWakeLock = async () => {
+    try {
+      if ("wakeLock" in navigator && !wakeLockRef.current) {
+        wakeLockRef.current = await navigator.wakeLock.request("screen");
+        wakeLockRef.current.addEventListener("release", () => { wakeLockRef.current = null; });
+      }
+    } catch (e) { /* wake lock denied (e.g. low battery) — tracking still works */ }
+  };
+
+  const beginWatch = async () => {
     if (!navigator.geolocation) return;
+    await acquireWakeLock();
+    navigator.geolocation.getCurrentPosition(p => pushLocation(p, true), null, { enableHighAccuracy: true });
+    if (watchIdRef.current == null) {
+      watchIdRef.current = navigator.geolocation.watchPosition(
+        p => pushLocation(p, false),
+        err => console.warn("GPS error:", err && err.message),
+        { enableHighAccuracy: true, maximumAge: 5000, timeout: 20000 }
+      );
+    }
+  };
+
+  const startTracking = async () => {
+    if (!navigator.geolocation) { alert(isEs ? "Este dispositivo no soporta ubicación." : "Location is not supported on this device."); return; }
     setTrackingActive(true);
-    const interval = setInterval(() => {
-      navigator.geolocation.getCurrentPosition(pos => {
-        const loc = { lat: pos.coords.latitude, lng: pos.coords.longitude, ts: Date.now() };
-        sb.from("employees").update({ last_location: loc }).eq("id", user.id).then(()=>{});
-      }, null, { enableHighAccuracy: true });
-    }, 15000);
-    setTrackingInterval(interval);
+    try { localStorage.setItem("am_tracking", "1"); } catch (e) {}
+    await beginWatch();
   };
 
   const stopTracking = () => {
-    if (trackingInterval) clearInterval(trackingInterval);
-    setTrackingInterval(null);
+    if (watchIdRef.current != null) { navigator.geolocation.clearWatch(watchIdRef.current); watchIdRef.current = null; }
+    if (wakeLockRef.current) { try { wakeLockRef.current.release(); } catch (e) {} wakeLockRef.current = null; }
     setTrackingActive(false);
+    try { localStorage.removeItem("am_tracking"); } catch (e) {}
   };
+
+  // Auto-resume tracking after a reload, and re-acquire location + wake lock the
+  // moment the driver returns to the app (wake locks are dropped on tab hide).
+  useEffect(() => {
+    let resumed = false;
+    try { resumed = localStorage.getItem("am_tracking") === "1"; } catch (e) {}
+    if (resumed) { setTrackingActive(true); beginWatch(); }
+    const onVisible = () => {
+      if (document.visibilityState === "visible") {
+        let on = false;
+        try { on = localStorage.getItem("am_tracking") === "1"; } catch (e) {}
+        if (on) beginWatch();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      if (watchIdRef.current != null) { navigator.geolocation.clearWatch(watchIdRef.current); watchIdRef.current = null; }
+      if (wakeLockRef.current) { try { wakeLockRef.current.release(); } catch (e) {} wakeLockRef.current = null; }
+    };
+  }, []);
 
   const updateDeliveryDetail = async (delId, field, value) => {
     setDeliveryDetails(prev => ({ ...prev, [delId]: { ...(prev[delId]||{}), [field]: value } }));
@@ -353,6 +421,8 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
     const isOpen=openDel===d.id;
     const dMsgs=messages.filter(m=>m.delivery_id===d.id);
     const helperEmp=employees.find(e=>e.id===d.helper_id);
+    const delPhone=(d.phone||"").replace(/\D/g,"");
+    const dReplies=delPhone.length>9?smsReplies.filter(r=>(r.from_number||"").replace(/\D/g,"").endsWith(delPhone.slice(-10))):[];
     return (
       <div key={d.id} style={{...cardStyle,marginBottom:12,overflow:"hidden",opacity:isMine?1:0.8}}>
         <div style={{padding:"14px 16px",cursor:"pointer"}} onClick={()=>setOpenDel(isOpen?null:d.id)}>
@@ -540,6 +610,17 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
                 </div>
               )}
             </div>
+            {dReplies.length>0&&(
+              <div style={{padding:"12px 16px",borderBottom:"1px solid #131f2e"}}>
+                <div style={{fontSize:11,color:"#22c55e",textTransform:"uppercase",letterSpacing:".07em",marginBottom:8}}>💬 {isEs?"Respuestas del Cliente":"Customer Replies"}</div>
+                {dReplies.map(r=>(
+                  <div key={r.id} style={{background:"#0a1628",borderRadius:7,padding:"8px 11px",marginBottom:6,borderLeft:"3px solid #22c55e"}}>
+                    <div style={{fontSize:10,color:"#475569",marginBottom:2}}>{r.from_number} · {new Date(r.received_at||r.created_at||Date.now()).toLocaleString()}</div>
+                    <div style={{fontSize:13,color:"#e2e8f0"}}>{r.body}</div>
+                  </div>
+                ))}
+              </div>
+            )}
             <div style={{padding:"12px 16px",borderBottom:"1px solid #131f2e"}}>
               <div style={{fontSize:11,color:"#475569",textTransform:"uppercase",letterSpacing:".07em",marginBottom:8}}>{isEs?"Subir Foto":"Upload Photo"}</div>
               <input ref={fileRef} type="file" accept="image/*" capture="environment" onChange={e=>handlePhoto(e,d.id)} style={{display:"none"}}/>
@@ -2094,7 +2175,7 @@ export default function App() {
 
   const saveDelivery = async (d) => {
     setSyncing(true);
-    const today = new Date().toISOString().split('T')[0]; const row = { customer:d.customer,address:d.address,phone:d.phone,items:d.items||[],delivery_window:d.delivery_window||"",assigned_to:Number(d.assigned_to)||1,status:d.status,notes:d.notes||"",floor:d.floor||"1",elevator:!!d.elevator,removal_requested:!!d.removal_requested,transfer_scheduled:!!d.transfer_scheduled,route_notes:d.route_notes||"",stop_order:Number(d.stop_order)||1,delivery_date:d.delivery_date||today,ticket_number:d.ticket_number||"",helper_id:Number(d.helper_id)||0,manufacturer:d.manufacturer||"",piece_number:d.piece_number||"" };
+    const today = new Date().toISOString().split('T')[0]; const row = { customer:d.customer,address:d.address,phone:d.phone,items:d.items||[],delivery_window:d.delivery_window||"",assigned_to:(d.assigned_to==null||d.assigned_to==="")?1:Number(d.assigned_to),status:d.status,notes:d.notes||"",floor:d.floor||"1",elevator:!!d.elevator,removal_requested:!!d.removal_requested,transfer_scheduled:!!d.transfer_scheduled,route_notes:d.route_notes||"",stop_order:Number(d.stop_order)||1,delivery_date:d.delivery_date||today,ticket_number:d.ticket_number||"",helper_id:Number(d.helper_id)||0,manufacturer:d.manufacturer||"",piece_number:d.piece_number||"" };
     if (!d.id) {
       const nid = `D-${String(deliveries.length+1).padStart(3,"0")}-${Date.now()}`;
       const {data} = await sb.from("deliveries").insert({...row,id:nid}).select();
@@ -2623,8 +2704,8 @@ export default function App() {
                   <button className="btn" onClick={()=>setEditingDelivery(p=>({...p,items:[...(p.items||[]),{qty:1,name:""}]}))} style={{background:"#1e2d3d",color:"#60a5fa",padding:"5px 11px",fontSize:11}}>➕ Add Item</button>
                 </div>
                 <div className="del-form-3" style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:9,marginBottom:9}}>
-                  <div><div style={{fontSize:10,color:"#475569",marginBottom:3}}>Driver</div><select value={editingDelivery.assigned_to||1} onChange={e=>setEditingDelivery(p=>({...p,assigned_to:Number(e.target.value)}))} style={C.sel}>{employees.map(e=><option key={e.id} value={e.id}>{e.name}{e.is_manager?" 👑":""}</option>)}</select></div>
-                  <div><div style={{fontSize:10,color:"#475569",marginBottom:3}}>Helper (optional)</div><select value={editingDelivery.helper_id||0} onChange={e=>setEditingDelivery(p=>({...p,helper_id:Number(e.target.value)}))} style={C.sel}><option value={0}>None</option>{employees.map(e=><option key={e.id} value={e.id}>{e.name}{e.is_manager?" 👑":""}</option>)}</select></div>
+                  <div><div style={{fontSize:10,color:"#475569",marginBottom:3}}>Driver</div><select value={editingDelivery.assigned_to ?? 1} onChange={e=>setEditingDelivery(p=>({...p,assigned_to:Number(e.target.value)}))} style={C.sel}>{employees.map(e=><option key={e.id} value={e.id}>{e.name}{e.is_manager?" 👑":""}</option>)}</select></div>
+                  <div><div style={{fontSize:10,color:"#475569",marginBottom:3}}>Helper (optional)</div><select value={editingDelivery.helper_id||0} onChange={e=>setEditingDelivery(p=>({...p,helper_id:Number(e.target.value)}))} style={C.sel}><option value={0}>None</option>{employees.filter(e=>e.id!==0).map(e=><option key={e.id} value={e.id}>{e.name}{e.is_manager?" 👑":""}</option>)}</select></div>
 
                   <div><div style={{fontSize:10,color:"#475569",marginBottom:3}}>Status</div><select value={editingDelivery.status} onChange={e=>setEditingDelivery(p=>({...p,status:e.target.value}))} style={C.sel}>{Object.keys(STATUS_COLORS).map(s=><option key={s} value={s}>{s}</option>)}</select></div>
                   <div><div style={{fontSize:10,color:"#475569",marginBottom:3}}>Stop #</div><input type="number" value={editingDelivery.stop_order||1} onChange={e=>setEditingDelivery(p=>({...p,stop_order:Number(e.target.value)}))} style={C.inp}/></div>
@@ -3560,7 +3641,7 @@ export default function App() {
                       {[1,2].map(r=>(
                         <div key={r} style={{display:"flex",gap:6,alignItems:"center",flex:1,minWidth:200}}>
                           <span style={{fontSize:11,color:r===1?"#60a5fa":"#a78bfa",fontWeight:700,flexShrink:0}}>R{r}:</span>
-                          <select onChange={e=>{if(!e.target.value)return;const v=Number(e.target.value);setPdfResult(prev=>prev.map(x=>(x._route||pdfRoute)===r&&!x._driver?{...x,_driver:v}:x));}} style={{...C.sel,flex:1,fontSize:11}}>
+                          <select onChange={e=>{if(!e.target.value)return;const v=Number(e.target.value);setPdfResult(prev=>prev.map(x=>(x._route||pdfRoute)===r&&x._driver==null?{...x,_driver:v}:x));}} style={{...C.sel,flex:1,fontSize:11}}>
                             <option value="">Assign driver to Route {r}...</option>
                             {employees.map(e=><option key={e.id} value={e.id}>{e.name}{e.is_manager?" 👑":""}</option>)}
                           </select>
@@ -3612,7 +3693,7 @@ export default function App() {
                                 </button>
                               ))}
                             </div>
-                            <select value={del._driver||""} onChange={e=>setPdfResult(prev=>prev.map((x,i)=>i===di?{...x,_driver:Number(e.target.value)}:x))}
+                            <select value={del._driver ?? ""} onChange={e=>setPdfResult(prev=>prev.map((x,i)=>i===di?{...x,_driver:e.target.value===""?null:Number(e.target.value)}:x))}
                               style={{...C.sel,flex:1,fontSize:11}}>
                               <option value="">Assign driver...</option>
                               {employees.map(e=><option key={e.id} value={e.id}>{e.name}{e.is_manager?" 👑":""}</option>)}
@@ -3631,7 +3712,7 @@ export default function App() {
                       {" · "}
                       Route 2: <span style={{color:"#a78bfa",fontWeight:600}}>{pdfResult.filter(d=>d._route===2).length} deliveries</span>
                       {" · "}
-                      Unassigned drivers: <span style={{color:pdfResult.filter(d=>!d._driver).length>0?"#f87171":"#22c55e",fontWeight:600}}>{pdfResult.filter(d=>!d._driver).length}</span>
+                      Unassigned drivers: <span style={{color:pdfResult.filter(d=>d._driver==null).length>0?"#f87171":"#22c55e",fontWeight:600}}>{pdfResult.filter(d=>d._driver==null).length}</span>
                     </div>
                   </div>
 
@@ -3642,7 +3723,7 @@ export default function App() {
                       const added=[];
                       for(const del of pdfResult){
                         const route=del._route||pdfRoute;
-                        const driverId=del._driver||0;
+                        const driverId=del._driver??0;
                         const stop=stopCounters[route]||1;
                         stopCounters[route]=(stopCounters[route]||1)+1;
                         const isTransfer=!!del.is_transfer;
@@ -3704,7 +3785,7 @@ export default function App() {
               </div>
               <div style={{marginBottom:8}}>
                 <div style={{fontSize:10,color:"#475569",marginBottom:3}}>Driver</div>
-                <select value={pdfResult?.[0]?.assigned_to||1} onChange={e=>setPdfResult(prev=>[{...(prev?.[0]||{}),assigned_to:Number(e.target.value)}])} style={C.sel}>
+                <select value={pdfResult?.[0]?.assigned_to ?? 1} onChange={e=>setPdfResult(prev=>[{...(prev?.[0]||{}),assigned_to:Number(e.target.value)}])} style={C.sel}>
                   {employees.map(e=><option key={e.id} value={e.id}>{e.name}{e.is_manager?" 👑":""}</option>)}
                 </select>
               </div>
@@ -3748,7 +3829,7 @@ export default function App() {
                     id:nid,customer:d.customer,address:d.address||"",phone:d.phone||"",
                     items:(d.items||[{qty:1,name:""}]).map(i=>({qty:i.qty||1,name:i.name||"",manufacturer:i.manufacturer||"",piece_number:i.piece_number||""})),
                     delivery_window:d.delivery_window||"Morning",
-                    assigned_to:Number(d.assigned_to)||1,status:"Scheduled",
+                    assigned_to:(d.assigned_to==null||d.assigned_to==="")?1:Number(d.assigned_to),status:"Scheduled",
                     notes:d.notes||"",floor:"1",elevator:false,
                     removal_requested:false,transfer_scheduled:false,route_notes:"",
                     stop_order:todayCount+1,
@@ -3759,7 +3840,7 @@ export default function App() {
                   await sb.from("deliveries").insert(newRow);
                   setDeliveries(prev=>[...prev,newRow]);
                   // Clear form for next entry
-                  setPdfResult([{customer:"",address:"",phone:"",ticket_number:"",delivery_window:"",notes:"",delivery_date:d.delivery_date||today,assigned_to:d.assigned_to||1,items:[{qty:1,name:"",manufacturer:"",piece_number:""}]}]);
+                  setPdfResult([{customer:"",address:"",phone:"",ticket_number:"",delivery_window:"",notes:"",delivery_date:d.delivery_date||today,assigned_to:d.assigned_to ?? 1,items:[{qty:1,name:"",manufacturer:"",piece_number:""}]}]);
                   alert("✅ "+d.customer+" added! Form cleared for next delivery.");
                 }} style={{flex:1,background:"linear-gradient(135deg,#059669,#047857)",color:"#fff",padding:"11px",fontSize:13,fontWeight:700}}>
                   ✅ Add Delivery
