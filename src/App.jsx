@@ -6,6 +6,84 @@ const SUPABASE_URL = "https://nmlhuufmvvqvbyoebrwe.supabase.co";
 const SUPABASE_KEY = "sb_publishable_TRQCQpgnv0NDRt7eIE6t-Q_fEINezez";
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 
+// ─── OFFLINE SUPPORT ─────────────────────────────────────────────────────────
+// Drivers lose cell service in some delivery areas. These helpers let the app
+// (1) show the last-loaded data with no signal and (2) queue writes (status
+// changes, notes, problems, signatures) to a local outbox that replays when the
+// connection returns — replacing the paper fallback.
+
+// localStorage cache so the driver still SEES their stops offline.
+function cacheSet(key, val) {
+  try { localStorage.setItem("am_cache_" + key, JSON.stringify(val)); } catch (e) {}
+}
+function cacheGet(key, fallback) {
+  try { const v = localStorage.getItem("am_cache_" + key); return v ? JSON.parse(v) : fallback; }
+  catch (e) { return fallback; }
+}
+
+// Outbox: a list of {id, table, op, payload, match} write operations that
+// failed (offline) and must be retried. Persisted so a refresh doesn't lose them.
+const OUTBOX_KEY = "am_outbox";
+function outboxRead() {
+  try { return JSON.parse(localStorage.getItem(OUTBOX_KEY) || "[]"); } catch (e) { return []; }
+}
+function outboxWrite(list) {
+  try { localStorage.setItem(OUTBOX_KEY, JSON.stringify(list)); } catch (e) {}
+}
+function outboxAdd(entry) {
+  const list = outboxRead();
+  list.push({ id: `ob-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, ts: Date.now(), ...entry });
+  outboxWrite(list);
+  return list.length;
+}
+
+// Run a single supabase write described by an outbox entry.
+async function runWrite({ table, op, payload, match }) {
+  const t = sb.from(table);
+  if (op === "insert") return await t.insert(payload);
+  if (op === "update") return await t.update(payload).eq(match.col, match.val);
+  if (op === "delete") return await t.delete().eq(match.col, match.val);
+  if (op === "upsert") return await t.upsert(payload);
+  throw new Error("unknown op " + op);
+}
+
+// Try a write now; if it fails (offline/network), queue it. Returns
+// { queued: boolean, pending: number }. Optimistic UI updates happen at the
+// call site regardless, so the driver sees the change immediately either way.
+async function tryWrite(entry) {
+  if (typeof navigator !== "undefined" && navigator.onLine === false) {
+    const pending = outboxAdd(entry);
+    return { queued: true, pending };
+  }
+  try {
+    const res = await runWrite(entry);
+    if (res && res.error) throw res.error;
+    return { queued: false, pending: outboxRead().length };
+  } catch (e) {
+    const pending = outboxAdd(entry);
+    return { queued: true, pending };
+  }
+}
+
+// Replay everything in the outbox, oldest first. Keeps any that still fail.
+async function flushOutbox() {
+  let list = outboxRead();
+  if (!list.length) return 0;
+  const remaining = [];
+  let sent = 0;
+  for (const entry of list) {
+    try {
+      const res = await runWrite(entry);
+      if (res && res.error) throw res.error;
+      sent++;
+    } catch (e) {
+      remaining.push(entry);
+    }
+  }
+  outboxWrite(remaining);
+  return sent;
+}
+
 const ALL_DAYS = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
 const ROLES = ["Driver","Helper","Driver/Helper","Coordinator","Loader","Manager","Warehouse","Other"];
 // ─── SMS CONFIG (Conner-only, inactive until owner approves) ─────────────────
@@ -289,7 +367,7 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
   const sendMsg = async (deliveryId) => {
     if (!msgInput.trim()) return;
     const msg = { id:Date.now(), sender_id:user.id, sender_name:user.name, text:msgInput.trim(), delivery_id:deliveryId||null, photo_url:null, created_at:new Date().toISOString() };
-    try { await sb.from("messages").insert(msg); } catch(e) {}
+    await tryWrite({ table:"messages", op:"insert", payload:msg });
     onSendMessage(msg);
     setMsgInput("");
   };
@@ -331,7 +409,7 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
   const logProb = async () => {
     if (!probInput.description.trim()) return;
     const p = { id:Date.now(), emp_name:user.name, emp_id:user.id, customer:probInput.customer||"", ticket_number:probInput.ticket_number||"", description:probInput.description, type:probInput.type, escalation_step:0, time:new Date().toLocaleDateString("en-US"), resolved:false, status:"Open" };
-    try { await sb.from("problems").insert(p); } catch(e) {}
+    await tryWrite({ table:"problems", op:"insert", payload:p });
     onLogProblem(p);
     setProbInput({ description:"", type:"customer", customer:"", ticket_number:"" });
   };
@@ -410,7 +488,7 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
 
   const updateDeliveryDetail = async (delId, field, value) => {
     setDeliveryDetails(prev => ({ ...prev, [delId]: { ...(prev[delId]||{}), [field]: value } }));
-    await sb.from("deliveries").update({ [field]: value }).eq("id", delId);
+    await tryWrite({ table:"deliveries", op:"update", payload:{ [field]: value }, match:{col:"id", val:delId} });
   };
 
   const cardStyle = {background:"#0f1923",border:"1px solid #1e2d3d",borderRadius:12};
@@ -699,7 +777,7 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
                           const newChecks={...checks,[q.key]:v};
                           setDeliveryDetails(prev=>({...prev,[d.id]:{...(prev[d.id]||{}),checklist:newChecks}}));
                           setDeliveries(prev=>prev.map(x=>x.id===d.id?{...x,checklist:newChecks}:x));
-                          await sb.from("deliveries").update({checklist:newChecks}).eq("id",d.id);
+                          await tryWrite({ table:"deliveries", op:"update", payload:{checklist:newChecks}, match:{col:"id", val:d.id} });
                         }} style={{padding:"7px 12px",fontSize:12,fontWeight:600,background:checks[q.key]===v?(v==="Yes"?"#052e16":v==="No"?"#2d0a0a":"#1e2d3d"):"#0a1628",color:checks[q.key]===v?(v==="Yes"?"#4ade80":v==="No"?"#f87171":"#94a3b8"):"#475569",border:`2px solid ${checks[q.key]===v?(v==="Yes"?"#22c55e":v==="No"?"#ef4444":"#334155"):"#1e2d3d"}`}}>
                           {v}
                         </button>
@@ -1863,31 +1941,39 @@ function SignaturePad({ delivery, user, onSigned, onClose, isEs }) {
     setSaving(true);
     try {
       const canvas = canvasRef.current;
-      canvas.toBlob(async (blob) => {
-        const path = `signatures/${delivery.id}/${Date.now()}.png`;
-        const { error } = await sb.storage.from("photos").upload(path, blob, { contentType:"image/png" });
-        if (!error) {
-          const url = sb.storage.from("photos").getPublicUrl(path).data.publicUrl;
-          const now = new Date().toISOString();
-          await sb.from("deliveries").update({ signature_url:url, signed_by:printedName.trim(), signed_at:now, status:"Delivered" }).eq("id", delivery.id);
-          const sigRecord = {
-            id: Date.now(),
-            ticket_number: delivery.ticket_number||"",
-            customer: delivery.customer,
-            address: delivery.address,
-            phone: delivery.phone,
-            delivery_date: delivery.delivery_date||new Date().toISOString().split("T")[0],
-            signed_by: printedName.trim(),
-            signed_at: now,
-            signature_url: url,
-            driver_name: user.name,
-            items: delivery.items||[],
-          };
-          await sb.from("signatures").insert(sigRecord);
-          onSigned(url, now, printedName.trim());
-        }
-        setSaving(false);
-      }, "image/png");
+      const now = new Date().toISOString();
+      const name = printedName.trim();
+      // Always have a base64 copy as the offline fallback — it renders as an
+      // <img> src anywhere, so a captured signature is never lost when there's
+      // no signal. We try to upload to storage first when online for a smaller
+      // DB footprint, but fall back to the data URL on any failure.
+      const dataUrl = canvas.toDataURL("image/png");
+      let url = dataUrl;
+      if (navigator.onLine) {
+        try {
+          const blob = await new Promise(res => canvas.toBlob(res, "image/png"));
+          const path = `signatures/${delivery.id}/${Date.now()}.png`;
+          const { error } = await sb.storage.from("photos").upload(path, blob, { contentType:"image/png" });
+          if (!error) url = sb.storage.from("photos").getPublicUrl(path).data.publicUrl;
+        } catch(e) { /* keep data URL fallback */ }
+      }
+      await tryWrite({ table:"deliveries", op:"update", payload:{ signature_url:url, signed_by:name, signed_at:now, status:"Delivered" }, match:{col:"id", val:delivery.id} });
+      const sigRecord = {
+        id: Date.now(),
+        ticket_number: delivery.ticket_number||"",
+        customer: delivery.customer,
+        address: delivery.address,
+        phone: delivery.phone,
+        delivery_date: delivery.delivery_date||new Date().toISOString().split("T")[0],
+        signed_by: name,
+        signed_at: now,
+        signature_url: url,
+        driver_name: user.name,
+        items: delivery.items||[],
+      };
+      await tryWrite({ table:"signatures", op:"insert", payload:sigRecord });
+      onSigned(url, now, name);
+      setSaving(false);
     } catch(e) { console.error(e); setSaving(false); }
   };
 
@@ -2070,11 +2156,11 @@ export default function App() {
   const [syncing, setSyncing] = useState(false);
   const [tab, setTab] = useState("dashboard");
   const [selectedDay, setSelectedDay] = useState(todayDayName());
-  const [employees, setEmployees] = useState(INITIAL_EMPLOYEES);
-  const [deliveries, setDeliveries] = useState([]);
-  const [customTasks, setCustomTasks] = useState({});
+  const [employees, setEmployees] = useState(()=>cacheGet("employees", INITIAL_EMPLOYEES));
+  const [deliveries, setDeliveries] = useState(()=>cacheGet("deliveries", []));
+  const [customTasks, setCustomTasks] = useState(()=>cacheGet("customTasks", {}));
   const [baseTasks, setBaseTasks] = useState({ en: BASE_TASKS_EN, es: BASE_TASKS_ES });
-  const [notes, setNotes] = useState({});
+  const [notes, setNotes] = useState(()=>cacheGet("notes", {}));
   const [problems, setProblems] = useState([]);
   const [messages, setMessages] = useState([]);
   const [selectedEmployee, setSelectedEmployee] = useState(null);
@@ -2132,6 +2218,7 @@ export default function App() {
   const [bouncieLoading, setBouncieLoading] = useState(false);
   const [reportWeek, setReportWeek] = useState(()=>{const d=new Date();d.setDate(d.getDate()-d.getDay());return d.toISOString().split("T")[0];});
   const [offlineQueue, setOfflineQueue] = useState([]);
+  const [pendingSync, setPendingSync] = useState(()=>outboxRead().length);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [sigSearch, setSigSearch] = useState("");
   const [trainingSession, setTrainingSession] = useState(null);
@@ -2171,11 +2258,11 @@ export default function App() {
           sb.from("training_completions").select("*"),
           sb.from("liability_forms").select("*").order("signed_at",{ascending:false}),
         ]);
-        if (eR.data&&eR.data.length>0) setEmployees(eR.data);
+        if (eR.data&&eR.data.length>0) { setEmployees(eR.data); cacheSet("employees", eR.data); }
         else { await sb.from("employees").upsert(INITIAL_EMPLOYEES); }
-        if (dR.data) setDeliveries(dR.data);
-        if (ctR.data) { const g={}; ctR.data.forEach(t=>{if(!g[t.emp_id])g[t.emp_id]=[];g[t.emp_id].push(t);}); setCustomTasks(g); }
-        if (nR.data) { const g={}; nR.data.forEach(n=>{if(!g[n.emp_id])g[n.emp_id]=[];g[n.emp_id].push(n);}); setNotes(g); }
+        if (dR.data) { setDeliveries(dR.data); cacheSet("deliveries", dR.data); }
+        if (ctR.data) { const g={}; ctR.data.forEach(t=>{if(!g[t.emp_id])g[t.emp_id]=[];g[t.emp_id].push(t);}); setCustomTasks(g); cacheSet("customTasks", g); }
+        if (nR.data) { const g={}; nR.data.forEach(n=>{if(!g[n.emp_id])g[n.emp_id]=[];g[n.emp_id].push(n);}); setNotes(g); cacheSet("notes", g); }
         if (pR.data) setProblems(pR.data);
         if (mR.data) setMessages(mR.data);
         if (sigR.data) setSignatures(sigR.data);
@@ -2201,12 +2288,27 @@ export default function App() {
     const ds = sb.channel("d-ch").on("postgres_changes",{event:"*",schema:"public",table:"deliveries"},()=>{sb.from("deliveries").select("*").then(({data})=>{if(data)setDeliveries(data);});}).subscribe();
     const ms = sb.channel("m-ch").on("postgres_changes",{event:"INSERT",schema:"public",table:"messages"},(p)=>{setMessages(prev=>[...prev,p.new]);}).subscribe();
     const ps = sb.channel("p-ch").on("postgres_changes",{event:"*",schema:"public",table:"problems"},()=>{sb.from("problems").select("*").then(({data})=>{if(data)setProblems(data);});}).subscribe();
-    // Online/offline detection
-    const goOnline = () => setIsOnline(true);
+    // Online/offline detection + outbox replay. When the connection returns,
+    // push any queued offline writes (status changes, notes, problems, etc.)
+    // then reload fresh data so the UI reflects what synced.
+    const syncNow = async () => {
+      if (!navigator.onLine) return;
+      const before = outboxRead().length;
+      if (before === 0) { setPendingSync(0); return; }
+      setSyncing(true);
+      await flushOutbox();
+      setPendingSync(outboxRead().length);
+      setSyncing(false);
+      load();
+    };
+    const goOnline = () => { setIsOnline(true); syncNow(); };
     const goOffline = () => setIsOnline(false);
     window.addEventListener('online', goOnline);
     window.addEventListener('offline', goOffline);
-    return ()=>{sb.removeChannel(ds);sb.removeChannel(ms);sb.removeChannel(ps);window.removeEventListener('online',goOnline);window.removeEventListener('offline',goOffline);};
+    // Also retry on a timer in case the 'online' event is missed (flaky signal).
+    const flushIv = setInterval(syncNow, 20000);
+    syncNow();
+    return ()=>{sb.removeChannel(ds);sb.removeChannel(ms);sb.removeChannel(ps);window.removeEventListener('online',goOnline);window.removeEventListener('offline',goOffline);clearInterval(flushIv);};
   },[]);
 
   const getEmpDels = (id) => deliveries.filter(d=>d.assigned_to===id);
@@ -2224,18 +2326,25 @@ export default function App() {
     const today = new Date().toISOString().split('T')[0]; const row = { customer:d.customer,address:d.address,phone:d.phone,items:d.items||[],delivery_window:d.delivery_window||"",assigned_to:(d.assigned_to==null||d.assigned_to==="")?1:Number(d.assigned_to),status:d.status,notes:d.notes||"",floor:d.floor||"1",elevator:!!d.elevator,removal_requested:!!d.removal_requested,transfer_scheduled:!!d.transfer_scheduled,route_notes:d.route_notes||"",stop_order:Number(d.stop_order)||1,delivery_date:d.delivery_date||today,ticket_number:d.ticket_number||"",helper_id:Number(d.helper_id)||0,manufacturer:d.manufacturer||"",piece_number:d.piece_number||"" };
     if (!d.id) {
       const nid = `D-${String(deliveries.length+1).padStart(3,"0")}-${Date.now()}`;
-      const {data} = await sb.from("deliveries").insert({...row,id:nid}).select();
-      if (data) setDeliveries(prev=>[...prev,...data]);
+      const newRow = {...row,id:nid};
+      setDeliveries(prev=>{ const next=[...prev,newRow]; cacheSet("deliveries", next); return next; });
+      const r = await tryWrite({ table:"deliveries", op:"insert", payload:newRow });
+      setPendingSync(r.pending);
     } else {
-      await sb.from("deliveries").update(row).eq("id",d.id);
-      setDeliveries(prev=>prev.map(x=>x.id===d.id?{...row,id:d.id}:x));
+      setDeliveries(prev=>{ const next=prev.map(x=>x.id===d.id?{...row,id:d.id}:x); cacheSet("deliveries", next); return next; });
+      const r = await tryWrite({ table:"deliveries", op:"update", payload:row, match:{col:"id", val:d.id} });
+      setPendingSync(r.pending);
     }
     setSyncing(false);
     setEditingDelivery(null);
   };
 
   const delDelivery = async (id) => { await sb.from("deliveries").delete().eq("id",id); setDeliveries(prev=>prev.filter(d=>d.id!==id)); };
-  const updStatus = async (id,status) => { await sb.from("deliveries").update({status}).eq("id",id); setDeliveries(prev=>prev.map(d=>d.id===id?{...d,status}:d)); };
+  const updStatus = async (id,status) => {
+    setDeliveries(prev=>{ const next=prev.map(d=>d.id===id?{...d,status}:d); cacheSet("deliveries", next); return next; });
+    const r = await tryWrite({ table:"deliveries", op:"update", payload:{status}, match:{col:"id", val:id} });
+    setPendingSync(r.pending);
+  };
 
   const addTask = async (empId) => {
     if (!newTaskInput.text.trim()) return;
@@ -2367,6 +2476,18 @@ export default function App() {
     />
   );
 
+  // Global offline / pending-sync banner. Shows when there's no connection or
+  // when there are queued writes waiting to sync. Lets drivers trust the app
+  // instead of falling back to paper when service drops.
+  const offlineBanner = (!isOnline || pendingSync>0) ? (
+    <div style={{position:"sticky",top:0,zIndex:900,padding:"7px 14px",textAlign:"center",fontSize:12.5,fontWeight:700,
+      background:!isOnline?"#7c2d12":"#1e3a2f",color:!isOnline?"#fed7aa":"#86efac",borderBottom:`1px solid ${!isOnline?"#9a3412":"#166534"}`}}>
+      {!isOnline
+        ? `📴 Offline — your work is saved on this device${pendingSync>0?` (${pendingSync} change${pendingSync>1?"s":""} waiting to sync)`:""}`
+        : (syncing ? `🔄 Syncing ${pendingSync} change${pendingSync>1?"s":""}…` : `⏳ ${pendingSync} change${pendingSync>1?"s":""} waiting to sync`)}
+    </div>
+  ) : null;
+
   if (loading) return (
     <div style={{background:"#080d14",minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:14,fontFamily:"'DM Sans',sans-serif"}}>
       <style>{GLOBAL_STYLES}</style>
@@ -2379,6 +2500,7 @@ export default function App() {
 
   if (driverMode) return (
     <div>
+      {offlineBanner}
       <div style={{background:"#7c3aed",padding:"8px 16px",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
         <span style={{color:"#fff",fontSize:12,fontWeight:600}}>👑 Conner — Driver Mode</span>
         <button className="btn" onClick={()=>setDriverMode(false)} style={{background:"rgba(255,255,255,0.2)",color:"#fff",padding:"5px 12px",fontSize:12}}>← Back to Manager</button>
@@ -2403,19 +2525,22 @@ export default function App() {
   );
 
   if (!currentUser.is_manager&&!currentUser.isManager&&currentUser.role!=='Manager') return (
-    <DriverView
-      user={currentUser} deliveries={deliveries} customTasks={customTasks} baseTasks={baseTasks}
-      messages={messages} problems={problems} employees={employees}
-      onStatusUpdate={updStatus} onLogout={()=>setCurrentUser(null)}
-      onSendMessage={(m)=>setMessages(prev=>[...prev,m])}
-      onLogProblem={(p)=>setProblems(prev=>[...prev,p])}
-      onSaveDelivery={saveDelivery}
-      smsTemplates={smsTemplates}
-      onSaveSignature={(delId, url, at, signedBy)=>{
-        setDeliveries(prev=>prev.map(d=>d.id===delId?{...d,signature_url:url,signed_at:at,signed_by:signedBy,status:"Delivered"}:d));
-        sb.from("signatures").select("*").order("signed_at",{ascending:false}).then(({data})=>{if(data)setSignatures(data);});
-      }}
-    />
+    <div>
+      {offlineBanner}
+      <DriverView
+        user={currentUser} deliveries={deliveries} customTasks={customTasks} baseTasks={baseTasks}
+        messages={messages} problems={problems} employees={employees}
+        onStatusUpdate={updStatus} onLogout={()=>setCurrentUser(null)}
+        onSendMessage={(m)=>setMessages(prev=>[...prev,m])}
+        onLogProblem={(p)=>setProblems(prev=>[...prev,p])}
+        onSaveDelivery={saveDelivery}
+        smsTemplates={smsTemplates}
+        onSaveSignature={(delId, url, at, signedBy)=>{
+          setDeliveries(prev=>prev.map(d=>d.id===delId?{...d,signature_url:url,signed_at:at,signed_by:signedBy,status:"Delivered"}:d));
+          sb.from("signatures").select("*").order("signed_at",{ascending:false}).then(({data})=>{if(data)setSignatures(data);});
+        }}
+      />
+    </div>
   );
 
   // ── MANAGER LAYOUT ──
@@ -2428,6 +2553,7 @@ export default function App() {
   return (
     <div style={{fontFamily:"'DM Sans','Segoe UI',sans-serif",background:"#080d14",minHeight:"100vh",color:"#e2e8f0"}}>
       <style>{GLOBAL_STYLES}</style>
+      {offlineBanner}
 
       {/* Header */}
       <div style={{background:"#0a1628",borderBottom:"1px solid #1e2d3d"}}>
