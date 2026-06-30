@@ -793,6 +793,7 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
           {key:"deliveries",label:isEs?"Entregas":"Deliveries",icon:"🚛"},
           {key:"tasks",label:isEs?"Tareas":"Tasks",icon:"✅"},
           {key:"messages",label:isEs?"Mensajes":"Messages",icon:"💬"},
+          {key:"replies",label:isEs?"Respuestas":"Replies",icon:"📩"},
           {key:"problems",label:isEs?"Problemas":"Problems",icon:"⚠️"},
           {key:"dashboard",label:isEs?"Inicio":"Dashboard",icon:"⬛"},
           {key:"inventory",label:isEs?"Inventario":"Inventory",icon:"📦"},
@@ -936,6 +937,51 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
                 placeholder={isEs?"Mensaje al equipo...":"Message the team..."} style={inputStyle}/>
               <button className="btn" onClick={()=>sendMsg(null)} style={{background:"linear-gradient(135deg,#2563eb,#1d4ed8)",color:"#fff",padding:"10px 16px",fontSize:14,fontWeight:600,flexShrink:0}}>Send</button>
             </div>
+          </div>
+        )}
+
+        {tab==="replies"&&(
+          <div>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12,gap:8}}>
+              <div>
+                <div style={{fontWeight:700,fontSize:15,color:"#f1f5f9"}}>📩 {isEs?"Respuestas de Clientes":"Customer Replies"}</div>
+                <div style={{fontSize:12,color:"#475569",marginTop:2}}>{smsReplies.length} {smsReplies.length===1?(isEs?"respuesta":"reply"):(isEs?"respuestas":"replies")}</div>
+              </div>
+              <button className="btn" onClick={async()=>{
+                const r=await sb.from("sms_replies").select("*").order("id",{ascending:false}).limit(200);
+                if(r.data)setSmsReplies(r.data);
+              }} style={{background:"#1e2d3d",color:"#60a5fa",padding:"7px 13px",fontSize:12,fontWeight:600,flexShrink:0}}>🔄 {isEs?"Actualizar":"Refresh"}</button>
+            </div>
+            {smsReplies.length===0?(
+              <div style={{...cardStyle,padding:32,textAlign:"center",color:"#475569"}}>
+                <div style={{fontSize:32,marginBottom:8}}>📩</div>
+                <div>{isEs?"No hay respuestas de clientes todavía.":"No customer replies yet."}</div>
+              </div>
+            ):(
+              <div style={{display:"flex",flexDirection:"column",gap:9}}>
+                {smsReplies.map(r=>{
+                  const from=(r.from_number||"").replace(/\D/g,"");
+                  const matchedDel=deliveries.find(d=>{
+                    const phone=(d.phone||"").replace(/\D/g,"");
+                    return phone.length>9&&from.endsWith(phone.slice(-10));
+                  });
+                  const mine=matchedDel&&(matchedDel.assigned_to===user.id||matchedDel.helper_id===user.id);
+                  return(
+                    <div key={r.id} style={{...cardStyle,padding:"13px 15px",borderLeft:mine?"3px solid #22c55e":cardStyle.border}}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:6,flexWrap:"wrap",gap:6}}>
+                        <div>
+                          <div style={{fontWeight:700,fontSize:13,color:"#f1f5f9"}}>{matchedDel?matchedDel.customer:(r.customer_name||r.from_number)}{mine&&<span style={{fontSize:10,background:"#052e16",color:"#4ade80",borderRadius:4,padding:"1px 6px",marginLeft:6}}>{isEs?"Tu entrega":"Your stop"}</span>}</div>
+                          <div style={{fontSize:11,color:"#475569"}}>{r.from_number}</div>
+                        </div>
+                        <span style={{fontSize:11,color:"#475569"}}>{new Date(r.received_at||r.created_at||Date.now()).toLocaleString()}</span>
+                      </div>
+                      <div style={{fontSize:14,color:"#e2e8f0",background:"#0a1628",borderRadius:8,padding:"10px 12px",lineHeight:1.5}}>{r.body}</div>
+                      {matchedDel&&<div style={{fontSize:11,color:"#60a5fa",marginTop:6}}>📦 {matchedDel.address}{matchedDel.ticket_number?" — #"+matchedDel.ticket_number:""}</div>}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         )}
 
