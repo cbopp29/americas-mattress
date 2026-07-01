@@ -2327,7 +2327,31 @@ export default function App() {
     // Also retry on a timer in case the 'online' event is missed (flaky signal).
     const flushIv = setInterval(syncNow, 20000);
     syncNow();
-    return ()=>{sb.removeChannel(ds);sb.removeChannel(ms);sb.removeChannel(ps);window.removeEventListener('online',goOnline);window.removeEventListener('offline',goOffline);clearInterval(flushIv);};
+
+    // Silent refresh: home-screen apps get suspended (not reloaded) and their
+    // realtime socket dies while backgrounded, so on resume they'd show stale
+    // deliveries. Refetch the key data quietly (no loading screen) whenever the
+    // app returns to the front, regains focus, or reconnects.
+    const refresh = async () => {
+      if (!navigator.onLine) return;
+      try {
+        const [eR,dR,mR,pR] = await Promise.all([
+          sb.from("employees").select("id,name,role,avatar,lang,workdays,is_manager,last_location"),
+          sb.from("deliveries").select("*"),
+          sb.from("messages").select("*").order("created_at",{ascending:true}),
+          sb.from("problems").select("*"),
+        ]);
+        if (eR.data&&eR.data.length>0) { setEmployees(eR.data); cacheSet("employees", eR.data); }
+        if (dR.data) { setDeliveries(dR.data); cacheSet("deliveries", dR.data); }
+        if (mR.data) setMessages(mR.data);
+        if (pR.data) setProblems(pR.data);
+      } catch(e) {}
+    };
+    const onVisible = () => { if (document.visibilityState === 'visible') { syncNow(); refresh(); } };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', refresh);
+
+    return ()=>{sb.removeChannel(ds);sb.removeChannel(ms);sb.removeChannel(ps);window.removeEventListener('online',goOnline);window.removeEventListener('offline',goOffline);clearInterval(flushIv);document.removeEventListener('visibilitychange',onVisible);window.removeEventListener('focus',refresh);};
   },[]);
 
   // Keep the signed-in user on this device so a reload in a dead zone doesn't

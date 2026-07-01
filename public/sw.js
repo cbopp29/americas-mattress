@@ -1,7 +1,7 @@
 // Service Worker — network-first, but cache app shell so the app loads OFFLINE.
 // Drivers lose signal in some areas; this lets the app open and show the last
 // data even with no connection. Bump CACHE to force a refresh on all devices.
-const CACHE = 'amattress-v4';
+const CACHE = 'amattress-v5';
 
 self.addEventListener('install', e => {
   self.skipWaiting();
