@@ -65,7 +65,12 @@ async function tryWrite(entry) {
   }
 }
 
-// Replay everything in the outbox, oldest first. Keeps any that still fail.
+// Replay everything in the outbox, oldest first. Keeps any that still fail —
+// EXCEPT an entry that keeps failing while we're online is a permanent
+// (bad-data / rejected) write, not a signal problem. Drop it after a few tries
+// so one un-syncable write can't wedge the queue forever (which previously
+// showed a stuck "N waiting to sync" and drove a constant-refresh loop).
+const OUTBOX_MAX_TRIES = 5;
 async function flushOutbox() {
   let list = outboxRead();
   if (!list.length) return 0;
@@ -77,7 +82,14 @@ async function flushOutbox() {
       if (res && res.error) throw res.error;
       sent++;
     } catch (e) {
-      remaining.push(entry);
+      const tries = (entry.tries || 0) + 1;
+      const online = typeof navigator === "undefined" || navigator.onLine !== false;
+      if (online && tries >= OUTBOX_MAX_TRIES) {
+        // Permanent failure — log and discard so the queue can drain.
+        try { console.warn("Dropping un-syncable outbox entry after", tries, "tries:", entry, e); } catch (_) {}
+      } else {
+        remaining.push({ ...entry, tries });
+      }
     }
   }
   outboxWrite(remaining);
@@ -2307,31 +2319,11 @@ export default function App() {
     const ds = sb.channel("d-ch").on("postgres_changes",{event:"*",schema:"public",table:"deliveries"},()=>{sb.from("deliveries").select("*").then(({data})=>{if(data)setDeliveries(data);});}).subscribe();
     const ms = sb.channel("m-ch").on("postgres_changes",{event:"INSERT",schema:"public",table:"messages"},(p)=>{setMessages(prev=>[...prev,p.new]);}).subscribe();
     const ps = sb.channel("p-ch").on("postgres_changes",{event:"*",schema:"public",table:"problems"},()=>{sb.from("problems").select("*").then(({data})=>{if(data)setProblems(data);});}).subscribe();
-    // Online/offline detection + outbox replay. When the connection returns,
-    // push any queued offline writes (status changes, notes, problems, etc.)
-    // then reload fresh data so the UI reflects what synced.
-    const syncNow = async () => {
-      if (!navigator.onLine) return;
-      const before = outboxRead().length;
-      if (before === 0) { setPendingSync(0); return; }
-      setSyncing(true);
-      await flushOutbox();
-      setPendingSync(outboxRead().length);
-      setSyncing(false);
-      load();
-    };
-    const goOnline = () => { setIsOnline(true); syncNow(); };
-    const goOffline = () => setIsOnline(false);
-    window.addEventListener('online', goOnline);
-    window.addEventListener('offline', goOffline);
-    // Also retry on a timer in case the 'online' event is missed (flaky signal).
-    const flushIv = setInterval(syncNow, 20000);
-    syncNow();
-
     // Silent refresh: home-screen apps get suspended (not reloaded) and their
     // realtime socket dies while backgrounded, so on resume they'd show stale
-    // deliveries. Refetch the key data quietly (no loading screen) whenever the
-    // app returns to the front, regains focus, or reconnects.
+    // deliveries. Refetch the key data quietly (NO loading screen) whenever the
+    // app returns to the front, regains focus, or reconnects. Defined BEFORE
+    // syncNow so syncNow can reuse it.
     const refresh = async () => {
       if (!navigator.onLine) return;
       try {
@@ -2347,6 +2339,31 @@ export default function App() {
         if (pR.data) setProblems(pR.data);
       } catch(e) {}
     };
+
+    // Online/offline detection + outbox replay. When the connection returns,
+    // push any queued offline writes then SILENTLY refetch. IMPORTANT: never
+    // call load() here — load() shows the full-screen loading state, and if an
+    // un-syncable ("poison") entry sits in the queue this fires every 20s and
+    // makes the whole app appear to "constantly refresh." Only refetch when
+    // something actually synced.
+    const syncNow = async () => {
+      if (!navigator.onLine) return;
+      const before = outboxRead().length;
+      if (before === 0) { setPendingSync(0); return; }
+      setSyncing(true);
+      const sent = await flushOutbox();
+      setPendingSync(outboxRead().length);
+      setSyncing(false);
+      if (sent > 0) refresh();
+    };
+    const goOnline = () => { setIsOnline(true); syncNow(); };
+    const goOffline = () => setIsOnline(false);
+    window.addEventListener('online', goOnline);
+    window.addEventListener('offline', goOffline);
+    // Also retry on a timer in case the 'online' event is missed (flaky signal).
+    const flushIv = setInterval(syncNow, 20000);
+    syncNow();
+
     const onVisible = () => { if (document.visibilityState === 'visible') { syncNow(); refresh(); } };
     document.addEventListener('visibilitychange', onVisible);
     window.addEventListener('focus', refresh);
