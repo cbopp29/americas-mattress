@@ -2116,22 +2116,28 @@ function AddBaseTaskRow({ lang, setBaseTasks }) {
 function CustomerTrackingPage({ driverId, employees, deliveries }) {
   const [location, setLocation] = useState(null);
   const [loading, setLoading] = useState(true);
-  const driver = employees.find(e=>String(e.id)===String(driverId));
+  // Tracking links look like /track/<empId>-r<route> (e.g. "8-r1"). The
+  // employees.id column is an integer, so passing the whole "8-r1" string to
+  // the DB query threw a type error and tracking ALWAYS showed "not active".
+  // Extract just the numeric employee id (works for legacy "/track/8" links too).
+  const empId = parseInt(String(driverId).split("-")[0], 10);
+  const driver = employees.find(e=>e.id===empId);
 
   useEffect(()=>{
+    if (!Number.isFinite(empId)) { setLoading(false); return; }
     const load = async () => {
-      const {data} = await sb.from("employees").select("last_location,name").eq("id",driverId).single();
+      const {data} = await sb.from("employees").select("last_location,name").eq("id",empId).single();
       if(data?.last_location) setLocation(data.last_location);
       setLoading(false);
     };
     load();
     const interval = setInterval(load, 15000);
     return ()=>clearInterval(interval);
-  },[driverId]);
+  },[empId]);
 
-  const driverDels = deliveries.filter(d=>d.assigned_to===Number(driverId)&&d.status!=="Delivered")
+  const driverDels = deliveries.filter(d=>d.assigned_to===empId&&d.status!=="Delivered")
     .sort((a,b)=>(a.stop_order||0)-(b.stop_order||0));
-  const completedCount = deliveries.filter(d=>d.assigned_to===Number(driverId)&&d.status==="Delivered").length;
+  const completedCount = deliveries.filter(d=>d.assigned_to===empId&&d.status==="Delivered").length;
 
   return (
     <div style={{background:"#080d14",minHeight:"100vh",color:"#e2e8f0",fontFamily:"'DM Sans',sans-serif",maxWidth:500,margin:"0 auto",padding:20}}>
