@@ -2121,6 +2121,10 @@ function CustomerTrackingPage({ driverId, employees, deliveries }) {
   // the DB query threw a type error and tracking ALWAYS showed "not active".
   // Extract just the numeric employee id (works for legacy "/track/8" links too).
   const empId = parseInt(String(driverId).split("-")[0], 10);
+  // Links also carry the route: "8-r1" -> route 1. Used to show only THIS
+  // route's stops (a driver can run more than one route).
+  const routeMatch = String(driverId).match(/-r(\d+)/);
+  const routeNum = routeMatch ? parseInt(routeMatch[1], 10) : null;
   const driver = employees.find(e=>e.id===empId);
 
   useEffect(()=>{
@@ -2135,9 +2139,17 @@ function CustomerTrackingPage({ driverId, employees, deliveries }) {
     return ()=>clearInterval(interval);
   },[empId]);
 
-  const driverDels = deliveries.filter(d=>d.assigned_to===empId&&d.status!=="Delivered")
+  // Only THIS driver's stops for TODAY's run (and this route if the link has
+  // one) — previously it summed every delivery ever assigned to the driver,
+  // which showed a huge "88 delivered" count combining multiple days/routes.
+  const today = new Date().toISOString().split("T")[0];
+  const forThisRun = (d) =>
+    d.assigned_to===empId &&
+    d.delivery_date===today &&
+    (routeNum===null || String(d.route_number||1)===String(routeNum));
+  const driverDels = deliveries.filter(d=>forThisRun(d)&&d.status!=="Delivered")
     .sort((a,b)=>(a.stop_order||0)-(b.stop_order||0));
-  const completedCount = deliveries.filter(d=>d.assigned_to===empId&&d.status==="Delivered").length;
+  const completedCount = deliveries.filter(d=>forThisRun(d)&&d.status==="Delivered").length;
 
   return (
     <div style={{background:"#080d14",minHeight:"100vh",color:"#e2e8f0",fontFamily:"'DM Sans',sans-serif",maxWidth:500,margin:"0 auto",padding:20}}>
@@ -5373,7 +5385,7 @@ export default function App() {
                   localStorage.setItem("bouncie_key",bouncieKey);
                   setBouncieLoading(true);
                   try{
-                    const res=await fetch("https://api.bouncie.dev/v1/vehicles",{headers:{"Authorization":bouncieKey,"Content-Type":"application/json"}});
+                    const res=await fetch("/.netlify/functions/bouncie",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({key:bouncieKey})});
                     if(!res.ok){alert("Invalid API key or connection failed. Check your key at bouncie.app/developer.");setBouncieLoading(false);return;}
                     const data=await res.json();
                     setBouncieVehicles(Array.isArray(data)?data:[]);
@@ -5400,7 +5412,7 @@ export default function App() {
                   <button className="btn" onClick={async()=>{
                     setBouncieLoading(true);
                     try{
-                      const res=await fetch("https://api.bouncie.dev/v1/vehicles",{headers:{"Authorization":bouncieKey}});
+                      const res=await fetch("/.netlify/functions/bouncie",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({key:bouncieKey})});
                       const data=await res.json();
                       setBouncieVehicles(Array.isArray(data)?data:[]);
                     }catch(e){}
