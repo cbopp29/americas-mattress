@@ -5463,12 +5463,17 @@ export default function App() {
                   const isMoving=loc.isMoving||loc.speed>2;
                   const lat=loc.location?.lat||loc.lat;
                   const lng=loc.location?.lon||loc.lon||loc.lng;
+                  // Bouncie returns some fields as nested objects — coerce to
+                  // plain strings so React never tries to render an object.
+                  const name=v.nickName||v.nickname||v.name||v.licensePlate||"Truck";
+                  const modelStr=typeof v.model==="string"?v.model:[v.model?.make,v.model?.name,v.model?.year||v.year].filter(Boolean).join(" ");
+                  const addr=typeof loc.address==="string"?loc.address:(typeof loc.location?.address==="string"?loc.location.address:"");
                   return(
                     <div key={v.imei||v.id} style={{...C.card,padding:"14px 16px",marginBottom:10}}>
                       <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8,flexWrap:"wrap",gap:6}}>
                         <div>
-                          <div style={{fontWeight:700,fontSize:14,color:"#f1f5f9"}}>{v.nickname||v.name||v.licensePlate||"Truck"}</div>
-                          <div style={{fontSize:11,color:"#475569",marginTop:2}}>{v.model||""} {v.year||""}</div>
+                          <div style={{fontWeight:700,fontSize:14,color:"#f1f5f9"}}>{name}</div>
+                          <div style={{fontSize:11,color:"#475569",marginTop:2}}>{modelStr}</div>
                         </div>
                         <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
                           <span style={{fontSize:11,background:isMoving?"#052e16":"#1e2d3d",color:isMoving?"#4ade80":"#475569",borderRadius:6,padding:"3px 9px",fontWeight:600}}>
@@ -5487,7 +5492,7 @@ export default function App() {
                           <div style={{fontWeight:600,fontSize:13,color:loc.batteryVoltage>12?"#22c55e":"#f59e0b"}}>{loc.batteryVoltage}V</div>
                         </div>}
                       </div>
-                      {loc.address&&<div style={{fontSize:12,color:"#64748b",marginBottom:8}}>📍 {loc.address}</div>}
+                      {addr&&<div style={{fontSize:12,color:"#64748b",marginBottom:8}}>📍 {addr}</div>}
                       {lat&&lng&&(
                         <a href={`https://www.google.com/maps?q=${lat},${lng}`} target="_blank" rel="noreferrer"
                           style={{display:"block",textAlign:"center",background:"#0c2340",color:"#60a5fa",padding:"8px",borderRadius:8,fontSize:12,fontWeight:600,textDecoration:"none"}}>
