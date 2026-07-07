@@ -2267,14 +2267,18 @@ export default function App() {
   const [bouncieCode, setBouncieCode] = useState(()=>localStorage.getItem("bouncie_code")||"");
   const [bouncieVehicles, setBouncieVehicles] = useState([]);
   const [bouncieLoading, setBouncieLoading] = useState(false);
-  // When Bouncie redirects back here with ?code=..., capture it automatically
-  // and clean it out of the address bar so it's ready on the setup screen.
+  const [bouncieCaptured, setBouncieCaptured] = useState(null);
+  // When Bouncie redirects back here with ?code=..., capture it, store it, and
+  // show it on a dedicated screen (below) so it can be copied and pasted into
+  // the Trucks tab — this works even if setup happens in a different window
+  // (Safari vs. the home-screen app) since the system clipboard is shared.
   useEffect(()=>{
     try {
       const c = new URLSearchParams(window.location.search).get("code");
       if (c) {
         localStorage.setItem("bouncie_code", c);
         setBouncieCode(c);
+        setBouncieCaptured(c);
         window.history.replaceState({}, "", window.location.pathname);
       }
     } catch(e) {}
@@ -2573,6 +2577,19 @@ export default function App() {
       employees={employees}
       deliveries={deliveries}
     />
+  );
+
+  // Bouncie sent us back here with an authorization code — show it clearly with
+  // a Copy button so it can be pasted into the Trucks tab (works across windows).
+  if (bouncieCaptured) return (
+    <div style={{background:"#080d14",minHeight:"100vh",color:"#e2e8f0",fontFamily:"'DM Sans',sans-serif",maxWidth:640,margin:"0 auto",padding:24,display:"flex",flexDirection:"column",justifyContent:"center"}}>
+      <div style={{fontSize:40,textAlign:"center",marginBottom:8}}>✅</div>
+      <div style={{fontWeight:800,fontSize:20,textAlign:"center",color:"#4ade80",marginBottom:6}}>Bouncie Code Received</div>
+      <div style={{fontSize:13,color:"#94a3b8",textAlign:"center",marginBottom:18,lineHeight:1.6}}>Copy this code, then open the <b>Trucks</b> tab, paste it into the <b>Authorization Code</b> box (if it isn&#39;t already there), and tap <b>Connect Trucks</b>.</div>
+      <div style={{background:"#0f1923",border:"1px solid #1e2d3d",borderRadius:10,padding:"12px 14px",marginBottom:12,fontFamily:"monospace",fontSize:13,wordBreak:"break-all",color:"#e2e8f0"}}>{bouncieCaptured}</div>
+      <button className="btn" onClick={()=>{try{navigator.clipboard.writeText(bouncieCaptured);}catch(_){} alert("Copied! Now open the Trucks tab and paste it into the Authorization Code box, then tap Connect Trucks.");}} style={{background:"linear-gradient(135deg,#059669,#047857)",color:"#fff",padding:"12px",fontSize:14,fontWeight:700,marginBottom:10,border:"none"}}>📋 Copy Code</button>
+      <button className="btn" onClick={()=>{setBouncieCaptured(null);setTab("bouncie");}} style={{background:"#1e2d3d",color:"#94a3b8",padding:"11px",fontSize:13,fontWeight:600,border:"none"}}>Continue to app →</button>
+    </div>
   );
 
   // Global offline / pending-sync banner. Shows when there's no connection or
