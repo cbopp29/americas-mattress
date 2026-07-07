@@ -2262,9 +2262,23 @@ export default function App() {
   const [editingProb, setEditingProb] = useState(null);
   const [newProb, setNewProb] = useState({customer:"",ticket_number:"",eta:"",description:"",what_to_do:"",type:"customer",status:"Open"});
   const [summaryDate, setSummaryDate] = useState(new Date().toISOString().split("T")[0]);
-  const [bouncieKey, setBouncieKey] = useState(()=>localStorage.getItem("bouncie_key")||"");
+  const [bouncieId, setBouncieId] = useState(()=>localStorage.getItem("bouncie_id")||"amatt-app");
+  const [bouncieSecret, setBouncieSecret] = useState(()=>localStorage.getItem("bouncie_secret")||"");
+  const [bouncieCode, setBouncieCode] = useState(()=>localStorage.getItem("bouncie_code")||"");
   const [bouncieVehicles, setBouncieVehicles] = useState([]);
   const [bouncieLoading, setBouncieLoading] = useState(false);
+  // When Bouncie redirects back here with ?code=..., capture it automatically
+  // and clean it out of the address bar so it's ready on the setup screen.
+  useEffect(()=>{
+    try {
+      const c = new URLSearchParams(window.location.search).get("code");
+      if (c) {
+        localStorage.setItem("bouncie_code", c);
+        setBouncieCode(c);
+        window.history.replaceState({}, "", window.location.pathname);
+      }
+    } catch(e) {}
+  },[]);
   const [reportWeek, setReportWeek] = useState(()=>{const d=new Date();d.setDate(d.getDate()-d.getDay());return d.toISOString().split("T")[0];});
   const [offlineQueue, setOfflineQueue] = useState([]);
   const [pendingSync, setPendingSync] = useState(()=>outboxRead().length);
@@ -5374,34 +5388,42 @@ export default function App() {
             <div style={{fontWeight:700,fontSize:15,color:"#f1f5f9",marginBottom:4}}>🛰️ Bouncie Truck Tracking</div>
             <div style={{fontSize:12,color:"#475569",marginBottom:14}}>Connect your Bouncie GPS trackers to see live truck locations, odometer, speed and status.</div>
 
-            {/* API Key setup */}
+            {/* Bouncie OAuth setup */}
             <div style={{...C.card,padding:"14px 16px",marginBottom:14,borderColor:"#1e3a5f"}}>
-              <div style={{fontWeight:600,fontSize:13,color:"#60a5fa",marginBottom:8}}>🔑 Bouncie API Key</div>
-              <div style={{fontSize:12,color:"#475569",marginBottom:8}}>Get your API key from <a href="https://www.bouncie.app/developer" target="_blank" rel="noreferrer" style={{color:"#60a5fa"}}>bouncie.app/developer</a> — it's free with your subscription.</div>
-              <div style={{display:"flex",gap:8}}>
-                <input value={bouncieKey} onChange={e=>setBouncieKey(e.target.value)} placeholder="Your Bouncie API key..." style={{...C.inp,flex:1,fontFamily:"monospace"}} type="password"/>
-                <button className="btn" onClick={async()=>{
-                  if(!bouncieKey){alert("Please enter your Bouncie API key.");return;}
-                  localStorage.setItem("bouncie_key",bouncieKey);
-                  setBouncieLoading(true);
-                  try{
-                    const res=await fetch("/.netlify/functions/bouncie",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({key:bouncieKey})});
-                    if(!res.ok){alert("Invalid API key or connection failed. Check your key at bouncie.app/developer.");setBouncieLoading(false);return;}
-                    const data=await res.json();
-                    setBouncieVehicles(Array.isArray(data)?data:[]);
-                    if(data.length===0)alert("Connected! No vehicles found. Make sure your Bouncie devices are active.");
-                  }catch(err){alert("Connection failed: "+err.message);}
-                  setBouncieLoading(false);
-                }} style={{background:"linear-gradient(135deg,#2563eb,#1d4ed8)",color:"#fff",padding:"9px 16px",fontSize:12,fontWeight:600,flexShrink:0}}>
-                  {bouncieLoading?"⏳ Connecting...":"Connect"}
-                </button>
+              <div style={{fontWeight:600,fontSize:13,color:"#60a5fa",marginBottom:8}}>🔑 Bouncie Connection</div>
+              <div style={{fontSize:12,color:"#475569",marginBottom:10,lineHeight:1.6}}>
+                Create an app at <a href="https://www.bouncie.dev/apps" target="_blank" rel="noreferrer" style={{color:"#60a5fa"}}>bouncie.dev/apps</a>, set its <b>Redirect URI</b> to <span style={{fontFamily:"monospace",color:"#94a3b8"}}>https://americasmattress.netlify.app</span>, enter your Client ID &amp; Secret, then tap <b>Get Code</b> to authorize.
               </div>
+              <input value={bouncieId} onChange={e=>setBouncieId(e.target.value)} placeholder="Client ID (e.g. amatt-app)" style={{...C.inp,width:"100%",marginBottom:8,fontFamily:"monospace"}}/>
+              <input value={bouncieSecret} onChange={e=>setBouncieSecret(e.target.value)} placeholder="Client Secret" type="password" style={{...C.inp,width:"100%",marginBottom:8,fontFamily:"monospace"}}/>
+              <div style={{display:"flex",gap:8,marginBottom:10}}>
+                <input value={bouncieCode} onChange={e=>setBouncieCode(e.target.value)} placeholder="Authorization Code" style={{...C.inp,flex:1,fontFamily:"monospace"}}/>
+                <a className="btn" href={`https://auth.bouncie.com/dialog/authorize?response_type=code&client_id=${encodeURIComponent(bouncieId||"amatt-app")}&redirect_uri=https://americasmattress.netlify.app`} target="_blank" rel="noreferrer" style={{background:"#0a1628",color:"#4ade80",padding:"9px 14px",fontSize:12,fontWeight:600,flexShrink:0,border:"1px solid #22c55e",textDecoration:"none",display:"flex",alignItems:"center"}}>Get Code</a>
+              </div>
+              <button className="btn" onClick={async()=>{
+                if(!bouncieId||!bouncieSecret||!bouncieCode){alert("Enter your Client ID, Client Secret, and Authorization Code first — use \"Get Code\" to authorize.");return;}
+                localStorage.setItem("bouncie_id",bouncieId);
+                localStorage.setItem("bouncie_secret",bouncieSecret);
+                localStorage.setItem("bouncie_code",bouncieCode);
+                setBouncieLoading(true);
+                try{
+                  const res=await fetch("/.netlify/functions/bouncie",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({client_id:bouncieId,client_secret:bouncieSecret,code:bouncieCode})});
+                  const data=await res.json();
+                  if(!res.ok){alert("Bouncie connection failed: "+(data.detail||data.error||res.status));setBouncieLoading(false);return;}
+                  const list=Array.isArray(data)?data:[];
+                  setBouncieVehicles(list);
+                  if(list.length===0)alert("Connected! No vehicles found yet — make sure your Bouncie devices are active and shared with this app.");
+                }catch(err){alert("Connection failed: "+err.message);}
+                setBouncieLoading(false);
+              }} style={{width:"100%",background:"linear-gradient(135deg,#2563eb,#1d4ed8)",color:"#fff",padding:"10px 16px",fontSize:12,fontWeight:600}}>
+                {bouncieLoading?"⏳ Connecting...":"Connect Trucks"}
+              </button>
             </div>
 
-            {bouncieVehicles.length===0&&!bouncieLoading&&bouncieKey&&(
+            {bouncieVehicles.length===0&&!bouncieLoading&&bouncieSecret&&bouncieCode&&(
               <div style={{...C.card,padding:36,textAlign:"center",color:"#475569"}}>
                 <div style={{fontSize:32,marginBottom:8}}>🛰️</div>
-                <div>Click Connect to load your vehicles.</div>
+                <div>Tap "Connect Trucks" to load your vehicles.</div>
               </div>
             )}
 
@@ -5412,7 +5434,7 @@ export default function App() {
                   <button className="btn" onClick={async()=>{
                     setBouncieLoading(true);
                     try{
-                      const res=await fetch("/.netlify/functions/bouncie",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({key:bouncieKey})});
+                      const res=await fetch("/.netlify/functions/bouncie",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({client_id:bouncieId,client_secret:bouncieSecret,code:bouncieCode})});
                       const data=await res.json();
                       setBouncieVehicles(Array.isArray(data)?data:[]);
                     }catch(e){}
