@@ -23,9 +23,10 @@ exports.handler = async (event) => {
 
   try {
     const body = JSON.parse(event.body || "{}");
-    const clientId = process.env.BOUNCIE_CLIENT_ID || body.client_id;
-    const clientSecret = process.env.BOUNCIE_CLIENT_SECRET || body.client_secret;
-    const code = process.env.BOUNCIE_CODE || body.code;
+    // Trim to defend against whitespace/newlines pasted with copied credentials.
+    const clientId = (process.env.BOUNCIE_CLIENT_ID || body.client_id || "").trim();
+    const clientSecret = (process.env.BOUNCIE_CLIENT_SECRET || body.client_secret || "").trim();
+    const code = (process.env.BOUNCIE_CODE || body.code || "").trim();
     const redirectUri = process.env.BOUNCIE_REDIRECT_URI || body.redirect_uri || "https://americasmattress.netlify.app";
 
     if (!clientId || !clientSecret || !code) {
