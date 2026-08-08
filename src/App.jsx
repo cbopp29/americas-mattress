@@ -1,100 +1,10 @@
-// v2.1 - PDF parser fix, 2-route import, problems tab fix
+// v3.0 — mobile polish, route separation, timed tasks, DOT checklist, rich messages, Bouncie persist
 import React, { useState, useEffect, useRef } from "react";
 import { createClient } from "@supabase/supabase-js";
 
 const SUPABASE_URL = "https://nmlhuufmvvqvbyoebrwe.supabase.co";
 const SUPABASE_KEY = "sb_publishable_TRQCQpgnv0NDRt7eIE6t-Q_fEINezez";
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
-
-// ─── OFFLINE SUPPORT ─────────────────────────────────────────────────────────
-// Drivers lose cell service in some delivery areas. These helpers let the app
-// (1) show the last-loaded data with no signal and (2) queue writes (status
-// changes, notes, problems, signatures) to a local outbox that replays when the
-// connection returns — replacing the paper fallback.
-
-// localStorage cache so the driver still SEES their stops offline.
-function cacheSet(key, val) {
-  try { localStorage.setItem("am_cache_" + key, JSON.stringify(val)); } catch (e) {}
-}
-function cacheGet(key, fallback) {
-  try { const v = localStorage.getItem("am_cache_" + key); return v ? JSON.parse(v) : fallback; }
-  catch (e) { return fallback; }
-}
-
-// Outbox: a list of {id, table, op, payload, match} write operations that
-// failed (offline) and must be retried. Persisted so a refresh doesn't lose them.
-const OUTBOX_KEY = "am_outbox";
-function outboxRead() {
-  try { return JSON.parse(localStorage.getItem(OUTBOX_KEY) || "[]"); } catch (e) { return []; }
-}
-function outboxWrite(list) {
-  try { localStorage.setItem(OUTBOX_KEY, JSON.stringify(list)); } catch (e) {}
-}
-function outboxAdd(entry) {
-  const list = outboxRead();
-  list.push({ id: `ob-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, ts: Date.now(), ...entry });
-  outboxWrite(list);
-  return list.length;
-}
-
-// Run a single supabase write described by an outbox entry.
-async function runWrite({ table, op, payload, match }) {
-  const t = sb.from(table);
-  if (op === "insert") return await t.insert(payload);
-  if (op === "update") return await t.update(payload).eq(match.col, match.val);
-  if (op === "delete") return await t.delete().eq(match.col, match.val);
-  if (op === "upsert") return await t.upsert(payload);
-  throw new Error("unknown op " + op);
-}
-
-// Try a write now; if it fails (offline/network), queue it. Returns
-// { queued: boolean, pending: number }. Optimistic UI updates happen at the
-// call site regardless, so the driver sees the change immediately either way.
-async function tryWrite(entry) {
-  if (typeof navigator !== "undefined" && navigator.onLine === false) {
-    const pending = outboxAdd(entry);
-    return { queued: true, pending };
-  }
-  try {
-    const res = await runWrite(entry);
-    if (res && res.error) throw res.error;
-    return { queued: false, pending: outboxRead().length };
-  } catch (e) {
-    const pending = outboxAdd(entry);
-    return { queued: true, pending };
-  }
-}
-
-// Replay everything in the outbox, oldest first. Keeps any that still fail —
-// EXCEPT an entry that keeps failing while we're online is a permanent
-// (bad-data / rejected) write, not a signal problem. Drop it after a few tries
-// so one un-syncable write can't wedge the queue forever (which previously
-// showed a stuck "N waiting to sync" and drove a constant-refresh loop).
-const OUTBOX_MAX_TRIES = 5;
-async function flushOutbox() {
-  let list = outboxRead();
-  if (!list.length) return 0;
-  const remaining = [];
-  let sent = 0;
-  for (const entry of list) {
-    try {
-      const res = await runWrite(entry);
-      if (res && res.error) throw res.error;
-      sent++;
-    } catch (e) {
-      const tries = (entry.tries || 0) + 1;
-      const online = typeof navigator === "undefined" || navigator.onLine !== false;
-      if (online && tries >= OUTBOX_MAX_TRIES) {
-        // Permanent failure — log and discard so the queue can drain.
-        try { console.warn("Dropping un-syncable outbox entry after", tries, "tries:", entry, e); } catch (_) {}
-      } else {
-        remaining.push({ ...entry, tries });
-      }
-    }
-  }
-  outboxWrite(remaining);
-  return sent;
-}
 
 const ALL_DAYS = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
 const ROLES = ["Driver","Helper","Driver/Helper","Coordinator","Loader","Manager","Warehouse","Other"];
@@ -155,18 +65,15 @@ const ESCALATION = {
   product:  ["Driver", "Conner (Manager)", "Vendor"],
 };
 
-// PINs are intentionally NOT stored here — they must never ship in the browser
-// bundle. This list only seeds an empty database with names/roles; PINs are set
-// by the manager in the Team tab and verified server-side (verify-pin function).
 const INITIAL_EMPLOYEES = [
-  { id:0, name:"Conner",        role:"Manager",       avatar:"CO", lang:"en", workdays:["Mon","Tue","Wed","Thu","Fri","Sat"], is_manager:true  },
-  { id:1, name:"Frank Solís",   role:"Driver",        avatar:"FS", lang:"en", workdays:["Mon","Tue","Wed","Fri"],             is_manager:false },
-  { id:2, name:"Max Applegate", role:"Driver",        avatar:"MA", lang:"en", workdays:["Mon","Tue","Wed","Fri"],             is_manager:false },
-  { id:3, name:"Chris Mullis",  role:"Driver",        avatar:"CM", lang:"en", workdays:["Mon","Tue","Wed","Fri"],             is_manager:false },
-  { id:4, name:"Nate",          role:"Driver/Helper", avatar:"NA", lang:"en", workdays:["Fri","Sat"],                        is_manager:false },
-  { id:5, name:"Ricky Torres",  role:"Helper",        avatar:"RT", lang:"es", workdays:["Mon","Tue","Wed","Fri"],             is_manager:false },
-  { id:6, name:"Aariq Curtis",  role:"Helper",        avatar:"AC", lang:"en", workdays:["Mon","Tue","Wed","Fri"],             is_manager:false },
-  { id:7, name:"Alberto",       role:"Helper",        avatar:"AL", lang:"es", workdays:["Fri","Sat"],                        is_manager:false },
+  { id:0, name:"Conner",        role:"Manager",       avatar:"CO", lang:"en", workdays:["Mon","Tue","Wed","Thu","Fri","Sat"], is_manager:true,  pin:"0000" },
+  { id:1, name:"Frank Solís",   role:"Driver",        avatar:"FS", lang:"en", workdays:["Mon","Tue","Wed","Fri"],             is_manager:false, pin:"1111" },
+  { id:2, name:"Max Applegate", role:"Driver",        avatar:"MA", lang:"en", workdays:["Mon","Tue","Wed","Fri"],             is_manager:false, pin:"2222" },
+  { id:3, name:"Chris Mullis",  role:"Driver",        avatar:"CM", lang:"en", workdays:["Mon","Tue","Wed","Fri"],             is_manager:false, pin:"3333" },
+  { id:4, name:"Nate",          role:"Driver/Helper", avatar:"NA", lang:"en", workdays:["Fri","Sat"],                        is_manager:false, pin:"4444" },
+  { id:5, name:"Ricky Torres",  role:"Helper",        avatar:"RT", lang:"es", workdays:["Mon","Tue","Wed","Fri"],             is_manager:false, pin:"5555" },
+  { id:6, name:"Aariq Curtis",  role:"Helper",        avatar:"AC", lang:"en", workdays:["Mon","Tue","Wed","Fri"],             is_manager:false, pin:"6666" },
+  { id:7, name:"Alberto",       role:"Helper",        avatar:"AL", lang:"es", workdays:["Fri","Sat"],                        is_manager:false, pin:"7777" },
 ];
 
 const BASE_TASKS_EN = [
@@ -256,34 +163,63 @@ const GLOBAL_STYLES = `
   @media(max-width:400px){
     .mgr-nav button { padding:6px 4px!important; font-size:9px!important }
   }
+  /* ── Mobile Polish v2 ── */
+  @media(max-width:640px){
+    /* Horizontal scroll nav without visible scrollbar */
+    .navscroll { overflow-x:auto!important; -webkit-overflow-scrolling:touch; scrollbar-width:none }
+    .navscroll::-webkit-scrollbar { display:none }
+    /* Wide tables scroll instead of breaking layout */
+    table { display:block; overflow-x:auto; -webkit-overflow-scrolling:touch }
+    /* Every button gets a real tap target */
+    button { min-height:38px; touch-action:manipulation }
+    /* Modals fit the screen */
+    [style*="position:fixed"] > div { max-height:92vh!important; overflow-y:auto!important }
+    /* Images never overflow */
+    img { max-width:100% }
+    /* Keep 2-up stat cards readable rather than 1 giant column */
+    .stats-2 { grid-template-columns:repeat(2,1fr)!important }
+  }
+  /* Notch / home-indicator safe area */
+  body { padding-bottom:env(safe-area-inset-bottom) }
+  * { -webkit-tap-highlight-color:transparent }
+  /* Smooth momentum scrolling everywhere */
+  html { -webkit-text-size-adjust:100% }
 `;
+
+// ─── RICH MESSAGE TEXT (clickable links, phones, @mentions) ──────────────────
+function MessageText({ text, size=14 }) {
+  if (!text) return null;
+  const parts = String(text).split(/(https?:\/\/[^\s]+|www\.[^\s]+|\b\d{3}[-.\s]?\d{3}[-.\s]?\d{4}\b|@\w+)/g);
+  return (
+    <div style={{fontSize:size,color:"#e2e8f0",lineHeight:1.55,wordBreak:"break-word",whiteSpace:"pre-wrap"}}>
+      {parts.map((p,i)=>{
+        if(!p) return null;
+        if(/^https?:\/\//.test(p)||/^www\./.test(p)){
+          const href = p.startsWith("http")?p:"https://"+p;
+          return <a key={i} href={href} target="_blank" rel="noreferrer" style={{color:"#60a5fa",textDecoration:"underline"}}>{p}</a>;
+        }
+        if(/^\d{3}[-.\s]?\d{3}[-.\s]?\d{4}$/.test(p)){
+          return <a key={i} href={"tel:"+p.replace(/\D/g,"")} style={{color:"#4ade80",textDecoration:"underline"}}>{p}</a>;
+        }
+        if(/^@\w+$/.test(p)){
+          return <span key={i} style={{color:"#a78bfa",background:"#1e1038",borderRadius:4,padding:"0 4px",fontWeight:600}}>{p}</span>;
+        }
+        return <span key={i}>{p}</span>;
+      })}
+    </div>
+  );
+}
 
 // ─── LOGIN ────────────────────────────────────────────────────────────────────
 function LoginScreen({ employees, onLogin }) {
   const [sel, setSel] = useState(null);
   const [pin, setPin] = useState("");
   const [err, setErr] = useState("");
-  const [busy, setBusy] = useState(false);
-  const go = async () => {
+  const go = () => {
     const emp = employees.find(e=>e.id===sel);
     if (!emp) { setErr("Please select your name."); return; }
-    setBusy(true); setErr("");
-    try {
-      // PIN is checked on the server so the browser never holds the real PINs.
-      const res = await fetch("/.netlify/functions/verify-pin", {
-        method:"POST", headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({ empId: emp.id, pin }),
-      });
-      const data = await res.json();
-      if (data && data.ok) { onLogin(data.employee || emp); }
-      else { setErr("Wrong PIN. Try again."); setPin(""); }
-    } catch(e) {
-      // If the server can't be reached (offline), fall back to any locally
-      // cached PIN so drivers aren't locked out in a dead zone.
-      if (emp.pin && pin === emp.pin) { onLogin(emp); }
-      else { setErr("Can't reach server. Check your connection."); }
-    }
-    setBusy(false);
+    if (emp.pin && pin !== emp.pin) { setErr("Wrong PIN. Try again."); setPin(""); return; }
+    onLogin(emp);
   };
   return (
     <div style={{background:"#080d14",minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",padding:20,fontFamily:"'DM Sans',sans-serif"}}>
@@ -317,8 +253,8 @@ function LoginScreen({ employees, onLogin }) {
             </div>
           )}
           {err&&<div style={{color:"#f87171",fontSize:12,marginBottom:10}}>{err}</div>}
-          <button className="btn" onClick={go} disabled={busy} style={{width:"100%",background:"linear-gradient(135deg,#2563eb,#1d4ed8)",color:"#fff",padding:14,fontSize:15,fontWeight:700,borderRadius:10,opacity:busy?0.7:1}}>
-            {busy?"Checking…":"Sign In →"}
+          <button className="btn" onClick={go} style={{width:"100%",background:"linear-gradient(135deg,#2563eb,#1d4ed8)",color:"#fff",padding:14,fontSize:15,fontWeight:700,borderRadius:10}}>
+            Sign In →
           </button>
         </div>
         <div style={{textAlign:"center",marginTop:14,fontSize:10,color:"#1e2d3d"}}>
@@ -330,7 +266,7 @@ function LoginScreen({ employees, onLogin }) {
 }
 
 // ─── DRIVER VIEW ──────────────────────────────────────────────────────────────
-function DriverView({ user, deliveries, customTasks, baseTasks, messages, problems, employees, onStatusUpdate, onLogout, onSendMessage, onLogProblem, onSaveDelivery, onSaveSignature, smsTemplates, trainingFiles=[], completions=[], setCompletions }) {
+function DriverView({ user, deliveries, customTasks, baseTasks, messages, problems, employees, onStatusUpdate, onLogout, onSendMessage, onLogProblem, onSaveDelivery, onSaveSignature, smsTemplates, trainingFiles=[], schedulePhoto="", completions=[], setCompletions }) {
   const [tab, setTab] = useState("deliveries");
   const [openDel, setOpenDel] = useState(null);
   const [schedDay, setSchedDay] = useState(null);
@@ -347,29 +283,37 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
   const [liabilityType, setLiabilityType] = useState('headboard');
   const [warrantyDel, setWarrantyDel] = useState(null);
   const [trackingActive, setTrackingActive] = useState(false);
-  const watchIdRef = useRef(null);
-  const wakeLockRef = useRef(null);
-  const lastWriteRef = useRef(0);
+  const [trackingInterval, setTrackingInterval] = useState(null);
   const [deliveryDetails, setDeliveryDetails] = useState({});
-  const [smsReplies, setSmsReplies] = useState([]);
-
-  // Load customer SMS replies so drivers can see what customers texted back.
-  useEffect(() => {
-    let active = true;
-    const load = async () => {
-      const r = await sb.from("sms_replies").select("*").order("id",{ascending:false}).limit(200);
-      if (active && r.data) setSmsReplies(r.data);
-    };
-    load();
-    const iv = setInterval(load, 30000);
-    return () => { active = false; clearInterval(iv); };
-  }, []);
   const isEs = user.lang === "es";
   const today = todayDayName();
   const isDriver = user.role.toLowerCase().includes("driver");
   const todayISOd = new Date().toISOString().split("T")[0];
   const [showPastDels, setShowPastDels] = useState(false);
   const [driverDateFilter, setDriverDateFilter] = useState(new Date().toISOString().split("T")[0]);
+  const [taskState, setTaskState] = useState(()=>{
+    try {
+      const raw = localStorage.getItem("task_state_"+user.id+"_"+new Date().toISOString().split("T")[0]);
+      return raw?JSON.parse(raw):{};
+    } catch { return {}; }
+  });
+  const [taskNow, setTaskNow] = useState(Date.now());
+  useEffect(()=>{
+    const anyRunning = Object.values(taskState).some(t=>t.startedAt&&!t.done);
+    if(!anyRunning) return;
+    const iv = setInterval(()=>setTaskNow(Date.now()), 1000);
+    return ()=>clearInterval(iv);
+  },[taskState]);
+  const persistTasks = (next)=>{
+    setTaskState(next);
+    try { localStorage.setItem("task_state_"+user.id+"_"+new Date().toISOString().split("T")[0], JSON.stringify(next)); } catch {}
+  };
+  const startTask = (tid)=>persistTasks({...taskState,[tid]:{...(taskState[tid]||{}),startedAt:Date.now()}});
+  const toggleTask = (tid)=>{
+    const cur = taskState[tid]||{};
+    if(cur.done) { persistTasks({...taskState,[tid]:{...cur,done:false,doneAt:null}}); }
+    else { persistTasks({...taskState,[tid]:{...cur,startedAt:cur.startedAt||Date.now(),done:true,doneAt:Date.now()}}); }
+  };
   const [dRv, setDRv] = useState({received_date:new Date().toISOString().split("T")[0],vendor:"",received_by:user.name,quantity:1,notes:"",manufacturer:"",items:"",bol_photo_url:""});
   const [dRvUploading, setDRvUploading] = useState(false);
   const [dRvSaved, setDRvSaved] = useState(false);
@@ -378,16 +322,22 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
   const [dReceiptSaved, setDReceiptSaved] = useState(false);
 
   const activeDate = showPastDels && driverDateFilter ? driverDateFilter : todayISOd;
+  const byRouteThenStop = (a,b)=>{
+    const ra=(a.route_number||1), rb=(b.route_number||1);
+    if(ra!==rb) return ra-rb;
+    return (a.stop_order||0)-(b.stop_order||0);
+  };
   const myDeliveries = [...deliveries.filter(d=>{
     const isMine = d.assigned_to===user.id||d.helper_id===user.id;
     if(!isMine) return false;
     return (d.delivery_date||todayISOd)===activeDate;
-  })].sort((a,b)=>(a.stop_order||0)-(b.stop_order||0));
+  })].sort(byRouteThenStop);
+  const myRoutes = [...new Set(myDeliveries.map(d=>d.route_number||1))].sort();
   const otherDeliveries = [...deliveries.filter(d=>{
     const isMine = d.assigned_to===user.id||d.helper_id===user.id;
     if(isMine) return false;
     return (d.delivery_date||todayISOd)===activeDate;
-  })].sort((a,b)=>(a.stop_order||0)-(b.stop_order||0));
+  })].sort(byRouteThenStop);
 
   const myTasks = [
     ...(isEs ? baseTasks.es : baseTasks.en).filter(t=>t.days.includes(today)||t.days.includes("All")),
@@ -398,7 +348,7 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
   const sendMsg = async (deliveryId) => {
     if (!msgInput.trim()) return;
     const msg = { id:Date.now(), sender_id:user.id, sender_name:user.name, text:msgInput.trim(), delivery_id:deliveryId||null, photo_url:null, created_at:new Date().toISOString() };
-    await tryWrite({ table:"messages", op:"insert", payload:msg });
+    try { await sb.from("messages").insert(msg); } catch(e) {}
     onSendMessage(msg);
     setMsgInput("");
   };
@@ -440,86 +390,33 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
   const logProb = async () => {
     if (!probInput.description.trim()) return;
     const p = { id:Date.now(), emp_name:user.name, emp_id:user.id, customer:probInput.customer||"", ticket_number:probInput.ticket_number||"", description:probInput.description, type:probInput.type, escalation_step:0, time:new Date().toLocaleDateString("en-US"), resolved:false, status:"Open" };
-    await tryWrite({ table:"problems", op:"insert", payload:p });
+    try { await sb.from("problems").insert(p); } catch(e) {}
     onLogProblem(p);
     setProbInput({ description:"", type:"customer", customer:"", ticket_number:"" });
   };
 
-  // Live GPS tracking.
-  // Uses a continuous watchPosition subscription + a screen Wake Lock so that
-  // briefly switching apps (change a song, take a call) and coming back resumes
-  // immediately instead of silently dropping. NOTE: phone browsers (especially
-  // iOS Safari) fully suspend a web page once the app is backgrounded or the
-  // screen locks, so guaranteed always-on background GPS requires a native app —
-  // for continuous tracking the driver should keep this screen open.
-  const pushLocation = (pos, force) => {
-    const now = Date.now();
-    if (!force && now - lastWriteRef.current < 12000) return; // throttle DB writes
-    lastWriteRef.current = now;
-    const loc = { lat: pos.coords.latitude, lng: pos.coords.longitude, ts: now };
-    sb.from("employees").update({ last_location: loc }).eq("id", user.id).then(()=>{});
-  };
-
-  const acquireWakeLock = async () => {
-    try {
-      if ("wakeLock" in navigator && !wakeLockRef.current) {
-        wakeLockRef.current = await navigator.wakeLock.request("screen");
-        wakeLockRef.current.addEventListener("release", () => { wakeLockRef.current = null; });
-      }
-    } catch (e) { /* wake lock denied (e.g. low battery) — tracking still works */ }
-  };
-
-  const beginWatch = async () => {
+  // Live GPS tracking
+  const startTracking = () => {
     if (!navigator.geolocation) return;
-    await acquireWakeLock();
-    navigator.geolocation.getCurrentPosition(p => pushLocation(p, true), null, { enableHighAccuracy: true });
-    if (watchIdRef.current == null) {
-      watchIdRef.current = navigator.geolocation.watchPosition(
-        p => pushLocation(p, false),
-        err => console.warn("GPS error:", err && err.message),
-        { enableHighAccuracy: true, maximumAge: 5000, timeout: 20000 }
-      );
-    }
-  };
-
-  const startTracking = async () => {
-    if (!navigator.geolocation) { alert(isEs ? "Este dispositivo no soporta ubicación." : "Location is not supported on this device."); return; }
     setTrackingActive(true);
-    try { localStorage.setItem("am_tracking", "1"); } catch (e) {}
-    await beginWatch();
+    const interval = setInterval(() => {
+      navigator.geolocation.getCurrentPosition(pos => {
+        const loc = { lat: pos.coords.latitude, lng: pos.coords.longitude, ts: Date.now() };
+        sb.from("employees").update({ last_location: loc }).eq("id", user.id).then(()=>{});
+      }, null, { enableHighAccuracy: true });
+    }, 15000);
+    setTrackingInterval(interval);
   };
 
   const stopTracking = () => {
-    if (watchIdRef.current != null) { navigator.geolocation.clearWatch(watchIdRef.current); watchIdRef.current = null; }
-    if (wakeLockRef.current) { try { wakeLockRef.current.release(); } catch (e) {} wakeLockRef.current = null; }
+    if (trackingInterval) clearInterval(trackingInterval);
+    setTrackingInterval(null);
     setTrackingActive(false);
-    try { localStorage.removeItem("am_tracking"); } catch (e) {}
   };
-
-  // Auto-resume tracking after a reload, and re-acquire location + wake lock the
-  // moment the driver returns to the app (wake locks are dropped on tab hide).
-  useEffect(() => {
-    let resumed = false;
-    try { resumed = localStorage.getItem("am_tracking") === "1"; } catch (e) {}
-    if (resumed) { setTrackingActive(true); beginWatch(); }
-    const onVisible = () => {
-      if (document.visibilityState === "visible") {
-        let on = false;
-        try { on = localStorage.getItem("am_tracking") === "1"; } catch (e) {}
-        if (on) beginWatch();
-      }
-    };
-    document.addEventListener("visibilitychange", onVisible);
-    return () => {
-      document.removeEventListener("visibilitychange", onVisible);
-      if (watchIdRef.current != null) { navigator.geolocation.clearWatch(watchIdRef.current); watchIdRef.current = null; }
-      if (wakeLockRef.current) { try { wakeLockRef.current.release(); } catch (e) {} wakeLockRef.current = null; }
-    };
-  }, []);
 
   const updateDeliveryDetail = async (delId, field, value) => {
     setDeliveryDetails(prev => ({ ...prev, [delId]: { ...(prev[delId]||{}), [field]: value } }));
-    await tryWrite({ table:"deliveries", op:"update", payload:{ [field]: value }, match:{col:"id", val:delId} });
+    await sb.from("deliveries").update({ [field]: value }).eq("id", delId);
   };
 
   const cardStyle = {background:"#0f1923",border:"1px solid #1e2d3d",borderRadius:12};
@@ -530,8 +427,6 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
     const isOpen=openDel===d.id;
     const dMsgs=messages.filter(m=>m.delivery_id===d.id);
     const helperEmp=employees.find(e=>e.id===d.helper_id);
-    const delPhone=(d.phone||"").replace(/\D/g,"");
-    const dReplies=delPhone.length>9?smsReplies.filter(r=>(r.from_number||"").replace(/\D/g,"").endsWith(delPhone.slice(-10))):[];
     return (
       <div key={d.id} style={{...cardStyle,marginBottom:12,overflow:"hidden",opacity:isMine?1:0.8}}>
         <div style={{padding:"14px 16px",cursor:"pointer"}} onClick={()=>setOpenDel(isOpen?null:d.id)}>
@@ -719,17 +614,6 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
                 </div>
               )}
             </div>
-            {dReplies.length>0&&(
-              <div style={{padding:"12px 16px",borderBottom:"1px solid #131f2e"}}>
-                <div style={{fontSize:11,color:"#22c55e",textTransform:"uppercase",letterSpacing:".07em",marginBottom:8}}>💬 {isEs?"Respuestas del Cliente":"Customer Replies"}</div>
-                {dReplies.map(r=>(
-                  <div key={r.id} style={{background:"#0a1628",borderRadius:7,padding:"8px 11px",marginBottom:6,borderLeft:"3px solid #22c55e"}}>
-                    <div style={{fontSize:10,color:"#475569",marginBottom:2}}>{r.from_number} · {new Date(r.received_at||r.created_at||Date.now()).toLocaleString()}</div>
-                    <div style={{fontSize:13,color:"#e2e8f0"}}>{r.body}</div>
-                  </div>
-                ))}
-              </div>
-            )}
             <div style={{padding:"12px 16px",borderBottom:"1px solid #131f2e"}}>
               <div style={{fontSize:11,color:"#475569",textTransform:"uppercase",letterSpacing:".07em",marginBottom:8}}>{isEs?"Subir Foto":"Upload Photo"}</div>
               <input ref={fileRef} type="file" accept="image/*" capture="environment" onChange={e=>handlePhoto(e,d.id)} style={{display:"none"}}/>
@@ -746,7 +630,7 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
               {dMsgs.filter(m=>!m.photo_url).map(m=>(
                 <div key={m.id} style={{background:"#0a1628",borderRadius:7,padding:"8px 11px",marginBottom:6}}>
                   <div style={{fontSize:10,color:"#475569",marginBottom:2}}>{m.sender_name} · {new Date(m.created_at).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}</div>
-                  <div style={{fontSize:13,color:"#e2e8f0"}}>{m.text}</div>
+                  <MessageText text={m.text} size={13}/>
                 </div>
               ))}
               <div style={{display:"flex",gap:8,marginTop:6}}>
@@ -808,7 +692,7 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
                           const newChecks={...checks,[q.key]:v};
                           setDeliveryDetails(prev=>({...prev,[d.id]:{...(prev[d.id]||{}),checklist:newChecks}}));
                           setDeliveries(prev=>prev.map(x=>x.id===d.id?{...x,checklist:newChecks}:x));
-                          await tryWrite({ table:"deliveries", op:"update", payload:{checklist:newChecks}, match:{col:"id", val:d.id} });
+                          await sb.from("deliveries").update({checklist:newChecks}).eq("id",d.id);
                         }} style={{padding:"7px 12px",fontSize:12,fontWeight:600,background:checks[q.key]===v?(v==="Yes"?"#052e16":v==="No"?"#2d0a0a":"#1e2d3d"):"#0a1628",color:checks[q.key]===v?(v==="Yes"?"#4ade80":v==="No"?"#f87171":"#94a3b8"):"#475569",border:`2px solid ${checks[q.key]===v?(v==="Yes"?"#22c55e":v==="No"?"#ef4444":"#334155"):"#1e2d3d"}`}}>
                           {v}
                         </button>
@@ -902,7 +786,6 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
           {key:"deliveries",label:isEs?"Entregas":"Deliveries",icon:"🚛"},
           {key:"tasks",label:isEs?"Tareas":"Tasks",icon:"✅"},
           {key:"messages",label:isEs?"Mensajes":"Messages",icon:"💬"},
-          {key:"replies",label:isEs?"Respuestas":"Replies",icon:"📩"},
           {key:"problems",label:isEs?"Problemas":"Problems",icon:"⚠️"},
           {key:"dashboard",label:isEs?"Inicio":"Dashboard",icon:"⬛"},
           {key:"inventory",label:isEs?"Inventario":"Inventory",icon:"📦"},
@@ -987,7 +870,18 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
                 {showPastDels&&<button className="btn" onClick={()=>{setShowPastDels(false);setDriverDateFilter(todayISOd);}} style={{background:"#1e2d3d",color:"#60a5fa",padding:"3px 8px",fontSize:10}}>Today</button>}
               </div>
             </div>
-            {myDeliveries.map(d=>renderDeliveryCard(d,true))}
+            {myRoutes.length>1 ? myRoutes.map(rn=>{
+              const rDels = myDeliveries.filter(d=>(d.route_number||1)===rn);
+              return (
+                <div key={rn} style={{marginBottom:14}}>
+                  <div style={{display:"flex",alignItems:"center",gap:8,padding:"7px 12px",background:rn===1?"#0c2340":"#1e1038",borderRadius:8,marginBottom:8,border:`1px solid ${rn===1?"#1e3a5f":"#4f46e5"}`}}>
+                    <span style={{fontSize:13,fontWeight:800,color:rn===1?"#60a5fa":"#a78bfa"}}>🚛 ROUTE {rn}</span>
+                    <span style={{fontSize:11,color:"#64748b"}}>{rDels.length} {isEs?"paradas":"stops"}</span>
+                  </div>
+                  {rDels.map(d=>renderDeliveryCard(d,true))}
+                </div>
+              );
+            }) : myDeliveries.map(d=>renderDeliveryCard(d,true))}
             {otherDeliveries.length>0&&(
               <div style={{marginTop:16}}>
                 <div style={{fontSize:11,color:"#475569",fontWeight:700,letterSpacing:".07em",textTransform:"uppercase",marginBottom:8}}>👥 {isEs?"Entregas del Equipo":"Team Deliveries"} ({otherDeliveries.length})</div>
@@ -1003,8 +897,29 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
           </div>
         )}
 
-        {tab==="tasks"&&(
+        {tab==="tasks"&&(()=>{
+          const doneCount = Object.values(taskState).filter(t=>t.done).length;
+          const totalTasks = myTasks.length;
+          const pct = totalTasks?Math.round(doneCount/totalTasks*100):0;
+          const fmtDur = (secs)=>{
+            if(!secs||secs<0) return "";
+            const m=Math.floor(secs/60), s=secs%60;
+            return m>0?`${m}m ${s}s`:`${s}s`;
+          };
+          return (
           <div>
+            {/* Progress header */}
+            <div style={{...cardStyle,padding:"13px 16px",marginBottom:12}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+                <div style={{fontWeight:700,fontSize:14,color:"#f1f5f9"}}>✅ {isEs?"Tareas de Hoy":"Today\'s Tasks"}</div>
+                <div style={{fontSize:13,fontWeight:700,color:pct===100?"#4ade80":"#60a5fa"}}>{doneCount}/{totalTasks}</div>
+              </div>
+              <div style={{height:8,background:"#0a1628",borderRadius:99,overflow:"hidden"}}>
+                <div style={{height:"100%",width:pct+"%",background:pct===100?"linear-gradient(90deg,#059669,#22c55e)":"linear-gradient(90deg,#2563eb,#60a5fa)",transition:"width .3s"}}/>
+              </div>
+              {pct===100&&<div style={{textAlign:"center",color:"#4ade80",fontSize:13,fontWeight:700,marginTop:8}}>🎉 {isEs?"¡Todo listo!":"All tasks complete!"}</div>}
+            </div>
+
             {cats.length===0?(
               <div style={{...cardStyle,padding:40,textAlign:"center",color:"#475569"}}>
                 <div style={{fontSize:36,marginBottom:8}}>✅</div>
@@ -1014,17 +929,44 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
               cats.map(cat=>(
                 <div key={cat} style={{...cardStyle,marginBottom:12,overflow:"hidden"}}>
                   <div style={{padding:"9px 16px",background:"#0a1628",fontSize:10,fontWeight:700,letterSpacing:".1em",color:"#475569",textTransform:"uppercase"}}>{cat}</div>
-                  {myTasks.filter(t=>t.category===cat).map((task,i)=>(
-                    <div key={task.id||i} style={{display:"flex",alignItems:"flex-start",gap:12,padding:"13px 16px",borderTop:"1px solid #131f2e"}}>
-                      <div style={{width:8,height:8,borderRadius:"50%",background:task.priority==="high"?"#ef4444":task.priority==="med"?"#f59e0b":"#475569",marginTop:6,flexShrink:0}}/>
-                      <div style={{fontSize:14,color:"#e2e8f0",lineHeight:1.5}}>{task.text}</div>
+                  {myTasks.filter(t=>t.category===cat).map((task,i)=>{
+                    const tid = String(task.id||`${cat}-${i}`);
+                    const st = taskState[tid]||{};
+                    const running = st.startedAt && !st.done;
+                    const elapsed = running ? Math.floor((taskNow - st.startedAt)/1000)
+                      : (st.done && st.startedAt && st.doneAt ? Math.floor((st.doneAt - st.startedAt)/1000) : 0);
+                    return (
+                    <div key={tid} style={{padding:"12px 16px",borderTop:"1px solid #131f2e",background:st.done?"#071a10":"transparent"}}>
+                      <div style={{display:"flex",alignItems:"flex-start",gap:12}}>
+                        <button onClick={()=>toggleTask(tid)} style={{
+                          width:26,height:26,borderRadius:7,flexShrink:0,marginTop:1,cursor:"pointer",
+                          border:`2px solid ${st.done?"#22c55e":"#334155"}`,
+                          background:st.done?"#22c55e":"transparent",
+                          color:"#fff",fontSize:15,fontWeight:800,lineHeight:1,display:"flex",alignItems:"center",justifyContent:"center"
+                        }}>{st.done?"✓":""}</button>
+                        <div style={{flex:1}}>
+                          <div style={{fontSize:14,color:st.done?"#4ade80":"#e2e8f0",lineHeight:1.45,textDecoration:st.done?"line-through":"none"}}>{task.text}</div>
+                          <div style={{display:"flex",gap:8,alignItems:"center",marginTop:5,flexWrap:"wrap"}}>
+                            <span style={{width:7,height:7,borderRadius:"50%",background:task.priority==="high"?"#ef4444":task.priority==="med"?"#f59e0b":"#475569"}}/>
+                            {running&&<span style={{fontSize:11,color:"#f59e0b",fontFamily:"monospace",fontWeight:700}}>⏱ {fmtDur(elapsed)}</span>}
+                            {st.done&&elapsed>0&&<span style={{fontSize:11,color:"#4ade80",fontFamily:"monospace"}}>✓ {fmtDur(elapsed)}</span>}
+                            {!st.startedAt&&!st.done&&(
+                              <button onClick={()=>startTask(tid)} style={{background:"#1e2d3d",color:"#60a5fa",border:"none",borderRadius:5,padding:"3px 9px",fontSize:11,cursor:"pointer",fontWeight:600}}>
+                                ▶ {isEs?"Iniciar":"Start"}
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               ))
             )}
           </div>
-        )}
+          );
+        })()}
 
         {tab==="messages"&&(
           <div style={{...cardStyle,padding:14}}>
@@ -1037,7 +979,7 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
                 <div key={m.id} style={{background:m.sender_id===user.id?"#0c1f38":"#0a1628",borderRadius:8,padding:"10px 13px",maxWidth:"85%",alignSelf:m.sender_id===user.id?"flex-end":"flex-start"}}>
                   <div style={{fontSize:10,color:"#475569",marginBottom:3}}>{m.sender_name} · {new Date(m.created_at).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}</div>
                   {m.photo_url&&<img src={m.photo_url} alt="" style={{width:"100%",borderRadius:6,marginBottom:4,maxHeight:150,objectFit:"cover"}}/>}
-                  <div style={{fontSize:14,color:"#e2e8f0"}}>{m.text}</div>
+                  <MessageText text={m.text}/>
                 </div>
               ))}
             </div>
@@ -1046,51 +988,6 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
                 placeholder={isEs?"Mensaje al equipo...":"Message the team..."} style={inputStyle}/>
               <button className="btn" onClick={()=>sendMsg(null)} style={{background:"linear-gradient(135deg,#2563eb,#1d4ed8)",color:"#fff",padding:"10px 16px",fontSize:14,fontWeight:600,flexShrink:0}}>Send</button>
             </div>
-          </div>
-        )}
-
-        {tab==="replies"&&(
-          <div>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12,gap:8}}>
-              <div>
-                <div style={{fontWeight:700,fontSize:15,color:"#f1f5f9"}}>📩 {isEs?"Respuestas de Clientes":"Customer Replies"}</div>
-                <div style={{fontSize:12,color:"#475569",marginTop:2}}>{smsReplies.length} {smsReplies.length===1?(isEs?"respuesta":"reply"):(isEs?"respuestas":"replies")}</div>
-              </div>
-              <button className="btn" onClick={async()=>{
-                const r=await sb.from("sms_replies").select("*").order("id",{ascending:false}).limit(200);
-                if(r.data)setSmsReplies(r.data);
-              }} style={{background:"#1e2d3d",color:"#60a5fa",padding:"7px 13px",fontSize:12,fontWeight:600,flexShrink:0}}>🔄 {isEs?"Actualizar":"Refresh"}</button>
-            </div>
-            {smsReplies.length===0?(
-              <div style={{...cardStyle,padding:32,textAlign:"center",color:"#475569"}}>
-                <div style={{fontSize:32,marginBottom:8}}>📩</div>
-                <div>{isEs?"No hay respuestas de clientes todavía.":"No customer replies yet."}</div>
-              </div>
-            ):(
-              <div style={{display:"flex",flexDirection:"column",gap:9}}>
-                {smsReplies.map(r=>{
-                  const from=(r.from_number||"").replace(/\D/g,"");
-                  const matchedDel=deliveries.find(d=>{
-                    const phone=(d.phone||"").replace(/\D/g,"");
-                    return phone.length>9&&from.endsWith(phone.slice(-10));
-                  });
-                  const mine=matchedDel&&(matchedDel.assigned_to===user.id||matchedDel.helper_id===user.id);
-                  return(
-                    <div key={r.id} style={{...cardStyle,padding:"13px 15px",borderLeft:mine?"3px solid #22c55e":cardStyle.border}}>
-                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:6,flexWrap:"wrap",gap:6}}>
-                        <div>
-                          <div style={{fontWeight:700,fontSize:13,color:"#f1f5f9"}}>{matchedDel?matchedDel.customer:(r.customer_name||r.from_number)}{mine&&<span style={{fontSize:10,background:"#052e16",color:"#4ade80",borderRadius:4,padding:"1px 6px",marginLeft:6}}>{isEs?"Tu entrega":"Your stop"}</span>}</div>
-                          <div style={{fontSize:11,color:"#475569"}}>{r.from_number}</div>
-                        </div>
-                        <span style={{fontSize:11,color:"#475569"}}>{new Date(r.received_at||r.created_at||Date.now()).toLocaleString()}</span>
-                      </div>
-                      <div style={{fontSize:14,color:"#e2e8f0",background:"#0a1628",borderRadius:8,padding:"10px 12px",lineHeight:1.5}}>{r.body}</div>
-                      {matchedDel&&<div style={{fontSize:11,color:"#60a5fa",marginTop:6}}>📦 {matchedDel.address}{matchedDel.ticket_number?" — #"+matchedDel.ticket_number:""}</div>}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
           </div>
         )}
 
@@ -1201,6 +1098,13 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
           return(
             <div>
               <div style={{fontWeight:700,fontSize:15,color:"#f1f5f9",marginBottom:12}}>📅 {isEs?"Horario Semanal":"Weekly Team Schedule"}</div>
+              {schedulePhoto&&(
+                <div style={{marginBottom:14}}>
+                  <div style={{fontSize:11,color:"#475569",marginBottom:6,fontWeight:600}}>📷 {isEs?"Horario Publicado":"Posted Schedule"}</div>
+                  <img src={schedulePhoto} alt="schedule" onClick={()=>window.open(schedulePhoto,"_blank")} style={{width:"100%",borderRadius:10,cursor:"pointer",background:"#0a1628"}}/>
+                  <div style={{fontSize:10,color:"#334155",textAlign:"center",marginTop:5}}>{isEs?"Toca para ampliar":"Tap to enlarge"}</div>
+                </div>
+              )}
               <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:14}}>
                 {days.map(d=>(
                   <button key={d} className="btn" onClick={()=>setSchedDay(schedDay===d?null:d)}
@@ -1529,28 +1433,49 @@ function TrainingCard({ t, embed, signed, user, isEs, sb, completions, setComple
 }
 
 function DriverInspectionUpload({ user, onUploaded, isEs }) {
+  const CHECKS = [
+    {k:"tires",     en:"Tires & wheels — pressure, tread, lug nuts",  es:"Llantas — presión, rodadura, tuercas"},
+    {k:"lights",    en:"Lights — headlights, brake, turn, hazards",    es:"Luces — faros, freno, direccionales"},
+    {k:"brakes",    en:"Brakes — pedal feel, parking brake",           es:"Frenos — pedal, freno de mano"},
+    {k:"fluids",    en:"Fluids — oil, coolant, washer",                es:"Fluidos — aceite, anticongelante"},
+    {k:"mirrors",   en:"Mirrors & windshield — clean, no cracks",      es:"Espejos y parabrisas — limpios, sin grietas"},
+    {k:"straps",    en:"Straps & tie-downs — present, not frayed",     es:"Correas y amarres — presentes, sin daño"},
+    {k:"blankets",  en:"Moving blankets & dolly on board",             es:"Cobijas y carretilla a bordo"},
+    {k:"cleanliness",en:"Cargo area clean & dry",                      es:"Área de carga limpia y seca"},
+    {k:"fuel",      en:"Fuel level adequate for route",                es:"Nivel de combustible adecuado"},
+    {k:"docs",      en:"Registration & insurance in cab",              es:"Registro y seguro en la cabina"},
+  ];
+  const [checks, setChecks] = useState({});
   const [notes, setNotes] = useState("");
+  const [mileage, setMileage] = useState("");
+  const [truckId, setTruckId] = useState("");
+  const [photos, setPhotos] = useState([]);
   const [uploading, setUploading] = useState(false);
   const [done, setDone] = useState(false);
   const fileRef = useRef();
+
+  const setCheck = (k,v)=>setChecks(p=>({...p,[k]:v}));
+  const passCount = Object.values(checks).filter(v=>v==="pass").length;
+  const failCount = Object.values(checks).filter(v=>v==="fail").length;
+  const allAnswered = CHECKS.every(c=>checks[c.k]);
 
   const compressPhoto = (file) => new Promise((resolve) => {
     const reader = new FileReader();
     reader.onload = (ev) => {
       const img = new Image();
       img.onload = () => {
-        const MAX = 800; let w=img.width, h=img.height;
+        const MAX = 900; let w=img.width, h=img.height;
         if(w>MAX){h=Math.round(h*MAX/w);w=MAX;}
         const canvas=document.createElement("canvas"); canvas.width=w; canvas.height=h;
         canvas.getContext("2d").drawImage(img,0,0,w,h);
-        canvas.toBlob((blob)=>resolve(blob),"image/jpeg",0.75);
+        canvas.toBlob((blob)=>resolve(blob),"image/jpeg",0.78);
       };
       img.src=ev.target.result;
     };
     reader.readAsDataURL(file);
   });
 
-  const handleUpload = async (e) => {
+  const addPhoto = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
     setUploading(true);
@@ -1560,30 +1485,121 @@ function DriverInspectionUpload({ user, onUploaded, isEs }) {
       const { error } = await sb.storage.from("photos").upload(path, compressed, {contentType:"image/jpeg"});
       if (!error) {
         const url = sb.storage.from("photos").getPublicUrl(path).data.publicUrl;
-        const ins = { id:Date.now(), emp_id:user.id, emp_name:user.name, photo_url:url, notes:notes.trim(), inspection_date:new Date().toISOString().split("T")[0], created_at:new Date().toISOString() };
-        await sb.from("inspections").insert(ins);
-        onUploaded(ins);
-        setDone(true);
-        setNotes("");
-        setTimeout(()=>setDone(false),3000);
-      }
-    } catch(e) { console.error(e); }
+        setPhotos(p=>[...p,url]);
+      } else alert("Upload failed: "+error.message);
+    } catch(err){ alert("Error: "+err.message); }
     setUploading(false);
+    e.target.value="";
+  };
+
+  const submit = async () => {
+    if(!allAnswered){ alert(isEs?"Completa todos los puntos.":"Please answer every checklist item."); return; }
+    setUploading(true);
+    const ins = {
+      id:Date.now(), emp_id:user.id, emp_name:user.name,
+      photo_url:photos[0]||"",
+      notes:[
+        truckId?`Truck: ${truckId}`:"",
+        mileage?`Mileage: ${mileage}`:"",
+        `Checklist: ${passCount} pass / ${failCount} fail`,
+        failCount>0?`FAILED: ${CHECKS.filter(x=>checks[x.k]==="fail").map(x=>x.en).join("; ")}`:"",
+        notes.trim()
+      ].filter(Boolean).join(" | "),
+      inspection_date:new Date().toISOString().split("T")[0],
+      created_at:new Date().toISOString()
+    };
+    const { error } = await sb.from("inspections").insert(ins);
+    setUploading(false);
+    if(error){ alert("Save failed: "+error.message); return; }
+    onUploaded(ins);
+    setDone(true);
+    setChecks({}); setNotes(""); setMileage(""); setPhotos([]);
+    setTimeout(()=>setDone(false),4000);
   };
 
   const inputStyle = {background:"#0a1628",border:"1px solid #1e2d3d",borderRadius:8,padding:"10px 14px",fontSize:14,color:"#e2e8f0",width:"100%",fontFamily:"inherit"};
 
+  if(done) return (
+    <div style={{textAlign:"center",padding:28}}>
+      <div style={{fontSize:40,marginBottom:8}}>✅</div>
+      <div style={{color:"#4ade80",fontWeight:700,fontSize:16}}>{isEs?"¡Inspección enviada!":"Inspection submitted!"}</div>
+      <div style={{color:"#475569",fontSize:12,marginTop:6}}>{isEs?"Conner puede verla ahora.":"Conner can review it now."}</div>
+    </div>
+  );
+
   return (
     <div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:12}}>
+        <div>
+          <div style={{fontSize:11,color:"#475569",marginBottom:4}}>{isEs?"Camión":"Truck"}</div>
+          <input value={truckId} onChange={e=>setTruckId(e.target.value)} placeholder={isEs?"ej. Camión 1":"e.g. Truck 1"} style={inputStyle}/>
+        </div>
+        <div>
+          <div style={{fontSize:11,color:"#475569",marginBottom:4}}>{isEs?"Millaje":"Mileage"}</div>
+          <input type="number" inputMode="numeric" value={mileage} onChange={e=>setMileage(e.target.value)} placeholder="0" style={inputStyle}/>
+        </div>
+      </div>
+
+      {/* Progress */}
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+        <div style={{fontSize:11,color:"#475569",fontWeight:700,textTransform:"uppercase",letterSpacing:".07em"}}>
+          {isEs?"Lista de Verificación":"Pre-Trip Checklist"}
+        </div>
+        <div style={{fontSize:12,fontWeight:700,color:failCount>0?"#f87171":allAnswered?"#4ade80":"#64748b"}}>
+          {Object.keys(checks).length}/{CHECKS.length}
+        </div>
+      </div>
+
+      <div style={{marginBottom:12}}>
+        {CHECKS.map(item=>{
+          const v = checks[item.k];
+          return (
+            <div key={item.k} style={{background:v==="fail"?"#1a0a0a":v==="pass"?"#071a10":"#0a1628",border:`1px solid ${v==="fail"?"#7f1d1d":v==="pass"?"#14532d":"#1e2d3d"}`,borderRadius:9,padding:"10px 12px",marginBottom:7}}>
+              <div style={{fontSize:13,color:"#e2e8f0",marginBottom:8,lineHeight:1.4}}>{isEs?item.es:item.en}</div>
+              <div style={{display:"flex",gap:7}}>
+                {[{val:"pass",label:isEs?"✓ Bien":"✓ Pass",bg:"#22c55e"},{val:"fail",label:isEs?"✕ Problema":"✕ Fail",bg:"#ef4444"},{val:"na",label:"N/A",bg:"#475569"}].map(opt=>(
+                  <button key={opt.val} onClick={()=>setCheck(item.k,opt.val)} style={{
+                    flex:1,padding:"9px 4px",borderRadius:7,border:"none",cursor:"pointer",
+                    fontSize:12,fontWeight:700,minHeight:40,
+                    background:v===opt.val?opt.bg:"#131f2e",
+                    color:v===opt.val?"#fff":"#64748b"
+                  }}>{opt.label}</button>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {failCount>0&&(
+        <div style={{background:"#1a0a0a",border:"1px solid #7f1d1d",borderRadius:9,padding:"10px 13px",marginBottom:10}}>
+          <div style={{color:"#f87171",fontSize:12,fontWeight:700,marginBottom:3}}>⚠️ {failCount} {isEs?"problema(s) encontrado(s)":"issue(s) found"}</div>
+          <div style={{color:"#fca5a5",fontSize:11}}>{isEs?"Describe abajo y toma fotos.":"Describe below and attach photos."}</div>
+        </div>
+      )}
+
       <textarea value={notes} onChange={e=>setNotes(e.target.value)}
-        placeholder={isEs?"Notas de inspección (defectos, problemas...)":"Inspection notes (defects, issues...)"}
+        placeholder={isEs?"Notas adicionales...":"Additional notes, defects, concerns..."}
         rows={3} style={{...inputStyle,resize:"vertical",marginBottom:10}}/>
-      <input ref={fileRef} type="file" accept="image/*" capture="environment" onChange={handleUpload} style={{display:"none"}}/>
+
+      <input ref={fileRef} type="file" accept="image/*" capture="environment" onChange={addPhoto} style={{display:"none"}}/>
       <button className="btn" onClick={()=>fileRef.current.click()} disabled={uploading}
-        style={{width:"100%",background:done?"linear-gradient(135deg,#059669,#047857)":"linear-gradient(135deg,#2563eb,#1d4ed8)",color:"#fff",padding:13,fontSize:14,fontWeight:700,marginBottom:8}}>
-        {uploading?"⏳ Uploading...":done?"✅ Submitted!":"📷 "+ (isEs?"Tomar Foto de Inspección":"Take Inspection Photo")}
+        style={{width:"100%",background:"#1e2d3d",color:"#60a5fa",padding:12,fontSize:13,fontWeight:700,marginBottom:8}}>
+        {uploading?"⏳ Uploading...":"📷 "+(isEs?"Agregar Foto":"Add Photo")+(photos.length?` (${photos.length})`:"")}
       </button>
-      <div style={{fontSize:11,color:"#475569",textAlign:"center"}}>{isEs?"Conner puede ver todas las fotos de inspección.":"Conner can review all inspection photos."}</div>
+
+      {photos.length>0&&(
+        <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:10}}>
+          {photos.map((p,i)=>(
+            <img key={i} src={p} alt="" onClick={()=>window.open(p,"_blank")} style={{width:64,height:64,objectFit:"cover",borderRadius:7,border:"1px solid #1e3a5f",cursor:"pointer"}}/>
+          ))}
+        </div>
+      )}
+
+      <button className="btn" onClick={submit} disabled={uploading||!allAnswered}
+        style={{width:"100%",background:allAnswered?"linear-gradient(135deg,#059669,#047857)":"#1e2d3d",color:allAnswered?"#fff":"#475569",padding:14,fontSize:14,fontWeight:700}}>
+        {uploading?"⏳ Saving...":allAnswered?"✅ "+(isEs?"Enviar Inspección":"Submit Inspection"):(isEs?"Completa todos los puntos":"Answer all items to submit")}
+      </button>
     </div>
   );
 }
@@ -1972,39 +1988,31 @@ function SignaturePad({ delivery, user, onSigned, onClose, isEs }) {
     setSaving(true);
     try {
       const canvas = canvasRef.current;
-      const now = new Date().toISOString();
-      const name = printedName.trim();
-      // Always have a base64 copy as the offline fallback — it renders as an
-      // <img> src anywhere, so a captured signature is never lost when there's
-      // no signal. We try to upload to storage first when online for a smaller
-      // DB footprint, but fall back to the data URL on any failure.
-      const dataUrl = canvas.toDataURL("image/png");
-      let url = dataUrl;
-      if (navigator.onLine) {
-        try {
-          const blob = await new Promise(res => canvas.toBlob(res, "image/png"));
-          const path = `signatures/${delivery.id}/${Date.now()}.png`;
-          const { error } = await sb.storage.from("photos").upload(path, blob, { contentType:"image/png" });
-          if (!error) url = sb.storage.from("photos").getPublicUrl(path).data.publicUrl;
-        } catch(e) { /* keep data URL fallback */ }
-      }
-      await tryWrite({ table:"deliveries", op:"update", payload:{ signature_url:url, signed_by:name, signed_at:now, status:"Delivered" }, match:{col:"id", val:delivery.id} });
-      const sigRecord = {
-        id: Date.now(),
-        ticket_number: delivery.ticket_number||"",
-        customer: delivery.customer,
-        address: delivery.address,
-        phone: delivery.phone,
-        delivery_date: delivery.delivery_date||new Date().toISOString().split("T")[0],
-        signed_by: name,
-        signed_at: now,
-        signature_url: url,
-        driver_name: user.name,
-        items: delivery.items||[],
-      };
-      await tryWrite({ table:"signatures", op:"insert", payload:sigRecord });
-      onSigned(url, now, name);
-      setSaving(false);
+      canvas.toBlob(async (blob) => {
+        const path = `signatures/${delivery.id}/${Date.now()}.png`;
+        const { error } = await sb.storage.from("photos").upload(path, blob, { contentType:"image/png" });
+        if (!error) {
+          const url = sb.storage.from("photos").getPublicUrl(path).data.publicUrl;
+          const now = new Date().toISOString();
+          await sb.from("deliveries").update({ signature_url:url, signed_by:printedName.trim(), signed_at:now, status:"Delivered" }).eq("id", delivery.id);
+          const sigRecord = {
+            id: Date.now(),
+            ticket_number: delivery.ticket_number||"",
+            customer: delivery.customer,
+            address: delivery.address,
+            phone: delivery.phone,
+            delivery_date: delivery.delivery_date||new Date().toISOString().split("T")[0],
+            signed_by: printedName.trim(),
+            signed_at: now,
+            signature_url: url,
+            driver_name: user.name,
+            items: delivery.items||[],
+          };
+          await sb.from("signatures").insert(sigRecord);
+          onSigned(url, now, printedName.trim());
+        }
+        setSaving(false);
+      }, "image/png");
     } catch(e) { console.error(e); setSaving(false); }
   };
 
@@ -2116,40 +2124,22 @@ function AddBaseTaskRow({ lang, setBaseTasks }) {
 function CustomerTrackingPage({ driverId, employees, deliveries }) {
   const [location, setLocation] = useState(null);
   const [loading, setLoading] = useState(true);
-  // Tracking links look like /track/<empId>-r<route> (e.g. "8-r1"). The
-  // employees.id column is an integer, so passing the whole "8-r1" string to
-  // the DB query threw a type error and tracking ALWAYS showed "not active".
-  // Extract just the numeric employee id (works for legacy "/track/8" links too).
-  const empId = parseInt(String(driverId).split("-")[0], 10);
-  // Links also carry the route: "8-r1" -> route 1. Used to show only THIS
-  // route's stops (a driver can run more than one route).
-  const routeMatch = String(driverId).match(/-r(\d+)/);
-  const routeNum = routeMatch ? parseInt(routeMatch[1], 10) : null;
-  const driver = employees.find(e=>e.id===empId);
+  const driver = employees.find(e=>String(e.id)===String(driverId));
 
   useEffect(()=>{
-    if (!Number.isFinite(empId)) { setLoading(false); return; }
     const load = async () => {
-      const {data} = await sb.from("employees").select("last_location,name").eq("id",empId).single();
+      const {data} = await sb.from("employees").select("last_location,name").eq("id",driverId).single();
       if(data?.last_location) setLocation(data.last_location);
       setLoading(false);
     };
     load();
     const interval = setInterval(load, 15000);
     return ()=>clearInterval(interval);
-  },[empId]);
+  },[driverId]);
 
-  // Only THIS driver's stops for TODAY's run (and this route if the link has
-  // one) — previously it summed every delivery ever assigned to the driver,
-  // which showed a huge "88 delivered" count combining multiple days/routes.
-  const today = new Date().toISOString().split("T")[0];
-  const forThisRun = (d) =>
-    d.assigned_to===empId &&
-    d.delivery_date===today &&
-    (routeNum===null || String(d.route_number||1)===String(routeNum));
-  const driverDels = deliveries.filter(d=>forThisRun(d)&&d.status!=="Delivered")
+  const driverDels = deliveries.filter(d=>d.assigned_to===Number(driverId)&&d.status!=="Delivered")
     .sort((a,b)=>(a.stop_order||0)-(b.stop_order||0));
-  const completedCount = deliveries.filter(d=>forThisRun(d)&&d.status==="Delivered").length;
+  const completedCount = deliveries.filter(d=>d.assigned_to===Number(driverId)&&d.status==="Delivered").length;
 
   return (
     <div style={{background:"#080d14",minHeight:"100vh",color:"#e2e8f0",fontFamily:"'DM Sans',sans-serif",maxWidth:500,margin:"0 auto",padding:20}}>
@@ -2200,16 +2190,16 @@ function CustomerTrackingPage({ driverId, employees, deliveries }) {
 }
 
 export default function App() {
-  const [currentUser, setCurrentUser] = useState(()=>cacheGet("session", null));
+  const [currentUser, setCurrentUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [tab, setTab] = useState("dashboard");
   const [selectedDay, setSelectedDay] = useState(todayDayName());
-  const [employees, setEmployees] = useState(()=>cacheGet("employees", INITIAL_EMPLOYEES));
-  const [deliveries, setDeliveries] = useState(()=>cacheGet("deliveries", []));
-  const [customTasks, setCustomTasks] = useState(()=>cacheGet("customTasks", {}));
+  const [employees, setEmployees] = useState(INITIAL_EMPLOYEES);
+  const [deliveries, setDeliveries] = useState([]);
+  const [customTasks, setCustomTasks] = useState({});
   const [baseTasks, setBaseTasks] = useState({ en: BASE_TASKS_EN, es: BASE_TASKS_ES });
-  const [notes, setNotes] = useState(()=>cacheGet("notes", {}));
+  const [notes, setNotes] = useState({});
   const [problems, setProblems] = useState([]);
   const [messages, setMessages] = useState([]);
   const [selectedEmployee, setSelectedEmployee] = useState(null);
@@ -2262,30 +2252,31 @@ export default function App() {
   const [editingProb, setEditingProb] = useState(null);
   const [newProb, setNewProb] = useState({customer:"",ticket_number:"",eta:"",description:"",what_to_do:"",type:"customer",status:"Open"});
   const [summaryDate, setSummaryDate] = useState(new Date().toISOString().split("T")[0]);
-  const [bouncieId, setBouncieId] = useState(()=>localStorage.getItem("bouncie_id")||"amatt-app");
-  const [bouncieSecret, setBouncieSecret] = useState(()=>localStorage.getItem("bouncie_secret")||"");
-  const [bouncieCode, setBouncieCode] = useState(()=>localStorage.getItem("bouncie_code")||"");
-  const [bouncieVehicles, setBouncieVehicles] = useState([]);
+  const [schedulePhoto, setSchedulePhoto] = useState("");
+  const [schedUploading, setSchedUploading] = useState(false);
+  const [bouncieKey, setBouncieKey] = useState(()=>localStorage.getItem("bouncie_key")||"");
+  const [bouncieVehicles, setBouncieVehicles] = useState(()=>{
+    try { return JSON.parse(localStorage.getItem("bouncie_vehicles")||"[]"); } catch { return []; }
+  });
   const [bouncieLoading, setBouncieLoading] = useState(false);
-  const [bouncieCaptured, setBouncieCaptured] = useState(null);
-  // When Bouncie redirects back here with ?code=..., capture it, store it, and
-  // show it on a dedicated screen (below) so it can be copied and pasted into
-  // the Trucks tab — this works even if setup happens in a different window
-  // (Safari vs. the home-screen app) since the system clipboard is shared.
-  useEffect(()=>{
-    try {
-      const c = new URLSearchParams(window.location.search).get("code");
-      if (c) {
-        localStorage.setItem("bouncie_code", c);
-        setBouncieCode(c);
-        setBouncieCaptured(c);
-        window.history.replaceState({}, "", window.location.pathname);
-      }
-    } catch(e) {}
+  // Auto-reconnect Bouncie on app load if key is saved
+  React.useEffect(()=>{
+    const key = localStorage.getItem("bouncie_key");
+    if(!key) return;
+    (async()=>{
+      try{
+        const res = await fetch("https://api.bouncie.dev/v1/vehicles",{headers:{"Authorization":key}});
+        if(!res.ok) return;
+        const data = await res.json();
+        if(Array.isArray(data)){
+          setBouncieVehicles(data);
+          localStorage.setItem("bouncie_vehicles", JSON.stringify(data));
+        }
+      }catch(e){}
+    })();
   },[]);
   const [reportWeek, setReportWeek] = useState(()=>{const d=new Date();d.setDate(d.getDate()-d.getDay());return d.toISOString().split("T")[0];});
   const [offlineQueue, setOfflineQueue] = useState([]);
-  const [pendingSync, setPendingSync] = useState(()=>outboxRead().length);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [sigSearch, setSigSearch] = useState("");
   const [trainingSession, setTrainingSession] = useState(null);
@@ -2313,7 +2304,7 @@ export default function App() {
       setLoading(true);
       try {
         const [eR,dR,ctR,nR,pR,mR,sigR,insR,trR,tcR,lfR] = await Promise.all([
-          sb.from("employees").select("id,name,role,avatar,lang,workdays,is_manager,last_location"),
+          sb.from("employees").select("*"),
           sb.from("deliveries").select("*"),
           sb.from("custom_tasks").select("*"),
           sb.from("notes").select("*"),
@@ -2325,11 +2316,11 @@ export default function App() {
           sb.from("training_completions").select("*"),
           sb.from("liability_forms").select("*").order("signed_at",{ascending:false}),
         ]);
-        if (eR.data&&eR.data.length>0) { setEmployees(eR.data); cacheSet("employees", eR.data); }
+        if (eR.data&&eR.data.length>0) setEmployees(eR.data);
         else { await sb.from("employees").upsert(INITIAL_EMPLOYEES); }
-        if (dR.data) { setDeliveries(dR.data); cacheSet("deliveries", dR.data); }
-        if (ctR.data) { const g={}; ctR.data.forEach(t=>{if(!g[t.emp_id])g[t.emp_id]=[];g[t.emp_id].push(t);}); setCustomTasks(g); cacheSet("customTasks", g); }
-        if (nR.data) { const g={}; nR.data.forEach(n=>{if(!g[n.emp_id])g[n.emp_id]=[];g[n.emp_id].push(n);}); setNotes(g); cacheSet("notes", g); }
+        if (dR.data) setDeliveries(dR.data);
+        if (ctR.data) { const g={}; ctR.data.forEach(t=>{if(!g[t.emp_id])g[t.emp_id]=[];g[t.emp_id].push(t);}); setCustomTasks(g); }
+        if (nR.data) { const g={}; nR.data.forEach(n=>{if(!g[n.emp_id])g[n.emp_id]=[];g[n.emp_id].push(n);}); setNotes(g); }
         if (pR.data) setProblems(pR.data);
         if (mR.data) setMessages(mR.data);
         if (sigR.data) setSignatures(sigR.data);
@@ -2345,6 +2336,8 @@ export default function App() {
         if(rvRes.data) setReceivingLog(rvRes.data);
         if(tfRes.data) setTrainingFiles(tfRes.data);
         if(smsRes.data) setSmsReplies(smsRes.data);
+        const schedRes = await sb.from("notes").select("*").eq("title","SCHEDULE_PHOTO").order("id",{ascending:false}).limit(1);
+        if(schedRes.data&&schedRes.data[0]) setSchedulePhoto(schedRes.data[0].body||"");
         if (trR.data) setTrainings(trR.data);
         if (tcR.data) setCompletions(tcR.data);
         if (lfR.data) setLiabilityForms(lfR.data);
@@ -2355,64 +2348,13 @@ export default function App() {
     const ds = sb.channel("d-ch").on("postgres_changes",{event:"*",schema:"public",table:"deliveries"},()=>{sb.from("deliveries").select("*").then(({data})=>{if(data)setDeliveries(data);});}).subscribe();
     const ms = sb.channel("m-ch").on("postgres_changes",{event:"INSERT",schema:"public",table:"messages"},(p)=>{setMessages(prev=>[...prev,p.new]);}).subscribe();
     const ps = sb.channel("p-ch").on("postgres_changes",{event:"*",schema:"public",table:"problems"},()=>{sb.from("problems").select("*").then(({data})=>{if(data)setProblems(data);});}).subscribe();
-    // Silent refresh: home-screen apps get suspended (not reloaded) and their
-    // realtime socket dies while backgrounded, so on resume they'd show stale
-    // deliveries. Refetch the key data quietly (NO loading screen) whenever the
-    // app returns to the front, regains focus, or reconnects. Defined BEFORE
-    // syncNow so syncNow can reuse it.
-    const refresh = async () => {
-      if (!navigator.onLine) return;
-      try {
-        const [eR,dR,mR,pR] = await Promise.all([
-          sb.from("employees").select("id,name,role,avatar,lang,workdays,is_manager,last_location"),
-          sb.from("deliveries").select("*"),
-          sb.from("messages").select("*").order("created_at",{ascending:true}),
-          sb.from("problems").select("*"),
-        ]);
-        if (eR.data&&eR.data.length>0) { setEmployees(eR.data); cacheSet("employees", eR.data); }
-        if (dR.data) { setDeliveries(dR.data); cacheSet("deliveries", dR.data); }
-        if (mR.data) setMessages(mR.data);
-        if (pR.data) setProblems(pR.data);
-      } catch(e) {}
-    };
-
-    // Online/offline detection + outbox replay. When the connection returns,
-    // push any queued offline writes then SILENTLY refetch. IMPORTANT: never
-    // call load() here — load() shows the full-screen loading state, and if an
-    // un-syncable ("poison") entry sits in the queue this fires every 20s and
-    // makes the whole app appear to "constantly refresh." Only refetch when
-    // something actually synced.
-    const syncNow = async () => {
-      if (!navigator.onLine) return;
-      const before = outboxRead().length;
-      if (before === 0) { setPendingSync(0); return; }
-      setSyncing(true);
-      const sent = await flushOutbox();
-      setPendingSync(outboxRead().length);
-      setSyncing(false);
-      if (sent > 0) refresh();
-    };
-    const goOnline = () => { setIsOnline(true); syncNow(); };
+    // Online/offline detection
+    const goOnline = () => setIsOnline(true);
     const goOffline = () => setIsOnline(false);
     window.addEventListener('online', goOnline);
     window.addEventListener('offline', goOffline);
-    // Also retry on a timer in case the 'online' event is missed (flaky signal).
-    const flushIv = setInterval(syncNow, 20000);
-    syncNow();
-
-    const onVisible = () => { if (document.visibilityState === 'visible') { syncNow(); refresh(); } };
-    document.addEventListener('visibilitychange', onVisible);
-    window.addEventListener('focus', refresh);
-
-    return ()=>{sb.removeChannel(ds);sb.removeChannel(ms);sb.removeChannel(ps);window.removeEventListener('online',goOnline);window.removeEventListener('offline',goOffline);clearInterval(flushIv);document.removeEventListener('visibilitychange',onVisible);window.removeEventListener('focus',refresh);};
+    return ()=>{sb.removeChannel(ds);sb.removeChannel(ms);sb.removeChannel(ps);window.removeEventListener('online',goOnline);window.removeEventListener('offline',goOffline);};
   },[]);
-
-  // Keep the signed-in user on this device so a reload in a dead zone doesn't
-  // log them out (they verified their PIN online; no need to re-check offline).
-  useEffect(()=>{
-    if (currentUser) cacheSet("session", currentUser);
-    else { try { localStorage.removeItem("am_cache_session"); } catch(e) {} }
-  },[currentUser]);
 
   const getEmpDels = (id) => deliveries.filter(d=>d.assigned_to===id);
   const working = (emp,day) => emp.is_manager||emp.isManager||(emp.workdays||[]).includes(day);
@@ -2426,28 +2368,21 @@ export default function App() {
 
   const saveDelivery = async (d) => {
     setSyncing(true);
-    const today = new Date().toISOString().split('T')[0]; const row = { customer:d.customer,address:d.address,phone:d.phone,items:d.items||[],delivery_window:d.delivery_window||"",assigned_to:(d.assigned_to==null||d.assigned_to==="")?1:Number(d.assigned_to),status:d.status,notes:d.notes||"",floor:d.floor||"1",elevator:!!d.elevator,removal_requested:!!d.removal_requested,transfer_scheduled:!!d.transfer_scheduled,route_notes:d.route_notes||"",stop_order:Number(d.stop_order)||1,delivery_date:d.delivery_date||today,ticket_number:d.ticket_number||"",helper_id:Number(d.helper_id)||0,manufacturer:d.manufacturer||"",piece_number:d.piece_number||"" };
+    const today = new Date().toISOString().split('T')[0]; const row = { customer:d.customer,address:d.address,phone:d.phone,items:d.items||[],delivery_window:d.delivery_window||"",assigned_to:Number(d.assigned_to)||1,status:d.status,notes:d.notes||"",floor:d.floor||"1",elevator:!!d.elevator,removal_requested:!!d.removal_requested,transfer_scheduled:!!d.transfer_scheduled,route_notes:d.route_notes||"",stop_order:Number(d.stop_order)||1,delivery_date:d.delivery_date||today,ticket_number:d.ticket_number||"",helper_id:Number(d.helper_id)||0,manufacturer:d.manufacturer||"",piece_number:d.piece_number||"" };
     if (!d.id) {
       const nid = `D-${String(deliveries.length+1).padStart(3,"0")}-${Date.now()}`;
-      const newRow = {...row,id:nid};
-      setDeliveries(prev=>{ const next=[...prev,newRow]; cacheSet("deliveries", next); return next; });
-      const r = await tryWrite({ table:"deliveries", op:"insert", payload:newRow });
-      setPendingSync(r.pending);
+      const {data} = await sb.from("deliveries").insert({...row,id:nid}).select();
+      if (data) setDeliveries(prev=>[...prev,...data]);
     } else {
-      setDeliveries(prev=>{ const next=prev.map(x=>x.id===d.id?{...row,id:d.id}:x); cacheSet("deliveries", next); return next; });
-      const r = await tryWrite({ table:"deliveries", op:"update", payload:row, match:{col:"id", val:d.id} });
-      setPendingSync(r.pending);
+      await sb.from("deliveries").update(row).eq("id",d.id);
+      setDeliveries(prev=>prev.map(x=>x.id===d.id?{...row,id:d.id}:x));
     }
     setSyncing(false);
     setEditingDelivery(null);
   };
 
   const delDelivery = async (id) => { await sb.from("deliveries").delete().eq("id",id); setDeliveries(prev=>prev.filter(d=>d.id!==id)); };
-  const updStatus = async (id,status) => {
-    setDeliveries(prev=>{ const next=prev.map(d=>d.id===id?{...d,status}:d); cacheSet("deliveries", next); return next; });
-    const r = await tryWrite({ table:"deliveries", op:"update", payload:{status}, match:{col:"id", val:id} });
-    setPendingSync(r.pending);
-  };
+  const updStatus = async (id,status) => { await sb.from("deliveries").update({status}).eq("id",id); setDeliveries(prev=>prev.map(d=>d.id===id?{...d,status}:d)); };
 
   const addTask = async (empId) => {
     if (!newTaskInput.text.trim()) return;
@@ -2579,31 +2514,6 @@ export default function App() {
     />
   );
 
-  // Bouncie sent us back here with an authorization code — show it clearly with
-  // a Copy button so it can be pasted into the Trucks tab (works across windows).
-  if (bouncieCaptured) return (
-    <div style={{background:"#080d14",minHeight:"100vh",color:"#e2e8f0",fontFamily:"'DM Sans',sans-serif",maxWidth:640,margin:"0 auto",padding:24,display:"flex",flexDirection:"column",justifyContent:"center"}}>
-      <div style={{fontSize:40,textAlign:"center",marginBottom:8}}>✅</div>
-      <div style={{fontWeight:800,fontSize:20,textAlign:"center",color:"#4ade80",marginBottom:6}}>Bouncie Code Received</div>
-      <div style={{fontSize:13,color:"#94a3b8",textAlign:"center",marginBottom:18,lineHeight:1.6}}>Copy this code, then open the <b>Trucks</b> tab, paste it into the <b>Authorization Code</b> box (if it isn&#39;t already there), and tap <b>Connect Trucks</b>.</div>
-      <div style={{background:"#0f1923",border:"1px solid #1e2d3d",borderRadius:10,padding:"12px 14px",marginBottom:12,fontFamily:"monospace",fontSize:13,wordBreak:"break-all",color:"#e2e8f0"}}>{bouncieCaptured}</div>
-      <button className="btn" onClick={()=>{try{navigator.clipboard.writeText(bouncieCaptured);}catch(_){} alert("Copied! Now open the Trucks tab and paste it into the Authorization Code box, then tap Connect Trucks.");}} style={{background:"linear-gradient(135deg,#059669,#047857)",color:"#fff",padding:"12px",fontSize:14,fontWeight:700,marginBottom:10,border:"none"}}>📋 Copy Code</button>
-      <button className="btn" onClick={()=>{setBouncieCaptured(null);setTab("bouncie");}} style={{background:"#1e2d3d",color:"#94a3b8",padding:"11px",fontSize:13,fontWeight:600,border:"none"}}>Continue to app →</button>
-    </div>
-  );
-
-  // Global offline / pending-sync banner. Shows when there's no connection or
-  // when there are queued writes waiting to sync. Lets drivers trust the app
-  // instead of falling back to paper when service drops.
-  const offlineBanner = (!isOnline || pendingSync>0) ? (
-    <div style={{position:"sticky",top:0,zIndex:900,padding:"7px 14px",textAlign:"center",fontSize:12.5,fontWeight:700,
-      background:!isOnline?"#7c2d12":"#1e3a2f",color:!isOnline?"#fed7aa":"#86efac",borderBottom:`1px solid ${!isOnline?"#9a3412":"#166534"}`}}>
-      {!isOnline
-        ? `📴 Offline — your work is saved on this device${pendingSync>0?` (${pendingSync} change${pendingSync>1?"s":""} waiting to sync)`:""}`
-        : (syncing ? `🔄 Syncing ${pendingSync} change${pendingSync>1?"s":""}…` : `⏳ ${pendingSync} change${pendingSync>1?"s":""} waiting to sync`)}
-    </div>
-  ) : null;
-
   if (loading) return (
     <div style={{background:"#080d14",minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:14,fontFamily:"'DM Sans',sans-serif"}}>
       <style>{GLOBAL_STYLES}</style>
@@ -2616,7 +2526,6 @@ export default function App() {
 
   if (driverMode) return (
     <div>
-      {offlineBanner}
       <div style={{background:"#7c3aed",padding:"8px 16px",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
         <span style={{color:"#fff",fontSize:12,fontWeight:600}}>👑 Conner — Driver Mode</span>
         <button className="btn" onClick={()=>setDriverMode(false)} style={{background:"rgba(255,255,255,0.2)",color:"#fff",padding:"5px 12px",fontSize:12}}>← Back to Manager</button>
@@ -2630,6 +2539,7 @@ export default function App() {
         onSaveDelivery={saveDelivery}
         smsTemplates={smsTemplates}
       trainingFiles={trainingFiles}
+      schedulePhoto={schedulePhoto}
       completions={completions}
       setCompletions={setCompletions}
         onSaveSignature={(delId, url, at)=>{
@@ -2641,22 +2551,19 @@ export default function App() {
   );
 
   if (!currentUser.is_manager&&!currentUser.isManager&&currentUser.role!=='Manager') return (
-    <div>
-      {offlineBanner}
-      <DriverView
-        user={currentUser} deliveries={deliveries} customTasks={customTasks} baseTasks={baseTasks}
-        messages={messages} problems={problems} employees={employees}
-        onStatusUpdate={updStatus} onLogout={()=>setCurrentUser(null)}
-        onSendMessage={(m)=>setMessages(prev=>[...prev,m])}
-        onLogProblem={(p)=>setProblems(prev=>[...prev,p])}
-        onSaveDelivery={saveDelivery}
-        smsTemplates={smsTemplates}
-        onSaveSignature={(delId, url, at, signedBy)=>{
-          setDeliveries(prev=>prev.map(d=>d.id===delId?{...d,signature_url:url,signed_at:at,signed_by:signedBy,status:"Delivered"}:d));
-          sb.from("signatures").select("*").order("signed_at",{ascending:false}).then(({data})=>{if(data)setSignatures(data);});
-        }}
-      />
-    </div>
+    <DriverView
+      user={currentUser} deliveries={deliveries} customTasks={customTasks} baseTasks={baseTasks}
+      messages={messages} problems={problems} employees={employees}
+      onStatusUpdate={updStatus} onLogout={()=>setCurrentUser(null)}
+      onSendMessage={(m)=>setMessages(prev=>[...prev,m])}
+      onLogProblem={(p)=>setProblems(prev=>[...prev,p])}
+      onSaveDelivery={saveDelivery}
+      smsTemplates={smsTemplates}
+      onSaveSignature={(delId, url, at, signedBy)=>{
+        setDeliveries(prev=>prev.map(d=>d.id===delId?{...d,signature_url:url,signed_at:at,signed_by:signedBy,status:"Delivered"}:d));
+        sb.from("signatures").select("*").order("signed_at",{ascending:false}).then(({data})=>{if(data)setSignatures(data);});
+      }}
+    />
   );
 
   // ── MANAGER LAYOUT ──
@@ -2669,7 +2576,6 @@ export default function App() {
   return (
     <div style={{fontFamily:"'DM Sans','Segoe UI',sans-serif",background:"#080d14",minHeight:"100vh",color:"#e2e8f0"}}>
       <style>{GLOBAL_STYLES}</style>
-      {offlineBanner}
 
       {/* Header */}
       <div style={{background:"#0a1628",borderBottom:"1px solid #1e2d3d"}}>
@@ -2992,8 +2898,8 @@ export default function App() {
                   <button className="btn" onClick={()=>setEditingDelivery(p=>({...p,items:[...(p.items||[]),{qty:1,name:""}]}))} style={{background:"#1e2d3d",color:"#60a5fa",padding:"5px 11px",fontSize:11}}>➕ Add Item</button>
                 </div>
                 <div className="del-form-3" style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:9,marginBottom:9}}>
-                  <div><div style={{fontSize:10,color:"#475569",marginBottom:3}}>Driver</div><select value={editingDelivery.assigned_to ?? 1} onChange={e=>setEditingDelivery(p=>({...p,assigned_to:Number(e.target.value)}))} style={C.sel}>{employees.map(e=><option key={e.id} value={e.id}>{e.name}{e.is_manager?" 👑":""}</option>)}</select></div>
-                  <div><div style={{fontSize:10,color:"#475569",marginBottom:3}}>Helper (optional)</div><select value={editingDelivery.helper_id||0} onChange={e=>setEditingDelivery(p=>({...p,helper_id:Number(e.target.value)}))} style={C.sel}><option value={0}>None</option>{employees.filter(e=>e.id!==0).map(e=><option key={e.id} value={e.id}>{e.name}{e.is_manager?" 👑":""}</option>)}</select></div>
+                  <div><div style={{fontSize:10,color:"#475569",marginBottom:3}}>Driver</div><select value={editingDelivery.assigned_to||1} onChange={e=>setEditingDelivery(p=>({...p,assigned_to:Number(e.target.value)}))} style={C.sel}>{employees.map(e=><option key={e.id} value={e.id}>{e.name}{e.is_manager?" 👑":""}</option>)}</select></div>
+                  <div><div style={{fontSize:10,color:"#475569",marginBottom:3}}>Helper (optional)</div><select value={editingDelivery.helper_id||0} onChange={e=>setEditingDelivery(p=>({...p,helper_id:Number(e.target.value)}))} style={C.sel}><option value={0}>None</option>{employees.map(e=><option key={e.id} value={e.id}>{e.name}{e.is_manager?" 👑":""}</option>)}</select></div>
 
                   <div><div style={{fontSize:10,color:"#475569",marginBottom:3}}>Status</div><select value={editingDelivery.status} onChange={e=>setEditingDelivery(p=>({...p,status:e.target.value}))} style={C.sel}>{Object.keys(STATUS_COLORS).map(s=><option key={s} value={s}>{s}</option>)}</select></div>
                   <div><div style={{fontSize:10,color:"#475569",marginBottom:3}}>Stop #</div><input type="number" value={editingDelivery.stop_order||1} onChange={e=>setEditingDelivery(p=>({...p,stop_order:Number(e.target.value)}))} style={C.inp}/></div>
@@ -3108,7 +3014,7 @@ export default function App() {
                             <div key={m.id} style={{background:"#0a1628",borderRadius:6,padding:"6px 9px",marginBottom:5}}>
                               <div style={{fontSize:10,color:"#475569",marginBottom:2}}>{m.sender_name} · {new Date(m.created_at).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}</div>
                               {m.photo_url&&<img src={m.photo_url} alt="" style={{width:"100%",borderRadius:5,marginBottom:4,maxHeight:140,objectFit:"cover"}}/>}
-                              {m.text!=="📷 Photo"&&<div style={{fontSize:12,color:"#e2e8f0"}}>{m.text}</div>}
+                              {m.text!=="📷 Photo"&&<MessageText text={m.text} size={12}/>}
                             </div>
                           ))}
                         </div>
@@ -3132,7 +3038,7 @@ export default function App() {
                   <div key={m.id} style={{background:m.sender_id===0?"#0c1f38":"#0a1628",borderRadius:8,padding:"10px 13px",maxWidth:"75%",alignSelf:m.sender_id===0?"flex-end":"flex-start"}}>
                     <div style={{fontSize:10,color:"#475569",marginBottom:3}}>{m.sender_name} · {new Date(m.created_at).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}</div>
                     {m.photo_url&&<img src={m.photo_url} alt="" style={{width:"100%",borderRadius:6,marginBottom:4,maxHeight:200,objectFit:"cover"}}/>}
-                    <div style={{fontSize:13,color:"#e2e8f0"}}>{m.text}</div>
+                    <MessageText text={m.text} size={13}/>
                   </div>
                 ))}
               </div>
@@ -3451,8 +3357,8 @@ export default function App() {
                         </div>
                       </div>
                       <div style={{marginBottom:10}}>
-                        <div style={{fontSize:10,color:"#475569",marginBottom:5}}>Set New PIN <span style={{color:"#475569"}}>(leave blank to keep current)</span></div>
-                        <input value={editEmpVals.pin!==undefined?editEmpVals.pin:""} onChange={e=>setEditEmpVals(p=>({...p,pin:e.target.value}))} maxLength={6} placeholder="••••" style={{...C.inp,width:100}}/>
+                        <div style={{fontSize:10,color:"#475569",marginBottom:5}}>PIN</div>
+                        <input value={editEmpVals.pin!==undefined?editEmpVals.pin:emp.pin||""} onChange={e=>setEditEmpVals(p=>({...p,pin:e.target.value}))} maxLength={6} placeholder="4 digits" style={{...C.inp,width:100}}/>
                       </div>
                       <div style={{marginBottom:12}}>
                         <div style={{fontSize:10,color:"#475569",marginBottom:5}}>Work Days</div>
@@ -3470,9 +3376,7 @@ export default function App() {
                       </div>
                       <div style={{display:"flex",gap:7}}>
                         <button className="btn" onClick={async()=>{
-                          const updates={role:editEmpVals.role||emp.role,lang:editEmpVals.lang||emp.lang,workdays:editEmpVals.workdays||emp.workdays};
-                          // Only change the PIN if the manager actually typed a new one.
-                          if (editEmpVals.pin) updates.pin=editEmpVals.pin;
+                          const updates={role:editEmpVals.role||emp.role,lang:editEmpVals.lang||emp.lang,pin:editEmpVals.pin!==undefined?editEmpVals.pin:emp.pin,workdays:editEmpVals.workdays||emp.workdays};
                           await sb.from("employees").update(updates).eq("id",emp.id);
                           setEmployees(prev=>prev.map(e=>e.id===emp.id?{...e,...updates}:e));
                           setEditingEmp(null);setEditEmpVals({});
@@ -3485,7 +3389,7 @@ export default function App() {
                       <div style={{width:38,height:38,borderRadius:"50%",background:avatarBg(emp),display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:800,color:"#fff",flexShrink:0}}>{emp.avatar}</div>
                       <div style={{flex:1}}>
                         <div style={{fontWeight:700,fontSize:13,color:"#f1f5f9"}}>{emp.name}{emp.is_manager?" 👑":""}{emp.lang==="es"?" 🇲🇽":""}</div>
-                        <div style={{fontSize:11,color:"#64748b",marginTop:1}}>{emp.role} · PIN ••••</div>
+                        <div style={{fontSize:11,color:"#64748b",marginTop:1}}>{emp.role} · PIN: {emp.pin||"—"}</div>
                         <div style={{display:"flex",gap:4,marginTop:6,flexWrap:"wrap"}}>
                           {(emp.workdays||[]).map(d=><span key={d} style={{fontSize:9,background:"#0c2340",color:"#60a5fa",borderRadius:4,padding:"1px 5px",fontWeight:600}}>{d}</span>)}
                         </div>
@@ -3564,10 +3468,36 @@ export default function App() {
           <div className="fade">
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12,flexWrap:"wrap",gap:6}}>
               <div style={{fontWeight:700,fontSize:15,color:"#f1f5f9"}}>📅 This Week's Schedule</div>
+              <label style={{background:"#1e2d3d",color:"#60a5fa",padding:"6px 12px",fontSize:11,fontWeight:600,borderRadius:7,cursor:"pointer"}}>
+                {schedUploading?"⏳ Uploading...":"📷 Post Schedule Photo"}
+                <input type="file" accept="image/*" style={{display:"none"}} onChange={async(e)=>{
+                  const file=e.target.files[0]; if(!file) return;
+                  setSchedUploading(true);
+                  try{
+                    const blob=await new Promise(res=>{const r=new FileReader();r.onload=ev=>{const img=new Image();img.onload=()=>{const MAX=1600;let w=img.width,h=img.height;if(w>MAX){h=Math.round(h*MAX/w);w=MAX;}const cv=document.createElement("canvas");cv.width=w;cv.height=h;cv.getContext("2d").drawImage(img,0,0,w,h);cv.toBlob(b=>res(b),"image/jpeg",0.88);};img.src=ev.target.result;};r.readAsDataURL(file);});
+                    const path=`schedule/${Date.now()}.jpg`;
+                    const {error}=await sb.storage.from("photos").upload(path,blob,{contentType:"image/jpeg"});
+                    if(error){alert("Upload failed: "+error.message);}
+                    else{
+                      const url=sb.storage.from("photos").getPublicUrl(path).data.publicUrl;
+                      await sb.from("notes").insert({id:Date.now(),title:"SCHEDULE_PHOTO",body:url,created_at:new Date().toISOString()});
+                      setSchedulePhoto(url);
+                      alert("✅ Schedule posted — all employees can see it now.");
+                    }
+                  }catch(err){alert("Error: "+err.message);}
+                  setSchedUploading(false); e.target.value="";
+                }}/>
+              </label>
               <div style={{fontSize:11,color:"#475569"}}>
                 {new Date(weekDates[0]+"T12:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric"})} — {new Date(weekDates[6]+"T12:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}
               </div>
             </div>
+            {schedulePhoto&&(
+              <div style={{...C.card,padding:10,marginBottom:12}}>
+                <div style={{fontSize:11,color:"#475569",marginBottom:6,fontWeight:600}}>📷 Posted Schedule</div>
+                <img src={schedulePhoto} alt="schedule" onClick={()=>window.open(schedulePhoto,"_blank")} style={{width:"100%",borderRadius:8,cursor:"pointer",maxHeight:420,objectFit:"contain",background:"#0a1628"}}/>
+              </div>
+            )}
             <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:14}}>
               {dayKeys.map((d,i)=>(
                 <button key={d} className="btn" onClick={()=>setMgrSchedDay(mgrSchedDay===d?null:d)}
@@ -3850,7 +3780,7 @@ export default function App() {
                       // Strategy: find each row by the pattern: NUMBER MANUFACTURER PIECE# QTY
                       // then grab everything after QTY until the next row number or end of section
                       // Row pattern: start of line or whitespace, 1-2 digit row#, CAPS manufacturer, piece#, 1-2 digit qty
-                      const rowPattern = /(?:^|\n| )(\d{1,2}) ([A-Z][A-Z0-9]{1,12}) ([A-Z0-9][\w\-.]{2,25}) (\d{1,2}) /g;
+                      const rowPattern = /(?:^|\n| )(\d{1,2}) ([A-Z][A-Za-z0-9\-]{1,14}(?: [A-Z]{1,4})?) ([A-Z0-9][\w\-.]{2,28}) (\d{1,2}) /g;
                       let match;
                       const rows = [];
                       while ((match = rowPattern.exec(s)) !== null) {
@@ -3931,7 +3861,7 @@ export default function App() {
                       {[1,2].map(r=>(
                         <div key={r} style={{display:"flex",gap:6,alignItems:"center",flex:1,minWidth:200}}>
                           <span style={{fontSize:11,color:r===1?"#60a5fa":"#a78bfa",fontWeight:700,flexShrink:0}}>R{r}:</span>
-                          <select onChange={e=>{if(!e.target.value)return;const v=Number(e.target.value);setPdfResult(prev=>prev.map(x=>(x._route||pdfRoute)===r&&x._driver==null?{...x,_driver:v}:x));}} style={{...C.sel,flex:1,fontSize:11}}>
+                          <select onChange={e=>{if(!e.target.value)return;const v=Number(e.target.value);setPdfResult(prev=>prev.map(x=>(x._route||pdfRoute)===r&&!x._driver?{...x,_driver:v}:x));}} style={{...C.sel,flex:1,fontSize:11}}>
                             <option value="">Assign driver to Route {r}...</option>
                             {employees.map(e=><option key={e.id} value={e.id}>{e.name}{e.is_manager?" 👑":""}</option>)}
                           </select>
@@ -3983,7 +3913,7 @@ export default function App() {
                                 </button>
                               ))}
                             </div>
-                            <select value={del._driver ?? ""} onChange={e=>setPdfResult(prev=>prev.map((x,i)=>i===di?{...x,_driver:e.target.value===""?null:Number(e.target.value)}:x))}
+                            <select value={del._driver||""} onChange={e=>setPdfResult(prev=>prev.map((x,i)=>i===di?{...x,_driver:Number(e.target.value)}:x))}
                               style={{...C.sel,flex:1,fontSize:11}}>
                               <option value="">Assign driver...</option>
                               {employees.map(e=><option key={e.id} value={e.id}>{e.name}{e.is_manager?" 👑":""}</option>)}
@@ -4002,7 +3932,7 @@ export default function App() {
                       {" · "}
                       Route 2: <span style={{color:"#a78bfa",fontWeight:600}}>{pdfResult.filter(d=>d._route===2).length} deliveries</span>
                       {" · "}
-                      Unassigned drivers: <span style={{color:pdfResult.filter(d=>d._driver==null).length>0?"#f87171":"#22c55e",fontWeight:600}}>{pdfResult.filter(d=>d._driver==null).length}</span>
+                      Unassigned drivers: <span style={{color:pdfResult.filter(d=>!d._driver).length>0?"#f87171":"#22c55e",fontWeight:600}}>{pdfResult.filter(d=>!d._driver).length}</span>
                     </div>
                   </div>
 
@@ -4013,7 +3943,7 @@ export default function App() {
                       const added=[];
                       for(const del of pdfResult){
                         const route=del._route||pdfRoute;
-                        const driverId=del._driver??0;
+                        const driverId=del._driver||0;
                         const stop=stopCounters[route]||1;
                         stopCounters[route]=(stopCounters[route]||1)+1;
                         const isTransfer=!!del.is_transfer;
@@ -4075,7 +4005,7 @@ export default function App() {
               </div>
               <div style={{marginBottom:8}}>
                 <div style={{fontSize:10,color:"#475569",marginBottom:3}}>Driver</div>
-                <select value={pdfResult?.[0]?.assigned_to ?? 1} onChange={e=>setPdfResult(prev=>[{...(prev?.[0]||{}),assigned_to:Number(e.target.value)}])} style={C.sel}>
+                <select value={pdfResult?.[0]?.assigned_to||1} onChange={e=>setPdfResult(prev=>[{...(prev?.[0]||{}),assigned_to:Number(e.target.value)}])} style={C.sel}>
                   {employees.map(e=><option key={e.id} value={e.id}>{e.name}{e.is_manager?" 👑":""}</option>)}
                 </select>
               </div>
@@ -4119,7 +4049,7 @@ export default function App() {
                     id:nid,customer:d.customer,address:d.address||"",phone:d.phone||"",
                     items:(d.items||[{qty:1,name:""}]).map(i=>({qty:i.qty||1,name:i.name||"",manufacturer:i.manufacturer||"",piece_number:i.piece_number||""})),
                     delivery_window:d.delivery_window||"Morning",
-                    assigned_to:(d.assigned_to==null||d.assigned_to==="")?1:Number(d.assigned_to),status:"Scheduled",
+                    assigned_to:Number(d.assigned_to)||1,status:"Scheduled",
                     notes:d.notes||"",floor:"1",elevator:false,
                     removal_requested:false,transfer_scheduled:false,route_notes:"",
                     stop_order:todayCount+1,
@@ -4130,7 +4060,7 @@ export default function App() {
                   await sb.from("deliveries").insert(newRow);
                   setDeliveries(prev=>[...prev,newRow]);
                   // Clear form for next entry
-                  setPdfResult([{customer:"",address:"",phone:"",ticket_number:"",delivery_window:"",notes:"",delivery_date:d.delivery_date||today,assigned_to:d.assigned_to ?? 1,items:[{qty:1,name:"",manufacturer:"",piece_number:""}]}]);
+                  setPdfResult([{customer:"",address:"",phone:"",ticket_number:"",delivery_window:"",notes:"",delivery_date:d.delivery_date||today,assigned_to:d.assigned_to||1,items:[{qty:1,name:"",manufacturer:"",piece_number:""}]}]);
                   alert("✅ "+d.customer+" added! Form cleared for next delivery.");
                 }} style={{flex:1,background:"linear-gradient(135deg,#059669,#047857)",color:"#fff",padding:"11px",fontSize:13,fontWeight:700}}>
                   ✅ Add Delivery
@@ -4665,7 +4595,19 @@ export default function App() {
               </div>
             ):(
               <div style={{display:"flex",flexDirection:"column",gap:9}}>
-                {smsReplies.map(r=>{
+                {Object.entries(smsReplies.reduce((acc,r)=>{
+                  const dt=new Date(r.received_at||r.date_created||r.created_at||Date.now());
+                  const key=isNaN(dt)?"Unknown":dt.toISOString().split("T")[0];
+                  (acc[key]=acc[key]||[]).push(r); return acc;
+                },{})).sort((a,b)=>b[0].localeCompare(a[0])).map(([dayKey,dayMsgs])=>(
+                  <div key={dayKey}>
+                    <div style={{position:"sticky",top:0,zIndex:5,background:"#0a1628",borderRadius:6,padding:"5px 11px",marginBottom:7,fontSize:11,fontWeight:700,color:"#60a5fa",letterSpacing:".05em"}}>
+                      {dayKey===new Date().toISOString().split("T")[0]?"TODAY":
+                       new Date(dayKey+"T12:00:00").toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric",year:"numeric"})}
+                      <span style={{color:"#334155",marginLeft:8,fontWeight:400}}>{dayMsgs.length} message{dayMsgs.length!==1?"s":""}</span>
+                    </div>
+                    <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                {dayMsgs.map(r=>{
                   const matchedDel=deliveries.find(d=>{
                     const phone=(d.phone||"").replace(/\D/g,"");
                     const from=(r.from_number||"").replace(/\D/g,"");
@@ -4685,6 +4627,9 @@ export default function App() {
                     </div>
                   );
                 })}
+                    </div>
+                  </div>
+                ))}
               </div>
             )}
           </div>
@@ -5405,42 +5350,37 @@ export default function App() {
             <div style={{fontWeight:700,fontSize:15,color:"#f1f5f9",marginBottom:4}}>🛰️ Bouncie Truck Tracking</div>
             <div style={{fontSize:12,color:"#475569",marginBottom:14}}>Connect your Bouncie GPS trackers to see live truck locations, odometer, speed and status.</div>
 
-            {/* Bouncie OAuth setup */}
+            {/* API Key setup */}
             <div style={{...C.card,padding:"14px 16px",marginBottom:14,borderColor:"#1e3a5f"}}>
-              <div style={{fontWeight:600,fontSize:13,color:"#60a5fa",marginBottom:8}}>🔑 Bouncie Connection</div>
-              <div style={{fontSize:12,color:"#475569",marginBottom:10,lineHeight:1.6}}>
-                Create an app at <a href="https://www.bouncie.dev/apps" target="_blank" rel="noreferrer" style={{color:"#60a5fa"}}>bouncie.dev/apps</a>, set its <b>Redirect URI</b> to <span style={{fontFamily:"monospace",color:"#94a3b8"}}>https://americasmattress.netlify.app</span>, enter your Client ID &amp; Secret, then tap <b>Get Code</b> to authorize.
+              <div style={{fontWeight:600,fontSize:13,color:"#60a5fa",marginBottom:8}}>🔑 Bouncie API Key</div>
+              <div style={{fontSize:12,color:"#475569",marginBottom:8}}>Get your API key from <a href="https://www.bouncie.app/developer" target="_blank" rel="noreferrer" style={{color:"#60a5fa"}}>bouncie.app/developer</a> — it's free with your subscription.</div>
+              <div style={{display:"flex",gap:8}}>
+                <input value={bouncieKey} onChange={e=>setBouncieKey(e.target.value)} placeholder="Your Bouncie API key..." style={{...C.inp,flex:1,fontFamily:"monospace"}} type="password"/>
+                <button className="btn" onClick={async()=>{
+                  if(!bouncieKey){alert("Please enter your Bouncie API key.");return;}
+                  localStorage.setItem("bouncie_key",bouncieKey);
+                  setBouncieLoading(true);
+                  try{
+                    const res=await fetch("https://api.bouncie.dev/v1/vehicles",{headers:{"Authorization":bouncieKey,"Content-Type":"application/json"}});
+                    if(!res.ok){alert("Invalid API key or connection failed. Check your key at bouncie.app/developer.");setBouncieLoading(false);return;}
+                    const data=await res.json();
+                    const vlist = Array.isArray(data)?data:[];
+                    setBouncieVehicles(vlist);
+                    localStorage.setItem("bouncie_vehicles", JSON.stringify(vlist));
+                    if(vlist.length===0)alert("Connected! No vehicles found. Make sure your Bouncie devices are active.");
+                    else alert("✅ Connected! "+vlist.length+" vehicle(s) saved.");
+                  }catch(err){alert("Connection failed: "+err.message);}
+                  setBouncieLoading(false);
+                }} style={{background:"linear-gradient(135deg,#2563eb,#1d4ed8)",color:"#fff",padding:"9px 16px",fontSize:12,fontWeight:600,flexShrink:0}}>
+                  {bouncieLoading?"⏳ Connecting...":"Connect"}
+                </button>
               </div>
-              <input value={bouncieId} onChange={e=>{const v=e.target.value;setBouncieId(v);try{localStorage.setItem("bouncie_id",v);}catch(_){}}} placeholder="Client ID (e.g. amatt-app)" style={{...C.inp,width:"100%",marginBottom:8,fontFamily:"monospace"}}/>
-              <input value={bouncieSecret} onChange={e=>{const v=e.target.value;setBouncieSecret(v);try{localStorage.setItem("bouncie_secret",v);}catch(_){}}} placeholder="Client Secret (paste — check for no extra spaces)" type="text" style={{...C.inp,width:"100%",marginBottom:8,fontFamily:"monospace"}}/>
-              <div style={{display:"flex",gap:8,marginBottom:10}}>
-                <input value={bouncieCode} onChange={e=>{const v=e.target.value;setBouncieCode(v);try{localStorage.setItem("bouncie_code",v);}catch(_){}}} placeholder="Authorization Code" style={{...C.inp,flex:1,fontFamily:"monospace"}}/>
-                <a className="btn" onClick={()=>{try{localStorage.setItem("bouncie_id",bouncieId);localStorage.setItem("bouncie_secret",bouncieSecret);}catch(_){}}} href={`https://auth.bouncie.com/dialog/authorize?response_type=code&client_id=${encodeURIComponent(bouncieId||"amatt-app")}&redirect_uri=https://americasmattress.netlify.app`} style={{background:"#0a1628",color:"#4ade80",padding:"9px 14px",fontSize:12,fontWeight:600,flexShrink:0,border:"1px solid #22c55e",textDecoration:"none",display:"flex",alignItems:"center"}}>Get Code</a>
-              </div>
-              <button className="btn" onClick={async()=>{
-                if(!bouncieId||!bouncieSecret||!bouncieCode){alert("Enter your Client ID, Client Secret, and Authorization Code first — use \"Get Code\" to authorize.");return;}
-                localStorage.setItem("bouncie_id",bouncieId);
-                localStorage.setItem("bouncie_secret",bouncieSecret);
-                localStorage.setItem("bouncie_code",bouncieCode);
-                setBouncieLoading(true);
-                try{
-                  const res=await fetch("/.netlify/functions/bouncie",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({client_id:bouncieId,client_secret:bouncieSecret,code:bouncieCode})});
-                  const data=await res.json();
-                  if(!res.ok){alert("Bouncie connection failed: "+(data.detail||data.error||res.status));setBouncieLoading(false);return;}
-                  const list=Array.isArray(data)?data:[];
-                  setBouncieVehicles(list);
-                  if(list.length===0)alert("Connected! No vehicles found yet — make sure your Bouncie devices are active and shared with this app.");
-                }catch(err){alert("Connection failed: "+err.message);}
-                setBouncieLoading(false);
-              }} style={{width:"100%",background:"linear-gradient(135deg,#2563eb,#1d4ed8)",color:"#fff",padding:"10px 16px",fontSize:12,fontWeight:600}}>
-                {bouncieLoading?"⏳ Connecting...":"Connect Trucks"}
-              </button>
             </div>
 
-            {bouncieVehicles.length===0&&!bouncieLoading&&bouncieSecret&&bouncieCode&&(
+            {bouncieVehicles.length===0&&!bouncieLoading&&bouncieKey&&(
               <div style={{...C.card,padding:36,textAlign:"center",color:"#475569"}}>
                 <div style={{fontSize:32,marginBottom:8}}>🛰️</div>
-                <div>Tap "Connect Trucks" to load your vehicles.</div>
+                <div>Click Connect to load your vehicles.</div>
               </div>
             )}
 
@@ -5451,9 +5391,11 @@ export default function App() {
                   <button className="btn" onClick={async()=>{
                     setBouncieLoading(true);
                     try{
-                      const res=await fetch("/.netlify/functions/bouncie",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({client_id:bouncieId,client_secret:bouncieSecret,code:bouncieCode})});
+                      const res=await fetch("https://api.bouncie.dev/v1/vehicles",{headers:{"Authorization":bouncieKey}});
                       const data=await res.json();
-                      setBouncieVehicles(Array.isArray(data)?data:[]);
+                      const vlist=Array.isArray(data)?data:[];
+                      setBouncieVehicles(vlist);
+                      localStorage.setItem("bouncie_vehicles", JSON.stringify(vlist));
                     }catch(e){}
                     setBouncieLoading(false);
                   }} style={{background:"#1e2d3d",color:"#60a5fa",padding:"5px 12px",fontSize:11}}>🔄 Refresh</button>
@@ -5463,17 +5405,12 @@ export default function App() {
                   const isMoving=loc.isMoving||loc.speed>2;
                   const lat=loc.location?.lat||loc.lat;
                   const lng=loc.location?.lon||loc.lon||loc.lng;
-                  // Bouncie returns some fields as nested objects — coerce to
-                  // plain strings so React never tries to render an object.
-                  const name=v.nickName||v.nickname||v.name||v.licensePlate||"Truck";
-                  const modelStr=typeof v.model==="string"?v.model:[v.model?.make,v.model?.name,v.model?.year||v.year].filter(Boolean).join(" ");
-                  const addr=typeof loc.address==="string"?loc.address:(typeof loc.location?.address==="string"?loc.location.address:"");
                   return(
                     <div key={v.imei||v.id} style={{...C.card,padding:"14px 16px",marginBottom:10}}>
                       <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8,flexWrap:"wrap",gap:6}}>
                         <div>
-                          <div style={{fontWeight:700,fontSize:14,color:"#f1f5f9"}}>{name}</div>
-                          <div style={{fontSize:11,color:"#475569",marginTop:2}}>{modelStr}</div>
+                          <div style={{fontWeight:700,fontSize:14,color:"#f1f5f9"}}>{v.nickname||v.name||v.licensePlate||"Truck"}</div>
+                          <div style={{fontSize:11,color:"#475569",marginTop:2}}>{v.model||""} {v.year||""}</div>
                         </div>
                         <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
                           <span style={{fontSize:11,background:isMoving?"#052e16":"#1e2d3d",color:isMoving?"#4ade80":"#475569",borderRadius:6,padding:"3px 9px",fontWeight:600}}>
@@ -5492,7 +5429,7 @@ export default function App() {
                           <div style={{fontWeight:600,fontSize:13,color:loc.batteryVoltage>12?"#22c55e":"#f59e0b"}}>{loc.batteryVoltage}V</div>
                         </div>}
                       </div>
-                      {addr&&<div style={{fontSize:12,color:"#64748b",marginBottom:8}}>📍 {addr}</div>}
+                      {loc.address&&<div style={{fontSize:12,color:"#64748b",marginBottom:8}}>📍 {loc.address}</div>}
                       {lat&&lng&&(
                         <a href={`https://www.google.com/maps?q=${lat},${lng}`} target="_blank" rel="noreferrer"
                           style={{display:"block",textAlign:"center",background:"#0c2340",color:"#60a5fa",padding:"8px",borderRadius:8,fontSize:12,fontWeight:600,textDecoration:"none"}}>
