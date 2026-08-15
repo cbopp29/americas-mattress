@@ -186,6 +186,14 @@ const GLOBAL_STYLES = `
   html { -webkit-text-size-adjust:100% }
 `;
 
+// ─── SAFE ID MATCHING ────────────────────────────────────────────────────────
+// Employee ids can arrive as number (Supabase int) or string (form input).
+// Strict === silently hides a driver's whole route on mismatch, so compare safely.
+function sameId(a, b) {
+  if (a === null || a === undefined || b === null || b === undefined) return false;
+  return String(a) === String(b) || Number(a) === Number(b);
+}
+
 // ─── RICH MESSAGE TEXT (clickable links, phones, @mentions) ──────────────────
 function MessageText({ text, size=14 }) {
   if (!text) return null;
@@ -328,13 +336,13 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
     return (a.stop_order||0)-(b.stop_order||0);
   };
   const myDeliveries = [...deliveries.filter(d=>{
-    const isMine = d.assigned_to===user.id||d.helper_id===user.id;
+    const isMine = sameId(d.assigned_to,user.id)||sameId(d.helper_id,user.id);
     if(!isMine) return false;
     return (d.delivery_date||todayISOd)===activeDate;
   })].sort(byRouteThenStop);
   const myRoutes = [...new Set(myDeliveries.map(d=>d.route_number||1))].sort();
   const otherDeliveries = [...deliveries.filter(d=>{
-    const isMine = d.assigned_to===user.id||d.helper_id===user.id;
+    const isMine = sameId(d.assigned_to,user.id)||sameId(d.helper_id,user.id);
     if(isMine) return false;
     return (d.delivery_date||todayISOd)===activeDate;
   })].sort(byRouteThenStop);
@@ -426,7 +434,7 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
     const sc=STATUS_COLORS[d.status]||STATUS_COLORS["Scheduled"];
     const isOpen=openDel===d.id;
     const dMsgs=messages.filter(m=>m.delivery_id===d.id);
-    const helperEmp=employees.find(e=>e.id===d.helper_id);
+    const helperEmp=employees.find(e=>sameId(e.id,d.helper_id));
     return (
       <div key={d.id} style={{...cardStyle,marginBottom:12,overflow:"hidden",opacity:isMine?1:0.8}}>
         <div style={{padding:"14px 16px",cursor:"pointer"}} onClick={()=>setOpenDel(isOpen?null:d.id)}>
@@ -1054,7 +1062,7 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
                 <div style={{padding:24,textAlign:"center",color:"#475569",fontSize:13}}>{isEs?"No hay entregas.":"No deliveries today."}</div>
               ):(
                 [...deliveries].sort((a,b)=>(a.stop_order||0)-(b.stop_order||0)).map((d,i)=>{
-                  const emp=employees.find(e=>e.id===d.assigned_to);
+                  const emp=employees.find(e=>sameId(e.id,d.assigned_to));
                   const sc=STATUS_COLORS[d.status]||STATUS_COLORS["Scheduled"];
                   return(
                     <div key={d.id} style={{display:"flex",alignItems:"center",padding:"11px 14px",borderTop:i>0?"1px solid #131f2e":"none",gap:10,flexWrap:"wrap"}}>
@@ -1199,7 +1207,7 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
                   <div style={{padding:"20px 16px",color:"#475569",fontSize:13,textAlign:"center"}}>{isEs?"No hay entregas.":"No deliveries yet."}</div>
                 ):(
                   [...prepDels].sort((a,b)=>(a.stop_order||0)-(b.stop_order||0)).map((d,i)=>{
-                    const emp=employees.find(e=>e.id===d.assigned_to);
+                    const emp=employees.find(e=>sameId(e.id,d.assigned_to));
                     return(
                       <div key={d.id} style={{padding:"11px 16px",borderTop:i>0?"1px solid #131f2e":"none"}}>
                         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:4}}>
@@ -2336,6 +2344,22 @@ export default function App() {
         if(rvRes.data) setReceivingLog(rvRes.data);
         if(tfRes.data) setTrainingFiles(tfRes.data);
         if(smsRes.data) setSmsReplies(smsRes.data);
+
+        // ── SELF-HEAL: repair any employee with a broken/missing id ──
+        if (eR.data && eR.data.length) {
+          const broken = eR.data.filter(e => !Number.isFinite(Number(e.id)));
+          if (broken.length) {
+            const good = eR.data.map(e=>Number(e.id)).filter(n=>Number.isFinite(n));
+            let next = (good.length ? Math.max(...good) : 0) + 1;
+            for (const b of broken) {
+              await sb.from("employees").update({ id: next }).eq("name", b.name);
+              console.warn("Repaired broken employee id for:", b.name, "->", next);
+              next++;
+            }
+            const refetch = await sb.from("employees").select("*").order("id");
+            if (refetch.data) setEmployees(refetch.data);
+          }
+        }
         const schedRes = await sb.from("notes").select("*").eq("title","SCHEDULE_PHOTO").order("id",{ascending:false}).limit(1);
         if(schedRes.data&&schedRes.data[0]) setSchedulePhoto(schedRes.data[0].body||"");
         if (trR.data) setTrainings(trR.data);
@@ -2466,7 +2490,8 @@ export default function App() {
   const addEmp = async () => {
     if (!newEmp.name.trim()) return;
     const initials = newEmp.name.trim().split(" ").map(w=>w[0].toUpperCase()).join("").slice(0,2);
-    const nextId = Math.max(...employees.map(e=>e.id))+1;
+    const validIds = employees.map(e=>Number(e.id)).filter(n=>Number.isFinite(n));
+    const nextId = (validIds.length ? Math.max(...validIds) : 0) + 1;
     const emp = {id:nextId,name:newEmp.name.trim(),role:newEmp.role,avatar:initials,lang:newEmp.lang,workdays:newEmp.workdays,is_manager:false,pin:newEmp.pin||String(nextId).padStart(4,"0")};
     await sb.from("employees").insert(emp);
     setEmployees(prev=>[...prev,emp]);
@@ -2687,7 +2712,7 @@ export default function App() {
             {deliveries.length>0&&(
               <div style={{...C.card,overflow:"hidden"}}>
                 {[...deliveries].sort((a,b)=>(a.stop_order||0)-(b.stop_order||0)).map((d,i)=>{
-                  const emp=employees.find(e=>e.id===d.assigned_to);
+                  const emp=employees.find(e=>sameId(e.id,d.assigned_to));
                   const sc=STATUS_COLORS[d.status]||STATUS_COLORS["Scheduled"];
                   return(
                     <div key={d.id} style={{display:"flex",alignItems:"center",padding:"10px 16px",borderBottom:i<deliveries.length-1?"1px solid #131f2e":"none",gap:10,flexWrap:"wrap"}}>
@@ -2924,7 +2949,7 @@ export default function App() {
             ):(
               <div style={{display:"flex",flexDirection:"column",gap:10}}>
                 {[...filteredDeliveries].sort((a,b)=>(a.stop_order||0)-(b.stop_order||0)).map(d=>{
-                  const emp=employees.find(e=>e.id===d.assigned_to);
+                  const emp=employees.find(e=>sameId(e.id,d.assigned_to));
                   const sc=STATUS_COLORS[d.status]||STATUS_COLORS["Scheduled"];
                   const dMsgs=messages.filter(m=>m.delivery_id===d.id);
                   return(
@@ -2959,7 +2984,7 @@ export default function App() {
                           ))}
                           <div style={{fontSize:10,color:"#475569",marginTop:6,marginBottom:2,textTransform:"uppercase",letterSpacing:".05em"}}>Window · Driver</div>
                           <div style={{fontSize:11,color:"#60a5fa",fontWeight:500}}>{d.delivery_window}</div>
-                          <div style={{fontSize:11,color:"#e2e8f0",fontWeight:600}}>{emp?.name}{(()=>{const h=employees.find(e=>e.id===d.helper_id);return h?<span style={{color:"#94a3b8"}}> + {h.name}</span>:null;})()}</div>
+                          <div style={{fontSize:11,color:"#e2e8f0",fontWeight:600}}>{emp?.name}{(()=>{const h=employees.find(e=>sameId(e.id,d.helper_id));return h?<span style={{color:"#94a3b8"}}> + {h.name}</span>:null;})()}</div>
                           {d.notes&&<div style={{fontSize:10,color:"#f59e0b",marginTop:5,background:"#1c1500",borderRadius:4,padding:"2px 6px"}}>⚠️ {d.notes}</div>}
                         </div>
                         {d.route_notes&&(
@@ -3312,6 +3337,40 @@ export default function App() {
         {/* TEAM */}
         {tab==="team"&&(
           <div className="fade">
+            {/* Health check — surfaces broken driver records instead of failing silently */}
+            {(()=>{
+              const broken = employees.filter(e=>!Number.isFinite(Number(e.id)));
+              const dupes = employees.filter((e,i)=>employees.findIndex(x=>sameId(x.id,e.id))!==i);
+              if(!broken.length&&!dupes.length) return null;
+              return (
+                <div style={{...C.card,padding:"14px 16px",marginBottom:14,borderColor:"#dc2626",background:"#1a0a0a"}}>
+                  <div style={{color:"#f87171",fontWeight:700,fontSize:13,marginBottom:6}}>⚠️ Employee records need repair</div>
+                  <div style={{color:"#fca5a5",fontSize:12,marginBottom:10,lineHeight:1.5}}>
+                    {broken.length>0&&<div>Missing/invalid ID: <strong>{broken.map(e=>e.name).join(", ")}</strong></div>}
+                    {dupes.length>0&&<div>Duplicate ID: <strong>{dupes.map(e=>e.name).join(", ")}</strong></div>}
+                    <div style={{marginTop:5,color:"#fda4af"}}>These employees can't be assigned deliveries until repaired.</div>
+                  </div>
+                  <button className="btn" onClick={async()=>{
+                    const good = employees.map(e=>Number(e.id)).filter(n=>Number.isFinite(n));
+                    let next = (good.length?Math.max(...good):0)+1;
+                    const seen = new Set();
+                    for(const e of employees){
+                      const idNum = Number(e.id);
+                      const needsFix = !Number.isFinite(idNum) || seen.has(String(idNum));
+                      if(needsFix){
+                        await sb.from("employees").update({id:next}).eq("name",e.name);
+                        seen.add(String(next)); next++;
+                      } else seen.add(String(idNum));
+                    }
+                    const r = await sb.from("employees").select("*").order("id");
+                    if(r.data) setEmployees(r.data);
+                    alert("✅ Employee records repaired. Reassign their deliveries in the Deliveries tab.");
+                  }} style={{background:"linear-gradient(135deg,#dc2626,#b91c1c)",color:"#fff",padding:"9px 16px",fontSize:12,fontWeight:700}}>
+                    🔧 Repair Employee Records
+                  </button>
+                </div>
+              );
+            })()}
             <div style={{...C.card,padding:"16px 18px",marginBottom:18,borderColor:"#1e3a5f"}}>
               <div style={{fontWeight:700,fontSize:14,color:"#f1f5f9",marginBottom:12}}>➕ Add New Employee</div>
               <div className="new-emp-grid" style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:9,marginBottom:10}}>
@@ -3544,7 +3603,7 @@ export default function App() {
                       <div style={{marginTop:10,borderTop:"1px solid #131f2e",paddingTop:10}}>
                         <div style={{fontSize:10,color:"#475569",textTransform:"uppercase",letterSpacing:".07em",marginBottom:7}}>Deliveries</div>
                         {[...dayDels].sort((a,b)=>(a.stop_order||0)-(b.stop_order||0)).map(d=>{
-                          const emp=employees.find(e=>e.id===d.assigned_to);
+                          const emp=employees.find(e=>sameId(e.id,d.assigned_to));
                           return(
                             <div key={d.id} style={{display:"flex",alignItems:"center",gap:8,marginBottom:5,flexWrap:"wrap"}}>
                               <span style={{fontSize:10,color:"#64748b",fontFamily:"monospace"}}>#{d.stop_order}</span>
@@ -3632,7 +3691,7 @@ export default function App() {
                   <div style={{padding:"20px 16px",color:"#475569",fontSize:13,textAlign:"center"}}>No deliveries scheduled for this day yet.</div>
                 ):(
                   [...prepDels].sort((a,b)=>(a.stop_order||0)-(b.stop_order||0)).map((d,i)=>{
-                    const emp=employees.find(e=>e.id===d.assigned_to);
+                    const emp=employees.find(e=>sameId(e.id,d.assigned_to));
                     return(
                       <div key={d.id} style={{padding:"11px 16px",borderTop:i>0?"1px solid #131f2e":"none"}}>
                         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:4}}>
@@ -3873,7 +3932,7 @@ export default function App() {
                   <div style={{maxHeight:500,overflowY:"auto",display:"flex",flexDirection:"column",gap:8,marginBottom:10}}>
                     {pdfResult.map((del,di)=>{
                       const route=del._route||pdfRoute;
-                      const driverName=employees.find(e=>e.id===del._driver)?.name;
+                      const driverName=employees.find(e=>sameId(e.id,del._driver))?.name;
                       return(
                         <div key={di} style={{...C.card,padding:"12px 14px",borderColor:del.is_transfer?"#f59e0b":route===2?"#4f46e5":"#1e3a5f",borderWidth:2}}>
                           <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:6,marginBottom:8}}>
@@ -4088,7 +4147,7 @@ export default function App() {
                     }} style={{background:"#1c1500",color:"#f59e0b",padding:"3px 8px",fontSize:10}}>🔄 Reset #s</button>
                   </div>
                   {todayDels.map((d,i)=>{
-                    const emp=employees.find(e=>e.id===d.assigned_to);
+                    const emp=employees.find(e=>sameId(e.id,d.assigned_to));
                     return(
                       <div key={d.id} style={{padding:"10px 16px",borderTop:i>0?"1px solid #131f2e":"none",display:"flex",alignItems:"center",gap:9,flexWrap:"wrap"}}>
                         <span style={{fontSize:11,color:"#64748b",fontFamily:"monospace",flexShrink:0}}>#{d.stop_order}</span>
@@ -4651,7 +4710,7 @@ export default function App() {
 
           // Per driver stats
           const driverStats = employees.filter(e=>!e.is_manager).map(emp=>{
-            const empDels = delivered.filter(d=>d.assigned_to===emp.id);
+            const empDels = delivered.filter(d=>sameId(d.assigned_to,emp.id));
             const totalMins = empDels.reduce((acc,d)=>{
               if(d.driver_time_in&&d.driver_time_out){
                 const [ih,im]=d.driver_time_in.split(":").map(Number);
@@ -4849,7 +4908,7 @@ export default function App() {
             const routeTable = (dels, routeNum) => {
               if(!dels.length) return "";
               const rows = dels.map(d=>{
-                const driver = employees.find(e=>e.id===d.assigned_to);
+                const driver = employees.find(e=>sameId(e.id,d.assigned_to));
                 const items = (d.items||[]).map(i=>`${i.qty}x ${i.name}`).join(", ");
                 return `<tr>
                   <td style="font-weight:700;font-size:15px">${d.stop_order||""}</td>
@@ -4912,7 +4971,7 @@ export default function App() {
                     <div key={routeNum} style={{marginBottom:16}}>
                       <div style={{fontWeight:700,fontSize:13,color:routeNum===1?"#60a5fa":"#a78bfa",marginBottom:8,textTransform:"uppercase",letterSpacing:".07em"}}>🚛 Route {routeNum} — {rDels.length} stops</div>
                       {rDels.map(d=>{
-                        const driver=employees.find(e=>e.id===d.assigned_to);
+                        const driver=employees.find(e=>sameId(e.id,d.assigned_to));
                         return(
                           <div key={d.id} style={{...C.card,padding:"11px 14px",marginBottom:8,display:"flex",gap:10,alignItems:"flex-start",borderLeft:`3px solid ${d.status==="Delivered"?"#22c55e":d.status==="Transfer"?"#f59e0b":"#3b82f6"}`}}>
                             <div style={{fontSize:18,fontWeight:800,color:"#475569",minWidth:24,textAlign:"center",flexShrink:0}}>{d.stop_order||"?"}</div>
