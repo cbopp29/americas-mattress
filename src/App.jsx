@@ -1,10 +1,286 @@
-// v3.0 — mobile polish, route separation, timed tasks, DOT checklist, rich messages, Bouncie persist
+// v3.1 — OFFLINE-FIRST: queued writes, blob photo queue, cached routes, auto-sync
 import React, { useState, useEffect, useRef } from "react";
 import { createClient } from "@supabase/supabase-js";
 
 const SUPABASE_URL = "https://nmlhuufmvvqvbyoebrwe.supabase.co";
 const SUPABASE_KEY = "sb_publishable_TRQCQpgnv0NDRt7eIE6t-Q_fEINezez";
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// OFFLINE ENGINE — queues writes when there's no signal, syncs on reconnect
+// Drivers work in Bernalillo / Bosque Farms / Tijeras where service drops.
+// Nothing is ever lost: writes queue to IndexedDB, photos queue as Blobs.
+// ═══════════════════════════════════════════════════════════════════════════
+const ODB = (() => {
+  const DB_NAME = "amattress-offline";
+  const DB_VER = 1;
+  let _dbp = null;
+
+  const open = () => {
+    if (_dbp) return _dbp;
+    _dbp = new Promise((resolve, reject) => {
+      if (typeof indexedDB === "undefined") return reject(new Error("no indexedDB"));
+      const req = indexedDB.open(DB_NAME, DB_VER);
+      req.onupgradeneeded = (e) => {
+        const db = e.target.result;
+        if (!db.objectStoreNames.contains("queue"))
+          db.createObjectStore("queue", { keyPath: "id", autoIncrement: true });
+        if (!db.objectStoreNames.contains("cache"))
+          db.createObjectStore("cache", { keyPath: "key" });
+        if (!db.objectStoreNames.contains("blobs"))
+          db.createObjectStore("blobs", { keyPath: "id", autoIncrement: true });
+      };
+      req.onsuccess = (e) => resolve(e.target.result);
+      req.onerror = (e) => reject(e.target.error);
+    });
+    return _dbp;
+  };
+
+  const run = async (store, mode, fn) => {
+    const db = await open();
+    return new Promise((resolve, reject) => {
+      const t = db.transaction(store, mode);
+      const s = t.objectStore(store);
+      let out;
+      try { out = fn(s); } catch (err) { reject(err); return; }
+      t.oncomplete = () => resolve(out && out.result !== undefined ? out.result : out);
+      t.onerror = () => reject(t.error);
+      t.onabort = () => reject(t.error);
+    });
+  };
+
+  return {
+    // ── queue ──
+    async push(item) {
+      return run("queue", "readwrite", (s) =>
+        s.add({ ...item, ts: Date.now(), attempts: 0, error: "" }));
+    },
+    async all() {
+      return run("queue", "readonly", (s) => s.getAll());
+    },
+    async remove(id) {
+      return run("queue", "readwrite", (s) => s.delete(id));
+    },
+    async bump(id, error) {
+      const db = await open();
+      return new Promise((resolve) => {
+        const t = db.transaction("queue", "readwrite");
+        const s = t.objectStore("queue");
+        const g = s.get(id);
+        g.onsuccess = () => {
+          const rec = g.result;
+          if (rec) {
+            rec.attempts = (rec.attempts || 0) + 1;
+            rec.error = String(error || "").slice(0, 300);
+            s.put(rec);
+          }
+          resolve();
+        };
+        g.onerror = () => resolve();
+      });
+    },
+    async count() {
+      try { return (await run("queue", "readonly", (s) => s.getAll())).length; }
+      catch { return 0; }
+    },
+
+    // ── blobs (photos) ──
+    async putBlob(blob) {
+      return new Promise(async (resolve, reject) => {
+        try {
+          const db = await open();
+          const t = db.transaction("blobs", "readwrite");
+          const req = t.objectStore("blobs").add({ blob, ts: Date.now() });
+          req.onsuccess = () => resolve(req.result);
+          t.onerror = () => reject(t.error);
+        } catch (e) { reject(e); }
+      });
+    },
+    async getBlob(id) {
+      const db = await open();
+      return new Promise((resolve) => {
+        const t = db.transaction("blobs", "readonly");
+        const g = t.objectStore("blobs").get(id);
+        g.onsuccess = () => resolve(g.result ? g.result.blob : null);
+        g.onerror = () => resolve(null);
+      });
+    },
+    async delBlob(id) {
+      return run("blobs", "readwrite", (s) => s.delete(id));
+    },
+
+    // ── cache (offline route data) ──
+    async cacheSet(key, data) {
+      return run("cache", "readwrite", (s) =>
+        s.put({ key, data, ts: Date.now() }));
+    },
+    async cacheGet(key) {
+      const db = await open();
+      return new Promise((resolve) => {
+        const t = db.transaction("cache", "readonly");
+        const g = t.objectStore("cache").get(key);
+        g.onsuccess = () => resolve(g.result ? g.result.data : null);
+        g.onerror = () => resolve(null);
+      });
+    },
+  };
+})();
+
+// ── Offline-safe write helpers ───────────────────────────────────────────────
+// These mirror the Supabase calls but never throw away the driver's work.
+
+const isOnlineNow = () => (typeof navigator === "undefined" ? true : navigator.onLine !== false);
+
+// Notify UI that the pending count changed
+const notifyQueue = () => {
+  try { window.dispatchEvent(new CustomEvent("offline-queue-changed")); } catch {}
+};
+
+async function safeWrite({ table, op = "update", match = null, payload }) {
+  if (isOnlineNow()) {
+    try {
+      let res;
+      if (op === "insert") res = await sb.from(table).insert(payload);
+      else if (op === "upsert") res = await sb.from(table).upsert(payload);
+      else {
+        const col = Object.keys(match)[0];
+        res = await sb.from(table).update(payload).eq(col, match[col]);
+      }
+      if (!res.error) return { ok: true, queued: false };
+      // fall through to queue on server error
+    } catch (e) { /* network died mid-flight — queue it */ }
+  }
+  await ODB.push({ kind: "write", table, op, match, payload });
+  notifyQueue();
+  return { ok: true, queued: true };
+}
+
+// Upload a photo. Offline: stash the Blob, show it locally, upload later.
+async function safeUpload({ bucket = "photos", path, blob, then = null }) {
+  if (isOnlineNow()) {
+    try {
+      const { error } = await sb.storage.from(bucket).upload(path, blob, {
+        contentType: blob.type || "image/jpeg",
+      });
+      if (!error) {
+        const url = sb.storage.from(bucket).getPublicUrl(path).data.publicUrl;
+        if (then) await safeWrite({ table: then.table, op: then.op || "update", match: then.match, payload: { [then.field]: url } });
+        return { ok: true, url, queued: false };
+      }
+    } catch (e) { /* queue below */ }
+  }
+  let blobKey = null;
+  try { blobKey = await ODB.putBlob(blob); } catch {}
+  await ODB.push({ kind: "upload", bucket, path, blobKey, then });
+  notifyQueue();
+  // Local preview URL so the driver sees their photo immediately
+  let localUrl = "";
+  try { localUrl = URL.createObjectURL(blob); } catch {}
+  return { ok: true, url: localUrl, queued: true, local: true };
+}
+
+// Drain the queue. Safe to call repeatedly.
+let _syncing = false;
+async function syncQueue() {
+  if (_syncing || !isOnlineNow()) return { synced: 0, failed: 0 };
+  _syncing = true;
+  let synced = 0, failed = 0;
+  try {
+    const items = await ODB.all();
+    // Oldest first so a status change never overwrites a newer one
+    items.sort((a, b) => (a.ts || 0) - (b.ts || 0));
+    for (const item of items) {
+      if (!isOnlineNow()) break;
+      if ((item.attempts || 0) > 8) continue; // stop hammering a poisoned row
+      try {
+        if (item.kind === "write") {
+          let res;
+          if (item.op === "insert") res = await sb.from(item.table).insert(item.payload);
+          else if (item.op === "upsert") res = await sb.from(item.table).upsert(item.payload);
+          else {
+            const col = Object.keys(item.match)[0];
+            res = await sb.from(item.table).update(item.payload).eq(col, item.match[col]);
+          }
+          if (res.error) throw new Error(res.error.message);
+        } else if (item.kind === "upload") {
+          const blob = item.blobKey != null ? await ODB.getBlob(item.blobKey) : null;
+          if (!blob) { await ODB.remove(item.id); continue; } // blob lost, drop it
+          const { error } = await sb.storage.from(item.bucket).upload(item.path, blob, {
+            contentType: blob.type || "image/jpeg",
+          });
+          if (error && !/already exists/i.test(error.message)) throw new Error(error.message);
+          const url = sb.storage.from(item.bucket).getPublicUrl(item.path).data.publicUrl;
+          if (item.then) {
+            const col = Object.keys(item.then.match)[0];
+            await sb.from(item.then.table).update({ [item.then.field]: url }).eq(col, item.then.match[col]);
+          }
+          if (item.blobKey != null) await ODB.delBlob(item.blobKey);
+        }
+        await ODB.remove(item.id);
+        synced++;
+      } catch (err) {
+        await ODB.bump(item.id, err.message);
+        failed++;
+      }
+    }
+  } catch (e) { /* ignore */ }
+  _syncing = false;
+  notifyQueue();
+  return { synced, failed };
+}
+
+// React hook: live pending count + online state + auto-sync on reconnect
+function useOfflineQueue() {
+  const [pending, setPending] = useState(0);
+  const [online, setOnline] = useState(isOnlineNow());
+  const [syncing, setSyncing] = useState(false);
+
+  const refresh = React.useCallback(async () => {
+    setPending(await ODB.count());
+  }, []);
+
+  useEffect(() => {
+    refresh();
+    const onChange = () => refresh();
+    const goOnline = async () => {
+      setOnline(true);
+      setSyncing(true);
+      await syncQueue();
+      setSyncing(false);
+      refresh();
+    };
+    const goOffline = () => setOnline(false);
+    window.addEventListener("offline-queue-changed", onChange);
+    window.addEventListener("online", goOnline);
+    window.addEventListener("offline", goOffline);
+    // Retry every 30s while anything is pending
+    const iv = setInterval(async () => {
+      const n = await ODB.count();
+      if (n > 0 && isOnlineNow()) {
+        setSyncing(true);
+        await syncQueue();
+        setSyncing(false);
+      }
+      setPending(await ODB.count());
+    }, 30000);
+    return () => {
+      window.removeEventListener("offline-queue-changed", onChange);
+      window.removeEventListener("online", goOnline);
+      window.removeEventListener("offline", goOffline);
+      clearInterval(iv);
+    };
+  }, [refresh]);
+
+  const forceSync = async () => {
+    setSyncing(true);
+    const r = await syncQueue();
+    setSyncing(false);
+    refresh();
+    return r;
+  };
+
+  return { pending, online, syncing, forceSync, refresh };
+}
 
 const ALL_DAYS = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
 const ROLES = ["Driver","Helper","Driver/Helper","Coordinator","Loader","Manager","Warehouse","Other"];
@@ -275,6 +551,7 @@ function LoginScreen({ employees, onLogin }) {
 
 // ─── DRIVER VIEW ──────────────────────────────────────────────────────────────
 function DriverView({ user, deliveries, customTasks, baseTasks, messages, problems, employees, onStatusUpdate, onLogout, onSendMessage, onLogProblem, onSaveDelivery, onSaveSignature, smsTemplates, trainingFiles=[], schedulePhoto="", completions=[], setCompletions }) {
+  const { pending, online, syncing, forceSync } = useOfflineQueue();
   const [tab, setTab] = useState("deliveries");
   const [openDel, setOpenDel] = useState(null);
   const [schedDay, setSchedDay] = useState(null);
@@ -356,7 +633,7 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
   const sendMsg = async (deliveryId) => {
     if (!msgInput.trim()) return;
     const msg = { id:Date.now(), sender_id:user.id, sender_name:user.name, text:msgInput.trim(), delivery_id:deliveryId||null, photo_url:null, created_at:new Date().toISOString() };
-    try { await sb.from("messages").insert(msg); } catch(e) {}
+    await safeWrite({ table:"messages", op:"insert", payload:msg });
     onSendMessage(msg);
     setMsgInput("");
   };
@@ -383,14 +660,15 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
     setUploadingFor(deliveryId);
     try {
       const compressed = await compressPhoto(file);
-      const path = `deliveries/${deliveryId}/${Date.now()}.jpg`;
-      const { error } = await sb.storage.from("photos").upload(path, compressed, {contentType:"image/jpeg"});
-      if (!error) {
-        const url = sb.storage.from("photos").getPublicUrl(path).data.publicUrl;
-        const msg = { id:Date.now(), sender_id:user.id, sender_name:user.name, text:"📷 Photo", delivery_id:deliveryId, photo_url:url, created_at:new Date().toISOString() };
-        await sb.from("messages").insert(msg);
-        onSendMessage(msg);
-      }
+      const msgId = Date.now();
+      const path = `deliveries/${deliveryId}/${msgId}.jpg`;
+      const up = await safeUpload({
+        bucket:"photos", path, blob:compressed,
+        then:{ table:"messages", match:{id:msgId}, field:"photo_url" }
+      });
+      const msg = { id:msgId, sender_id:user.id, sender_name:user.name, text:"📷 Photo", delivery_id:deliveryId, photo_url: up.queued ? "" : up.url, created_at:new Date().toISOString() };
+      await safeWrite({ table:"messages", op:"insert", payload:msg });
+      onSendMessage({ ...msg, photo_url: up.url });
     } catch(e) { console.error(e); }
     setUploadingFor(null);
   };
@@ -398,7 +676,7 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
   const logProb = async () => {
     if (!probInput.description.trim()) return;
     const p = { id:Date.now(), emp_name:user.name, emp_id:user.id, customer:probInput.customer||"", ticket_number:probInput.ticket_number||"", description:probInput.description, type:probInput.type, escalation_step:0, time:new Date().toLocaleDateString("en-US"), resolved:false, status:"Open" };
-    try { await sb.from("problems").insert(p); } catch(e) {}
+    await safeWrite({ table:"problems", op:"insert", payload:p });
     onLogProblem(p);
     setProbInput({ description:"", type:"customer", customer:"", ticket_number:"" });
   };
@@ -424,7 +702,7 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
 
   const updateDeliveryDetail = async (delId, field, value) => {
     setDeliveryDetails(prev => ({ ...prev, [delId]: { ...(prev[delId]||{}), [field]: value } }));
-    await sb.from("deliveries").update({ [field]: value }).eq("id", delId);
+    await safeWrite({ table:"deliveries", op:"update", match:{id:delId}, payload:{ [field]: value } });
   };
 
   const cardStyle = {background:"#0f1923",border:"1px solid #1e2d3d",borderRadius:12};
@@ -700,7 +978,7 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
                           const newChecks={...checks,[q.key]:v};
                           setDeliveryDetails(prev=>({...prev,[d.id]:{...(prev[d.id]||{}),checklist:newChecks}}));
                           setDeliveries(prev=>prev.map(x=>x.id===d.id?{...x,checklist:newChecks}:x));
-                          await sb.from("deliveries").update({checklist:newChecks}).eq("id",d.id);
+                          await safeWrite({ table:"deliveries", op:"update", match:{id:d.id}, payload:{checklist:newChecks} });
                         }} style={{padding:"7px 12px",fontSize:12,fontWeight:600,background:checks[q.key]===v?(v==="Yes"?"#052e16":v==="No"?"#2d0a0a":"#1e2d3d"):"#0a1628",color:checks[q.key]===v?(v==="Yes"?"#4ade80":v==="No"?"#f87171":"#94a3b8"):"#475569",border:`2px solid ${checks[q.key]===v?(v==="Yes"?"#22c55e":v==="No"?"#ef4444":"#334155"):"#1e2d3d"}`}}>
                           {v}
                         </button>
@@ -779,6 +1057,45 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
         />
       )}
       <style>{GLOBAL_STYLES}</style>
+      {/* ── OFFLINE / SYNC STATUS ── */}
+      {(!online || pending > 0) && (
+        <div style={{
+          background: !online ? "#7f1d1d" : "#78350f",
+          color:"#fff", padding:"9px 14px", fontSize:12, fontWeight:600,
+          display:"flex", alignItems:"center", justifyContent:"space-between",
+          gap:10, position:"sticky", top:0, zIndex:150
+        }}>
+          <div style={{display:"flex",alignItems:"center",gap:8,flex:1,minWidth:0}}>
+            <span style={{fontSize:15}}>{!online ? "📴" : syncing ? "🔄" : "⏳"}</span>
+            <div style={{lineHeight:1.35,minWidth:0}}>
+              <div style={{fontWeight:700}}>
+                {!online
+                  ? (isEs ? "Sin señal — trabajo guardado" : "No signal — your work is saved")
+                  : syncing
+                    ? (isEs ? "Sincronizando..." : "Syncing...")
+                    : (isEs ? `${pending} esperando subir` : `${pending} item${pending===1?"":"s"} waiting to upload`)}
+              </div>
+              <div style={{fontSize:10.5,opacity:.85}}>
+                {!online
+                  ? (isEs ? "Sigue trabajando. Se subirá solo." : "Keep working — it uploads automatically.")
+                  : (isEs ? "Se subirá automáticamente." : "Will upload automatically.")}
+              </div>
+            </div>
+          </div>
+          {online && pending > 0 && !syncing && (
+            <button onClick={forceSync} style={{
+              background:"rgba(255,255,255,.22)", border:"none", color:"#fff",
+              padding:"6px 12px", borderRadius:6, fontSize:11, fontWeight:700,
+              cursor:"pointer", flexShrink:0
+            }}>{isEs?"Subir ahora":"Sync now"}</button>
+          )}
+        </div>
+      )}
+      {online && pending === 0 && (
+        <div style={{background:"#052e16",color:"#4ade80",padding:"4px 14px",fontSize:10.5,fontWeight:600,textAlign:"center"}}>
+          ✅ {isEs ? "Todo guardado" : "All work saved"}
+        </div>
+      )}
       <div style={{background:"#0a1628",borderBottom:"1px solid #1e2d3d",padding:"10px 16px",display:"flex",alignItems:"center",justifyContent:"space-between",position:"sticky",top:0,zIndex:100}}>
         <div style={{display:"flex",alignItems:"center",gap:10}}>
           <div style={{width:34,height:34,borderRadius:"50%",background:avatarBg(user),display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:700,color:"#fff"}}>{user.avatar}</div>
@@ -1294,9 +1611,8 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
                       try{
                         const blob=await new Promise(res=>{const r=new FileReader();r.onload=ev=>{const img=new Image();img.onload=()=>{const MAX=1600;let w=img.width,h=img.height;if(w>MAX){h=Math.round(h*MAX/w);w=MAX;}const c=document.createElement("canvas");c.width=w;c.height=h;c.getContext("2d").drawImage(img,0,0,w,h);c.toBlob(b=>res(b),"image/jpeg",0.9);};img.src=ev.target.result;};r.readAsDataURL(file);});
                         const path=`bol/${Date.now()}.jpg`;
-                        const {error}=await sb.storage.from("photos").upload(path,blob,{contentType:"image/jpeg"});
-                        if(!error){const url=sb.storage.from("photos").getPublicUrl(path).data.publicUrl;setDRv(p=>({...p,bol_photo_url:url}));}
-                        else alert("Upload error: "+error.message);
+                        const up=await safeUpload({bucket:"photos",path,blob});
+                        setDRv(p=>({...p,bol_photo_url:up.url,_bolPath:up.queued?path:null}));
                       }catch(err){alert("Error: "+err.message);}
                       setDRvUploading(false);e.target.value="";
                     }} style={{...inputStyle,padding:8}}/>
@@ -1306,9 +1622,9 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
                   <button className="btn" onClick={async()=>{
                     if(!dRv.vendor)return alert("Please enter a vendor.");
                     const r={id:Date.now(),received_date:dRv.received_date,vendor:dRv.vendor,manufacturer:dRv.manufacturer||"",received_by:user.name,quantity:dRv.quantity||1,items:dRv.items||"",notes:dRv.notes||"",bol_photo_url:dRv.bol_photo_url||"",created_at:new Date().toISOString()};
-                    const {error}=await sb.from("receiving_log").insert(r);
-                    if(error){alert("Save failed: "+error.message);return;}
+                    const wr=await safeWrite({table:"receiving_log",op:"insert",payload:r});
                     setDRvSaved(true);
+                    if(wr.queued) alert(isEs?"Guardado sin señal — se subirá solo.":"Saved offline — will upload when you're back in service.");
                     setDRv({received_date:new Date().toISOString().split("T")[0],vendor:"",received_by:user.name,quantity:1,notes:"",manufacturer:"",items:"",bol_photo_url:""});
                     setTimeout(()=>setDRvSaved(false),3000);
                   }} style={{width:"100%",background:"linear-gradient(135deg,#059669,#047857)",color:"#fff",padding:14,fontSize:14,fontWeight:700}}>
@@ -1351,9 +1667,8 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
                       try{
                         const blob=await new Promise(res=>{const r=new FileReader();r.onload=ev=>{const img=new Image();img.onload=()=>{const MAX=1200;let w=img.width,h=img.height;if(w>MAX){h=Math.round(h*MAX/w);w=MAX;}const c=document.createElement("canvas");c.width=w;c.height=h;c.getContext("2d").drawImage(img,0,0,w,h);c.toBlob(b=>res(b),"image/jpeg",0.85);};img.src=ev.target.result;};r.readAsDataURL(file);});
                         const path=`receipts/${Date.now()}.jpg`;
-                        const {error}=await sb.storage.from("photos").upload(path,blob,{contentType:"image/jpeg"});
-                        if(!error){const url=sb.storage.from("photos").getPublicUrl(path).data.publicUrl;setDReceipt(p=>({...p,photo_url:url}));}
-                        else alert("Upload error: "+error.message);
+                        const up=await safeUpload({bucket:"photos",path,blob});
+                        setDReceipt(p=>({...p,photo_url:up.url,_receiptPath:up.queued?path:null}));
                       }catch(err){alert("Error: "+err.message);}
                       setDReceiptUploading(false);e.target.value="";
                     }} style={{...inputStyle,padding:8}}/>
@@ -1363,9 +1678,9 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
                   <button className="btn" onClick={async()=>{
                     if(!dReceipt.reason||!dReceipt.amount)return alert(isEs?"Ingresa razón y monto.":"Please enter reason and amount.");
                     const r={id:Date.now(),reason:dReceipt.reason,amount:parseFloat(dReceipt.amount),receipt_date:dReceipt.receipt_date,photo_url:dReceipt.photo_url||"",submitted_by:user.name,created_at:new Date().toISOString()};
-                    const {error}=await sb.from("receipts").insert(r);
-                    if(error){alert("Save failed: "+error.message);return;}
+                    const wr=await safeWrite({table:"receipts",op:"insert",payload:r});
                     setDReceiptSaved(true);
+                    if(wr.queued) alert(isEs?"Guardado sin señal — se subirá solo.":"Saved offline — will upload when you're back in service.");
                     setDReceipt({reason:"",amount:"",receipt_date:new Date().toISOString().split("T")[0],photo_url:""});
                     setTimeout(()=>setDReceiptSaved(false),3000);
                   }} style={{width:"100%",background:"linear-gradient(135deg,#2563eb,#1d4ed8)",color:"#fff",padding:14,fontSize:14,fontWeight:700}}>
@@ -1426,7 +1741,7 @@ function TrainingCard({ t, embed, signed, user, isEs, sb, completions, setComple
             <div style={{padding:"12px 16px",borderTop:"1px solid #1e2d3d"}}>
               <button className="btn" onClick={async()=>{
                 const c={id:Date.now(),training_id:t.id,emp_id:user.id,emp_name:user.name,completed_at:new Date().toISOString(),signature_url:""};
-                await sb.from("training_completions").insert(c);
+                await safeWrite({table:"training_completions",op:"insert",payload:c});
                 setCompletions(prev=>[...prev,c]);
               }} style={{width:"100%",background:"linear-gradient(135deg,#059669,#047857)",color:"#fff",padding:"11px",fontSize:13,fontWeight:700}}>
                 ✅ {isEs?"Marcar como Completado":"I Have Watched This — Mark Complete"}
@@ -1490,11 +1805,8 @@ function DriverInspectionUpload({ user, onUploaded, isEs }) {
     try {
       const compressed = await compressPhoto(file);
       const path = `inspections/${user.id}/${Date.now()}.jpg`;
-      const { error } = await sb.storage.from("photos").upload(path, compressed, {contentType:"image/jpeg"});
-      if (!error) {
-        const url = sb.storage.from("photos").getPublicUrl(path).data.publicUrl;
-        setPhotos(p=>[...p,url]);
-      } else alert("Upload failed: "+error.message);
+      const up = await safeUpload({ bucket:"photos", path, blob:compressed });
+      setPhotos(p=>[...p,up.url]);
     } catch(err){ alert("Error: "+err.message); }
     setUploading(false);
     e.target.value="";
@@ -1516,9 +1828,9 @@ function DriverInspectionUpload({ user, onUploaded, isEs }) {
       inspection_date:new Date().toISOString().split("T")[0],
       created_at:new Date().toISOString()
     };
-    const { error } = await sb.from("inspections").insert(ins);
+    const wr = await safeWrite({ table:"inspections", op:"insert", payload:ins });
     setUploading(false);
-    if(error){ alert("Save failed: "+error.message); return; }
+    if(wr.queued) alert(isEs?"Guardado sin señal — se subirá solo.":"Saved offline — will upload when you're back in service.");
     onUploaded(ins);
     setDone(true);
     setChecks({}); setNotes(""); setMileage(""); setPhotos([]);
@@ -1653,12 +1965,15 @@ function WarrantyInspector({ delivery, user, onClose, onSaved, isEs }) {
     try {
       const compressed = await compressPhoto(file);
       const path = `warranty/${delivery.id}/${key}-${Date.now()}.jpg`;
-      const { error } = await sb.storage.from("photos").upload(path, compressed, {contentType:"image/jpeg"});
-      if (!error) {
-        const url = sb.storage.from("photos").getPublicUrl(path).data.publicUrl;
-        const newPhotos = { ...photos, [key]: url };
-        setPhotos(newPhotos);
-        await sb.from("deliveries").update({ warranty_photos: newPhotos }).eq("id", delivery.id);
+      const up = await safeUpload({ bucket:"photos", path, blob:compressed });
+      const newPhotos = { ...photos, [key]: up.url };
+      setPhotos(newPhotos);
+      // Store the real URL when online; when queued the sync patches it after upload
+      if (!up.queued) {
+        await safeWrite({ table:"deliveries", op:"update", match:{id:delivery.id}, payload:{ warranty_photos: newPhotos } });
+      } else {
+        const pendingPhotos = { ...photos, [key]: `PENDING:${path}` };
+        await safeWrite({ table:"deliveries", op:"update", match:{id:delivery.id}, payload:{ warranty_photos: pendingPhotos } });
       }
     } catch(e) { console.error(e); }
     setUploading(null);
@@ -1766,11 +2081,8 @@ function TrainingSignPad({ emp, session, onSigned, onClose }) {
     try {
       canvasRef.current.toBlob(async(blob)=>{
         const path = `trainings/${session.id}/${emp.id}-${Date.now()}.png`;
-        const { error } = await sb.storage.from("photos").upload(path, blob, {contentType:"image/png"});
-        if (!error) {
-          const url = sb.storage.from("photos").getPublicUrl(path).data.publicUrl;
-          onSigned(url);
-        }
+        const up = await safeUpload({ bucket:"photos", path, blob });
+        onSigned(up.url);
         setSaving(false);
       }, "image/png");
     } catch(e) { console.error(e); setSaving(false); }
@@ -1851,12 +2163,15 @@ function LiabilityPad({ delivery, user, formType, onSigned, onClose, isEs }) {
     try {
       const canvas = canvasRef.current;
       canvas.toBlob(async (blob) => {
-        const path = `liability/${delivery.id}/${formType}-${Date.now()}.png`;
-        const { error } = await sb.storage.from("photos").upload(path, blob, { contentType:"image/png" });
-        if (!error) {
-          const url = sb.storage.from("photos").getPublicUrl(path).data.publicUrl;
+        try {
+          const recId = Date.now();
+          const path = `liability/${delivery.id}/${formType}-${recId}.png`;
+          const up = await safeUpload({
+            bucket:"photos", path, blob,
+            then:{ table:"liability_forms", match:{id:recId}, field:"signature_url" }
+          });
           const record = {
-            id: Date.now(),
+            id: recId,
             form_type: formType,
             customer: delivery.customer,
             address: delivery.address,
@@ -1864,13 +2179,14 @@ function LiabilityPad({ delivery, user, formType, onSigned, onClose, isEs }) {
             ticket_number: delivery.ticket_number||"",
             driver_name: user.name,
             details: details.trim(),
-            signature_url: url,
+            signature_url: up.queued ? "" : up.url,
             printed_name: printedName.trim(),
             signed_at: new Date().toISOString(),
           };
-          await sb.from("liability_forms").insert(record);
-          onSigned(record);
-        }
+          await safeWrite({ table:"liability_forms", op:"insert", payload:record });
+          if (up.queued) alert("✅ Form saved on this device.\n\nNo signal — it uploads automatically when you're back in service.");
+          onSigned({ ...record, signature_url: up.url });
+        } catch(err) { alert("Could not save form: "+err.message); }
         setSaving(false);
       }, "image/png");
     } catch(e) { console.error(e); setSaving(false); }
@@ -1997,27 +2313,57 @@ function SignaturePad({ delivery, user, onSigned, onClose, isEs }) {
     try {
       const canvas = canvasRef.current;
       canvas.toBlob(async (blob) => {
-        const path = `signatures/${delivery.id}/${Date.now()}.png`;
-        const { error } = await sb.storage.from("photos").upload(path, blob, { contentType:"image/png" });
-        if (!error) {
-          const url = sb.storage.from("photos").getPublicUrl(path).data.publicUrl;
+        try {
           const now = new Date().toISOString();
-          await sb.from("deliveries").update({ signature_url:url, signed_by:printedName.trim(), signed_at:now, status:"Delivered" }).eq("id", delivery.id);
-          const sigRecord = {
-            id: Date.now(),
-            ticket_number: delivery.ticket_number||"",
-            customer: delivery.customer,
-            address: delivery.address,
-            phone: delivery.phone,
-            delivery_date: delivery.delivery_date||new Date().toISOString().split("T")[0],
-            signed_by: printedName.trim(),
-            signed_at: now,
-            signature_url: url,
-            driver_name: user.name,
-            items: delivery.items||[],
-          };
-          await sb.from("signatures").insert(sigRecord);
-          onSigned(url, now, printedName.trim());
+          const sigId = Date.now();
+          const path = `signatures/${delivery.id}/${sigId}.png`;
+
+          // Upload signature image — queues offline, patches the row on sync
+          const up = await safeUpload({
+            bucket: "photos",
+            path,
+            blob,
+            then: { table: "deliveries", match: { id: delivery.id }, field: "signature_url" },
+          });
+
+          // Mark delivered immediately — queues if there's no signal
+          await safeWrite({
+            table: "deliveries",
+            op: "update",
+            match: { id: delivery.id },
+            payload: {
+              signed_by: printedName.trim(),
+              signed_at: now,
+              status: "Delivered",
+              ...(up.queued ? {} : { signature_url: up.url }),
+            },
+          });
+
+          // Permanent signature record for the archive
+          await safeWrite({
+            table: "signatures",
+            op: "insert",
+            payload: {
+              id: sigId,
+              ticket_number: delivery.ticket_number || "",
+              customer: delivery.customer,
+              address: delivery.address,
+              phone: delivery.phone,
+              delivery_date: delivery.delivery_date || new Date().toISOString().split("T")[0],
+              signed_by: printedName.trim(),
+              signed_at: now,
+              signature_url: up.queued ? "" : up.url,
+              driver_name: user.name,
+              items: delivery.items || [],
+            },
+          });
+
+          if (up.queued) {
+            alert("✅ Signature saved on this device.\n\nNo signal right now — it will upload automatically when you're back in service. You can keep working.");
+          }
+          onSigned(up.url, now, printedName.trim());
+        } catch (err) {
+          alert("Could not save signature: " + err.message);
         }
         setSaving(false);
       }, "image/png");
@@ -2286,6 +2632,7 @@ export default function App() {
   const [reportWeek, setReportWeek] = useState(()=>{const d=new Date();d.setDate(d.getDate()-d.getDay());return d.toISOString().split("T")[0];});
   const [offlineQueue, setOfflineQueue] = useState([]);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const mgrQueue = useOfflineQueue();
   const [sigSearch, setSigSearch] = useState("");
   const [trainingSession, setTrainingSession] = useState(null);
   const [trainingSigningEmp, setTrainingSigningEmp] = useState(null);
@@ -2310,6 +2657,16 @@ export default function App() {
   useEffect(()=>{
     async function load() {
       setLoading(true);
+      // No signal at open? Hydrate from the cached route so the driver isn't blank.
+      if (!isOnlineNow()) {
+        try {
+          const [cd, ce] = await Promise.all([ODB.cacheGet("deliveries"), ODB.cacheGet("employees")]);
+          if (cd) setDeliveries(cd);
+          if (ce) setEmployees(ce);
+        } catch {}
+        setLoading(false);
+        return;
+      }
       try {
         const [eR,dR,ctR,nR,pR,mR,sigR,insR,trR,tcR,lfR] = await Promise.all([
           sb.from("employees").select("*"),
@@ -2344,6 +2701,12 @@ export default function App() {
         if(rvRes.data) setReceivingLog(rvRes.data);
         if(tfRes.data) setTrainingFiles(tfRes.data);
         if(smsRes.data) setSmsReplies(smsRes.data);
+
+        // Cache the route + team so the app still works with no signal
+        try {
+          if (dR.data) await ODB.cacheSet("deliveries", dR.data);
+          if (eR.data) await ODB.cacheSet("employees", eR.data);
+        } catch {}
 
         // ── SELF-HEAL: repair any employee with a broken/missing id ──
         if (eR.data && eR.data.length) {
@@ -2406,7 +2769,10 @@ export default function App() {
   };
 
   const delDelivery = async (id) => { await sb.from("deliveries").delete().eq("id",id); setDeliveries(prev=>prev.filter(d=>d.id!==id)); };
-  const updStatus = async (id,status) => { await sb.from("deliveries").update({status}).eq("id",id); setDeliveries(prev=>prev.map(d=>d.id===id?{...d,status}:d)); };
+  const updStatus = async (id,status) => {
+    setDeliveries(prev=>prev.map(d=>d.id===id?{...d,status}:d));   // optimistic — UI never stalls
+    await safeWrite({ table:"deliveries", op:"update", match:{id}, payload:{status} });
+  };
 
   const addTask = async (empId) => {
     if (!newTaskInput.text.trim()) return;
@@ -2602,6 +2968,21 @@ export default function App() {
     <div style={{fontFamily:"'DM Sans','Segoe UI',sans-serif",background:"#080d14",minHeight:"100vh",color:"#e2e8f0"}}>
       <style>{GLOBAL_STYLES}</style>
 
+      {/* Offline / sync banner */}
+      {(!mgrQueue.online||mgrQueue.pending>0)&&(
+        <div style={{background:!mgrQueue.online?"#7f1d1d":"#78350f",color:"#fff",padding:"8px 14px",fontSize:12,fontWeight:600,position:"sticky",top:0,zIndex:200,display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}}>
+          <span>
+            {!mgrQueue.online
+              ? "📴 No connection — your changes are saved and will upload automatically."
+              : mgrQueue.syncing ? "🔄 Syncing your changes..."
+              : `⏳ ${mgrQueue.pending} change${mgrQueue.pending===1?"":"s"} waiting to upload`}
+          </span>
+          {mgrQueue.online&&mgrQueue.pending>0&&!mgrQueue.syncing&&(
+            <button onClick={mgrQueue.forceSync} style={{background:"rgba(255,255,255,0.22)",border:"none",color:"#fff",padding:"4px 12px",borderRadius:5,cursor:"pointer",fontSize:11,fontWeight:700,flexShrink:0}}>Sync now</button>
+          )}
+        </div>
+      )}
+
       {/* Header */}
       <div style={{background:"#0a1628",borderBottom:"1px solid #1e2d3d"}}>
         <div style={{maxWidth:1180,margin:"0 auto",padding:"0 16px",display:"flex",alignItems:"center",justifyContent:"space-between",height:58}}>
@@ -2609,7 +2990,12 @@ export default function App() {
             <div style={{width:32,height:32,background:"linear-gradient(135deg,#2563eb,#1d4ed8)",borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16}}>🛏</div>
             <div>
               <div style={{fontWeight:800,fontSize:14,color:"#f1f5f9"}}>America's Mattress</div>
-              <div style={{fontSize:10,color:"#475569",fontFamily:"'DM Mono',monospace"}}>{syncing?"● Saving...":isOnline?"● Live":"🔴 Offline"} · {todayDate}</div>
+              <div style={{fontSize:10,color:!mgrQueue.online?"#f87171":mgrQueue.pending>0?"#f59e0b":"#475569",fontFamily:"'DM Mono',monospace"}}>
+                {!mgrQueue.online ? "🔴 Offline — work saved locally"
+                  : mgrQueue.syncing ? "🔄 Syncing..."
+                  : mgrQueue.pending>0 ? `⏳ ${mgrQueue.pending} pending`
+                  : syncing ? "● Saving..." : "● Live"} · {todayDate}
+              </div>
             </div>
           </div>
           <div style={{display:"flex",alignItems:"center",gap:8}}>
