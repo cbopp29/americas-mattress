@@ -1411,7 +1411,7 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
               {GOOGLE_SHEET_URL==="YOUR_SHEET_URL_HERE"?(
                 <div style={{padding:40,textAlign:"center",color:"#475569",fontSize:13}}>{isEs?"Hoja no conectada aún.":"Sheet not connected yet."}</div>
               ):(
-                <InventoryPanel who={user?.name} isEs={isEs}/>
+                <InventoryPanel who={user?.name} isEs={isEs} manager={!!user?.is_manager}/>
               )}
             </div>
           </div>
@@ -2558,10 +2558,10 @@ function skuWithCode(itemnum, size) {
 const SIZE_HEX = { TWIN: "#60a5fa", "TWIN XL": "#38bdf8", FULL: "#34d399", QUEEN: "#f59e0b", KING: "#f43f5e", "CAL KING": "#a855f7", OTHER: "#94a3b8" };
 
 // ── 3D warehouse: floor + bays + inventory as labeled blocks; drag bays in edit mode ──
-function Warehouse3D({ bays, items, editable, onMoveBay }) {
+function Warehouse3D({ bays, items, editable, onMoveBay, onPickBay }) {
   const mountRef = useRef(null);
   const dataRef = useRef({});
-  dataRef.current = { bays, items, editable, onMoveBay };
+  dataRef.current = { bays, items, editable, onMoveBay, onPickBay };
   const glRef = useRef({});
   const selRef = useRef(null);
 
@@ -2602,14 +2602,16 @@ function Warehouse3D({ bays, items, editable, onMoveBay }) {
       pad.position.y = 0.03; pad.userData.bay = b.name; grp.add(pad); gl.pads.push(pad);
       const edge = new THREE.LineSegments(new THREE.EdgesGeometry(pad.geometry), new THREE.LineBasicMaterial({ color: sel === b.name ? 0x22c55e : 0x3b82f6 })); edge.position.y = 0.03; grp.add(edge);
       const its = items.filter((i) => (i.bay || "") === b.name);
-      grp.add((() => { const l = mkLabel(THREE, b.name + " · " + its.length, "#3b82f6", 2.4); l.position.y = 2.5; return l; })());
       const bh = 0.22, bw = Math.min(0.7, b.w - 0.3), bd = Math.min(2.2, b.d - 0.4);
-      its.forEach((it, idx) => {
+      const cap = Math.min(its.length, 14);
+      for (let idx = 0; idx < cap; idx++) {
+        const it = its[idx];
         const hex = SIZE_HEX[(it.size || "").toUpperCase()] || "#94a3b8";
         const box = new THREE.Mesh(new THREE.BoxGeometry(bw, bh, bd), new THREE.MeshStandardMaterial({ color: hex, roughness: 0.7 }));
         box.position.y = 0.13 + idx * (bh + 0.04); grp.add(box);
-        if (sel === b.name) { const l = mkLabel(THREE, it.name + " " + (it.size ? it.size[0] : ""), hex, 1.9); l.position.set(0, box.position.y, bd / 2 + 0.05); grp.add(l); }
-      });
+      }
+      const topY = 0.4 + cap * (bh + 0.04) + 0.5;
+      grp.add((() => { const l = mkLabel(THREE, b.name, sel === b.name ? "#22c55e" : "#3b82f6", 2.2); l.position.y = Math.max(1.6, topY); return l; })());
       gl.content.add(grp);
     });
   }
@@ -2620,7 +2622,7 @@ function Warehouse3D({ bays, items, editable, onMoveBay }) {
     const renderer = new THREE.WebGLRenderer({ antialias: true }); renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); renderer.setSize(w, h);
     mount.appendChild(renderer.domElement);
     const scene = new THREE.Scene(); scene.background = new THREE.Color(0x0b1520);
-    const cam = new THREE.PerspectiveCamera(50, w / h, 0.1, 500); cam.position.set(10, 13, 17);
+    const cam = new THREE.PerspectiveCamera(50, w / h, 0.1, 500); cam.position.set(3, 26, 31);
     const ctr = new THREE.OrbitControls(cam, renderer.domElement); ctr.enableDamping = true; ctr.target.set(0, 0, 0);
     scene.add(new THREE.AmbientLight(0xffffff, 0.8)); const dl = new THREE.DirectionalLight(0xffffff, 0.7); dl.position.set(8, 15, 6); scene.add(dl);
     const floor = new THREE.Mesh(new THREE.PlaneGeometry(60, 40), new THREE.MeshStandardMaterial({ color: 0x0f1e2b, roughness: 1 })); floor.rotation.x = -Math.PI / 2; scene.add(floor);
@@ -2633,7 +2635,7 @@ function Warehouse3D({ bays, items, editable, onMoveBay }) {
     const onMove = (e) => { if (!drag) return; pt(e); ray.setFromCamera(ndc, cam); if (ray.ray.intersectPlane(plane, hit)) { drag.position.x = hit.x; drag.position.z = hit.z; } };
     const onUp = (e) => {
       if (drag) { dataRef.current.onMoveBay && dataRef.current.onMoveBay(drag.userData.bay, Math.round(drag.position.x * 100) / 100, Math.round(drag.position.z * 100) / 100); drag = null; ctr.enabled = true; return; }
-      if (downXY) { const p = pt(e); if (Math.abs(p.cx - downXY.cx) < 6 && Math.abs(p.cy - downXY.cy) < 6) { ray.setFromCamera(ndc, cam); const h = ray.intersectObjects(glRef.current.pads || []); const name = h.length ? h[0].object.userData.bay : null; selRef.current = (selRef.current === name) ? null : name; build(); } }
+      if (downXY) { const p = pt(e); if (Math.abs(p.cx - downXY.cx) < 6 && Math.abs(p.cy - downXY.cy) < 6) { ray.setFromCamera(ndc, cam); const h = ray.intersectObjects(glRef.current.pads || []); const name = h.length ? h[0].object.userData.bay : null; if (name) { selRef.current = name; build(); dataRef.current.onPickBay && dataRef.current.onPickBay(name); } else if (selRef.current) { selRef.current = null; build(); } } }
     };
     renderer.domElement.addEventListener("pointerdown", onDown); window.addEventListener("pointermove", onMove); window.addEventListener("pointerup", onUp);
     const ro = new ResizeObserver(() => { const W = mount.clientWidth, H = mount.clientHeight; if (W && H) { cam.aspect = W / H; cam.updateProjectionMatrix(); renderer.setSize(W, H); } }); ro.observe(mount);
@@ -2653,7 +2655,7 @@ function Warehouse3D({ bays, items, editable, onMoveBay }) {
   return <div ref={mountRef} style={{ width: "100%", height: "100%" }} />;
 }
 
-function InventoryPanel({ who = "", isEs = false }) {
+function InventoryPanel({ who = "", isEs = false, manager = false }) {
   const [items, setItems] = useState([]);
   const [moves, setMoves] = useState([]);
   const [q, setQ] = useState("");
@@ -2663,7 +2665,8 @@ function InventoryPanel({ who = "", isEs = false }) {
   const [pending, setPending] = useState(null); // +/- confirm
   const [bayRows, setBayRows] = useState([]);   // bay ordering rows
   const [bayForm, setBayForm] = useState(null); // add / edit bay modal
-  const [edit3d, setEdit3d] = useState(false);  // drag-to-place bays in 3D
+  const [edit3d, setEdit3d] = useState(false);  // drag-to-place bays in 3D (managers)
+  const [pickBay, setPickBay] = useState(null); // tapped bay -> contents drawer
 
   useEffect(() => {
     let alive = true;
@@ -2792,18 +2795,27 @@ function InventoryPanel({ who = "", isEs = false }) {
   const groups = {}; shown.forEach((x) => { (groups[x.bay] = groups[x.bay] || []).push(x); });
   const bays = Object.keys(groups).sort((a, b) => bayKey(a) - bayKey(b) || a.localeCompare(b));
   const allBayNames = Array.from(new Set([...items.map((x) => x.bay).filter(Boolean), ...bayRows.map((b) => b.name)])).sort((a, b) => bayKey(a) - bayKey(b) || a.localeCompare(b));
-  // positioned bays for the 3D view (auto-grid any bay without saved x/z)
-  const COLS = 6, GX = 5, GZ = 5;
+  // real-world default layout: 0-9 right wall, 10-16 middle, 17-22 left wall, 23-29 middle-2, couch/stacks
+  const zonePos = (name) => {
+    const up = (name || "").toUpperCase();
+    const L = (a, b, t) => a + (b - a) * t;
+    if (up.includes("COUCH")) return { x: 0, z: 17, w: 6, d: 2.6 };
+    if (up.includes("STACK")) { const s = baynum(name) || 1; return { x: -6 + (s - 1) * 4, z: -18, w: 2.4, d: 2.4 }; }
+    const n = baynum(name);
+    if (n >= 0 && n <= 9) return { x: 19, z: L(-15, 15, n / 9), w: 2.6, d: 2.4 };
+    if (n >= 10 && n <= 16) return { x: -5, z: L(-12, 12, (n - 10) / 6), w: 2.4, d: 2.4 };
+    if (n >= 17 && n <= 22) return { x: -19, z: L(-15, 15, (n - 17) / 5), w: 2.6, d: 2.4 };
+    if (n >= 23 && n <= 29) return { x: 5, z: L(-12, 12, (n - 23) / 6), w: 2.4, d: 2.4 };
+    return null;
+  };
+  const seen3d = {};
   const bays3d = allBayNames.map((name, i) => {
     const r = bayRows.find((b) => b.name === name) || {};
-    const placed = r.x != null && r.z != null;
-    return {
-      name,
-      x: placed ? r.x : (i % COLS) * GX - ((COLS - 1) * GX) / 2,
-      z: placed ? r.z : Math.floor(i / COLS) * GZ - 5,
-      w: r.w != null ? r.w : 2.4,
-      d: r.d != null ? r.d : 3,
-    };
+    if (r.x != null && r.z != null) return { name, x: r.x, z: r.z, w: r.w != null ? r.w : 2.4, d: r.d != null ? r.d : 2.4 };
+    let p = zonePos(name) || { x: -19 + (i % 6) * 3, z: 20, w: 2.2, d: 2.2 };
+    const key = Math.round(p.x) + "," + Math.round(p.z);
+    if (seen3d[key]) { p = { ...p, x: p.x + seen3d[key] * 1.5 }; seen3d[key]++; } else seen3d[key] = 1;
+    return { name, x: p.x, z: p.z, w: p.w, d: p.d };
   });
 
   const S = {
@@ -2828,7 +2840,7 @@ function InventoryPanel({ who = "", isEs = false }) {
       <button onClick={openAdd} style={{ width: "100%", marginBottom: 10, padding: 13, borderRadius: 11, border: "none", background: "#2563eb", color: "#fff", fontWeight: 800, fontSize: 15, cursor: "pointer" }}>+ {isEs ? "Agregar inventario" : "Add stock"}</button>
       <div style={{ display: "flex", gap: 7, marginBottom: 10 }}>
         <button style={S.tabBtn(view === "inv")} onClick={() => setView("inv")}>{isEs ? "Inventario" : "Inventory"}</button>
-        <button style={S.tabBtn(view === "bays")} onClick={() => setView("bays")}>{isEs ? "Bahías" : "Bays"}</button>
+        {manager && <button style={S.tabBtn(view === "bays")} onClick={() => setView("bays")}>{isEs ? "Bahías" : "Bays"}</button>}
         <button style={S.tabBtn(view === "3d")} onClick={() => setView("3d")}>3D</button>
         <button style={S.tabBtn(view === "log")} onClick={() => setView("log")}>{isEs ? "Actividad" : "Activity"}</button>
       </div>
@@ -2883,12 +2895,12 @@ function InventoryPanel({ who = "", isEs = false }) {
         <div>
           <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "2px 2px 8px" }}>
             <div style={{ flex: 1, fontSize: 12, color: "#7b8aa0" }}>
-              {edit3d ? (isEs ? "Arrastra una bahía para colocarla. Toca una para ver sus artículos." : "Drag a bay to place it. Tap a bay to see its items.") : (isEs ? "Arrastra para girar · pellizca para acercar · toca una bahía." : "Drag to orbit · pinch to zoom · tap a bay for its items.")}
+              {(manager && edit3d) ? (isEs ? "Arrastra una bahía para colocarla en su lugar real." : "Drag a bay to place it where it really sits.") : (isEs ? "Arrastra para girar · pellizca para acercar · toca una bahía para ver las camas." : "Drag to orbit · pinch to zoom · tap a bay to see its beds.")}
             </div>
-            <button onClick={() => setEdit3d((v) => !v)} style={{ padding: "7px 12px", borderRadius: 9, border: "none", fontWeight: 700, fontSize: 13, cursor: "pointer", background: edit3d ? "#22c55e" : "#16202b", color: edit3d ? "#fff" : "#7b8aa0" }}>{edit3d ? (isEs ? "Listo" : "Done") : (isEs ? "Editar diseño" : "Edit layout")}</button>
+            {manager && <button onClick={() => setEdit3d((v) => !v)} style={{ padding: "7px 12px", borderRadius: 9, border: "none", fontWeight: 700, fontSize: 13, cursor: "pointer", background: edit3d ? "#22c55e" : "#16202b", color: edit3d ? "#fff" : "#7b8aa0" }}>{edit3d ? (isEs ? "Listo" : "Done") : (isEs ? "Editar diseño" : "Edit layout")}</button>}
           </div>
-          <div style={{ height: "66vh", borderRadius: 12, overflow: "hidden", background: "#0b1520", border: "1px solid " + (edit3d ? "#22c55e" : "#1e2d3d") }}>
-            <Warehouse3D bays={bays3d} items={items} editable={edit3d} onMoveBay={moveBay} />
+          <div style={{ height: "66vh", borderRadius: 12, overflow: "hidden", background: "#0b1520", border: "1px solid " + (manager && edit3d ? "#22c55e" : "#1e2d3d") }}>
+            <Warehouse3D bays={bays3d} items={items} editable={manager && edit3d} onMoveBay={moveBay} onPickBay={setPickBay} />
           </div>
         </div>
       )}
@@ -2971,6 +2983,34 @@ function InventoryPanel({ who = "", isEs = false }) {
           </div>
         </div>
       )}
+
+      {pickBay && (() => {
+        const rows = items.filter((x) => (x.bay || "") === pickBay);
+        const total = rows.reduce((s, r) => s + (r.qty || 0), 0);
+        return (
+          <div onClick={(e) => { if (e.target === e.currentTarget) setPickBay(null); }} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.6)", zIndex: 9998, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
+            <div style={{ background: "#0f1923", border: "1px solid #1e2d3d", borderRadius: "16px 16px 0 0", padding: 16, width: "100%", maxWidth: 520, maxHeight: "76vh", overflowY: "auto" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                <div style={{ fontWeight: 800, fontSize: 17, color: "#f1f5f9" }}>{isEs ? "Bahía" : "Bay"} {pickBay}</div>
+                <span style={{ ...S.pill, fontSize: 12 }}>{total} {isEs ? "u" : "units"}</span>
+                <button onClick={() => setPickBay(null)} style={{ marginLeft: "auto", padding: "6px 12px", borderRadius: 9, border: "none", background: "#16202b", color: "#e2e8f0", fontWeight: 700, cursor: "pointer" }}>{isEs ? "Cerrar" : "Close"}</button>
+              </div>
+              {rows.length === 0 && <div style={{ padding: 24, textAlign: "center", color: "#475569" }}>{isEs ? "No hay camas en esta bahía." : "No beds in this bay."}</div>}
+              {rows.map((r) => (
+                <div key={r.id} style={S.card}>
+                  <div style={{ minWidth: 0, flex: 1, cursor: "pointer" }} onClick={() => openEdit(r)}>
+                    <div style={S.nm}>{r.name || "(no name)"} <span style={{ fontSize: 12, color: "#3b82f6", fontWeight: 600 }}>✎</span></div>
+                    <div style={S.sub}>{[r.manufacturer, r.size, r.sku].filter(Boolean).join("  ·  ")}</div>
+                  </div>
+                  <div style={S.qty((r.qty || 0) <= 1)}>{r.qty || 0}</div>
+                  <button style={S.op("#f43f5e")} onClick={() => setPending({ it: r, delta: -1 })}>−</button>
+                  <button style={S.op("#22c55e")} onClick={() => setPending({ it: r, delta: 1 })}>+</button>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
@@ -4147,7 +4187,7 @@ export default function App() {
                   </div>
                 </div>
               ):(
-                <InventoryPanel who={currentUser?.name}/>
+                <InventoryPanel who={currentUser?.name} manager={!!currentUser?.is_manager}/>
               )}
             </div>
           </div>
