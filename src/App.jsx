@@ -2559,7 +2559,7 @@ const SIZE_HEX = { TWIN: "#60a5fa", "TWIN XL": "#38bdf8", FULL: "#34d399", QUEEN
 
 // ── 3D warehouse: floor + bays + inventory as labeled blocks; drag bays in edit mode ──
 // warehouse floor plan: four racks (0-9 & 17-22 wall-mounted, 10-16 & 23-29 double-sided) + elevated couch platform
-const LH = 1.3, Y0 = 0.5, PADW = 2.4, PADD = 2.4;
+const LH = 1.3, Y0 = 0.5, PADD = 2.4;
 const RACKS = [
   { key: "a", range: [0, 9], z: 12, wall: 14.2, label: "BAY 0-9" },
   { key: "b", range: [10, 16], z: 6.5, wall: null, label: "BAY 10-16" },
@@ -2577,17 +2577,9 @@ const FOCI = {
 function rackOf(n) { for (const r of RACKS) if (n >= r.range[0] && n <= r.range[1]) return r; return null; }
 function parseBay(name) {
   const up = (name || "").toUpperCase().trim();
-  const m = up.match(/^(\d+)\s*([A-Z])?/);
-  if (!m) return { pos: null, level: 0, special: true };
-  return { pos: parseInt(m[1]), level: m[2] ? Math.min(m[2].charCodeAt(0) - 65, 9) : 0, special: false };
-}
-function bayWorld(name) {
-  const up = (name || "").toUpperCase().trim(); const p = parseBay(name);
-  if (up.includes("COUCH")) return { x: -16, y: 2.6, z: -8, kind: "couch" };
-  if (p.special) return null;
-  const r = rackOf(p.pos); if (!r) return null;
-  const [a, b] = r.range; const t = b > a ? (p.pos - a) / (b - a) : 0.5;
-  return { x: -15 + t * 30, y: Y0 + p.level * LH, z: r.z, kind: r.wall != null ? "wall" : "double" };
+  const m = up.match(/^(\d+)\s*([A-C])?\s*([LR])?/);
+  if (!m) return { pos: null, level: 0, side: null, special: true };
+  return { pos: parseInt(m[1]), level: m[2] ? m[2].charCodeAt(0) - 65 : 0, side: m[3] || null, special: false };
 }
 function Warehouse3D({ bays, items, onPickBay, focus }) {
   const mountRef = useRef(null);
@@ -2622,50 +2614,53 @@ function Warehouse3D({ bays, items, onPickBay, focus }) {
     sp.scale.set(scale, scale * 0.25, 1); return sp;
   }
 
-  function beds(THREE, grp, its, y) {
-    const n = Math.min(its.length, 5);
-    for (let k = 0; k < n; k++) {
-      const it = its[k]; const hex = SIZE_HEX[(it.size || "").toUpperCase()] || "#94a3b8";
-      const bed = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.3, PADD - 0.5), new THREE.MeshStandardMaterial({ color: hex, roughness: 0.7 }));
-      bed.position.set(-PADW / 2 + 0.45 + k * 0.46, y + 0.2, 0); grp.add(bed);
-    }
-  }
-
   function build() {
     const THREE = window.THREE, gl = glRef.current; if (!gl.content) return;
     while (gl.content.children.length) gl.content.remove(gl.content.children[0]);
     gl.pads = [];
     const { bays, items } = dataRef.current;
     const sel = selRef.current;
-    const itemsOf = (name) => items.filter((i) => (i.bay || "").toUpperCase().trim() === name.toUpperCase().trim());
-    let couchName = null;
-    bays.forEach((bb) => {
-      const w = bayWorld(bb.name); if (!w) return;
-      if (w.kind === "couch") { couchName = bb.name; return; }
-      const grp = new THREE.Group(); grp.position.set(w.x, 0, w.z);
-      const shelf = new THREE.Mesh(new THREE.BoxGeometry(PADW, 0.08, PADD), new THREE.MeshStandardMaterial({ color: sel === bb.name ? 0x14532d : 0x18293c }));
-      shelf.position.y = w.y; shelf.userData.bay = bb.name; grp.add(shelf); gl.pads.push(shelf);
-      const edge = new THREE.LineSegments(new THREE.EdgesGeometry(shelf.geometry), new THREE.LineBasicMaterial({ color: sel === bb.name ? 0x22c55e : 0x2b4562 })); edge.position.y = w.y; grp.add(edge);
-      beds(THREE, grp, itemsOf(bb.name), w.y);
-      grp.add((() => { const l = mkLabel(THREE, bb.name, sel === bb.name ? "#22c55e" : "#93c5fd", 1.5); l.position.set(0, w.y + 0.4, PADD / 2 + 0.15); return l; })());
-      gl.content.add(grp);
+    const posSet = new Set(); let couchName = null;
+    const consider = (nm) => { const p = parseBay(nm); if (p.special) { if ((nm || "").toUpperCase().includes("COUCH")) couchName = nm; return; } if (rackOf(p.pos)) posSet.add(p.pos); };
+    bays.forEach((b) => consider(b.name));
+    items.forEach((i) => consider(i.bay));
+    const H = Y0 + 3 * LH;
+    Array.from(posSet).sort((a, b) => a - b).forEach((pos) => {
+      const r = rackOf(pos); const [a, b] = r.range; const t = b > a ? (pos - a) / (b - a) : 0.5;
+      const posStr = String(pos); const on = sel === posStr;
+      const unit = new THREE.Group(); unit.position.set(-15 + t * 30, 0, r.z);
+      for (let lv = 0; lv < 3; lv++) {
+        for (const side of ["L", "R"]) {
+          const cx = side === "L" ? -0.55 : 0.55, cy = Y0 + lv * LH;
+          const cell = new THREE.Mesh(new THREE.BoxGeometry(0.95, 0.06, PADD), new THREE.MeshStandardMaterial({ color: on ? 0x14532d : 0x18293c }));
+          cell.position.set(cx, cy, 0); cell.userData.bay = posStr; unit.add(cell); gl.pads.push(cell);
+          const ed = new THREE.LineSegments(new THREE.EdgesGeometry(cell.geometry), new THREE.LineBasicMaterial({ color: on ? 0x22c55e : 0x2b4562 })); ed.position.copy(cell.position); unit.add(ed);
+          const its = items.filter((i) => { const p = parseBay(i.bay); return p.pos === pos && p.level === lv && (p.side === side || (p.side == null && side === "L")); });
+          const n = Math.min(its.length, 3);
+          for (let k = 0; k < n; k++) { const it = its[k]; const hex = SIZE_HEX[(it.size || "").toUpperCase()] || "#94a3b8"; const bed = new THREE.Mesh(new THREE.BoxGeometry(0.72, 0.2, PADD - 0.6), new THREE.MeshStandardMaterial({ color: hex, roughness: 0.7 })); bed.position.set(cx, cy + 0.16 + k * 0.22, 0); unit.add(bed); }
+        }
+      }
+      const postMat = new THREE.MeshStandardMaterial({ color: 0x24384f });
+      [[-1.1, PADD / 2 - 0.1], [1.1, PADD / 2 - 0.1], [-1.1, -(PADD / 2 - 0.1)], [1.1, -(PADD / 2 - 0.1)]].forEach(([px, pz]) => { const post = new THREE.Mesh(new THREE.BoxGeometry(0.08, H, 0.08), postMat); post.position.set(px, H / 2, pz); unit.add(post); });
+      unit.add((() => { const l = mkLabel(THREE, "Bay " + pos, on ? "#22c55e" : "#93c5fd", 2.1); l.position.set(0, H + 0.35, PADD / 2 + 0.15); return l; })());
+      gl.content.add(unit);
     });
     RACKS.forEach((r) => {
       if (r.wall != null) {
-        const wall = new THREE.Mesh(new THREE.PlaneGeometry(38, 4.2), new THREE.MeshStandardMaterial({ color: 0x223449, transparent: true, opacity: 0.18, side: THREE.DoubleSide }));
-        wall.position.set(0, 2.1, r.wall); gl.content.add(wall);
+        const wall = new THREE.Mesh(new THREE.PlaneGeometry(38, 5), new THREE.MeshStandardMaterial({ color: 0x223449, transparent: true, opacity: 0.16, side: THREE.DoubleSide }));
+        wall.position.set(0, 2.5, r.wall); gl.content.add(wall);
       }
-      const l = mkLabel(THREE, r.label, "#64748b", 4); l.position.set(0, 3.7, r.z); gl.content.add(l);
+      const l = mkLabel(THREE, r.label, "#64748b", 4); l.position.set(0, H + 1.2, r.z); gl.content.add(l);
     });
     if (couchName) {
-      const w = bayWorld(couchName); const top = 2.4;
-      const grp = new THREE.Group(); grp.position.set(w.x, 0, w.z);
+      const top = 2.4;
+      const grp = new THREE.Group(); grp.position.set(-16, 0, -8);
       const legMat = new THREE.MeshStandardMaterial({ color: 0x24384f });
       [[-2.2, -2.2], [2.2, -2.2], [-2.2, 2.2], [2.2, 2.2]].forEach(([lx, lz]) => { const leg = new THREE.Mesh(new THREE.BoxGeometry(0.18, top, 0.18), legMat); leg.position.set(lx, top / 2, lz); grp.add(leg); });
       const plat = new THREE.Mesh(new THREE.BoxGeometry(5, 0.18, 5), new THREE.MeshStandardMaterial({ color: sel === couchName ? 0x14532d : 0x1b2c40 }));
       plat.position.y = top; plat.userData.bay = couchName; grp.add(plat); gl.pads.push(plat);
       for (let i = 0; i < 4; i++) { const rung = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.08, 0.08), legMat); rung.position.set(-2.7, 0.4 + i * 0.6, 2.3); grp.add(rung); }
-      const its = itemsOf(couchName); const n = Math.min(its.length, 6);
+      const its = items.filter((i) => (i.bay || "").toUpperCase().trim() === couchName.toUpperCase().trim()); const n = Math.min(its.length, 6);
       for (let k = 0; k < n; k++) { const it = its[k]; const hex = SIZE_HEX[(it.size || "").toUpperCase()] || "#94a3b8"; const bed = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.32, 3), new THREE.MeshStandardMaterial({ color: hex })); bed.position.set(-1.8 + k * 0.6, top + 0.26, 0); grp.add(bed); }
       grp.add((() => { const l = mkLabel(THREE, "COUCH BAY", sel === couchName ? "#22c55e" : "#fbbf24", 3); l.position.set(0, top + 1.2, 0); return l; })());
       gl.content.add(grp);
@@ -3054,26 +3049,42 @@ function InventoryPanel({ who = "", isEs = false, manager = false }) {
       )}
 
       {pickBay && (() => {
-        const rows = items.filter((x) => (x.bay || "") === pickBay);
-        const total = rows.reduce((s, r) => s + (r.qty || 0), 0);
+        const isNum = /^\d+$/.test(String(pickBay));
+        const bedRow = (r) => (
+          <div key={r.id} style={S.card}>
+            <div style={{ minWidth: 0, flex: 1, cursor: "pointer" }} onClick={() => openEdit(r)}>
+              <div style={S.nm}>{r.name || "(no name)"} <span style={{ fontSize: 12, color: "#3b82f6", fontWeight: 600 }}>✎</span></div>
+              <div style={S.sub}>{[r.manufacturer, r.size, r.sku].filter(Boolean).join("  ·  ")}</div>
+            </div>
+            <div style={S.qty((r.qty || 0) <= 1)}>{r.qty || 0}</div>
+            <button style={S.op("#f43f5e")} onClick={() => setPending({ it: r, delta: -1 })}>−</button>
+            <button style={S.op("#22c55e")} onClick={() => setPending({ it: r, delta: 1 })}>+</button>
+          </div>
+        );
+        let groups;
+        if (isNum) {
+          const pos = parseInt(pickBay); const map = {};
+          items.forEach((x) => { const p = parseBay(x.bay); if (p.pos !== pos) return; const key = (["A", "B", "C"][p.level] || "") + (p.side || ""); (map[key] = map[key] || []).push(x); });
+          const order = ["AL", "AR", "BL", "BR", "CL", "CR"];
+          groups = order.map((s) => ({ slot: s, rows: map[s] || [] }));
+          Object.keys(map).forEach((k) => { if (!order.includes(k)) groups.push({ slot: k || (isEs ? "otros" : "other"), rows: map[k] }); });
+        } else {
+          groups = [{ slot: null, rows: items.filter((x) => (x.bay || "").toUpperCase().trim() === String(pickBay).toUpperCase().trim()) }];
+        }
+        const total = groups.reduce((s, g) => s + g.rows.reduce((a, r) => a + (r.qty || 0), 0), 0);
         return (
           <div onPointerDown={(e) => { if (e.target === e.currentTarget) setPickBay(null); }} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.6)", zIndex: 9998, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
-            <div style={{ background: "#0f1923", border: "1px solid #1e2d3d", borderRadius: "16px 16px 0 0", padding: 16, width: "100%", maxWidth: 520, maxHeight: "76vh", overflowY: "auto" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+            <div style={{ background: "#0f1923", border: "1px solid #1e2d3d", borderRadius: "16px 16px 0 0", padding: 16, width: "100%", maxWidth: 520, maxHeight: "80vh", overflowY: "auto" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, position: "sticky", top: 0, background: "#0f1923", paddingBottom: 6 }}>
                 <div style={{ fontWeight: 800, fontSize: 17, color: "#f1f5f9" }}>{isEs ? "Bahía" : "Bay"} {pickBay}</div>
                 <span style={{ ...S.pill, fontSize: 12 }}>{total} {isEs ? "u" : "units"}</span>
                 <button onClick={() => setPickBay(null)} style={{ marginLeft: "auto", padding: "6px 12px", borderRadius: 9, border: "none", background: "#16202b", color: "#e2e8f0", fontWeight: 700, cursor: "pointer" }}>{isEs ? "Cerrar" : "Close"}</button>
               </div>
-              {rows.length === 0 && <div style={{ padding: 24, textAlign: "center", color: "#475569" }}>{isEs ? "No hay camas en esta bahía." : "No beds in this bay."}</div>}
-              {rows.map((r) => (
-                <div key={r.id} style={S.card}>
-                  <div style={{ minWidth: 0, flex: 1, cursor: "pointer" }} onClick={() => openEdit(r)}>
-                    <div style={S.nm}>{r.name || "(no name)"} <span style={{ fontSize: 12, color: "#3b82f6", fontWeight: 600 }}>✎</span></div>
-                    <div style={S.sub}>{[r.manufacturer, r.size, r.sku].filter(Boolean).join("  ·  ")}</div>
-                  </div>
-                  <div style={S.qty((r.qty || 0) <= 1)}>{r.qty || 0}</div>
-                  <button style={S.op("#f43f5e")} onClick={() => setPending({ it: r, delta: -1 })}>−</button>
-                  <button style={S.op("#22c55e")} onClick={() => setPending({ it: r, delta: 1 })}>+</button>
+              {total === 0 && !isNum && <div style={{ padding: 24, textAlign: "center", color: "#475569" }}>{isEs ? "No hay camas aquí." : "No beds here."}</div>}
+              {groups.map((g) => (
+                <div key={g.slot || "x"}>
+                  {g.slot && <div style={{ fontSize: 12, fontWeight: 800, color: g.rows.length ? "#93c5fd" : "#475569", letterSpacing: .5, margin: "10px 2px 4px" }}>{g.slot}{g.rows.length === 0 ? " · " + (isEs ? "vacío" : "empty") : ""}</div>}
+                  {g.rows.map(bedRow)}
                 </div>
               ))}
             </div>
