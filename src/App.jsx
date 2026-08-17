@@ -2558,10 +2558,41 @@ function skuWithCode(itemnum, size) {
 const SIZE_HEX = { TWIN: "#60a5fa", "TWIN XL": "#38bdf8", FULL: "#34d399", QUEEN: "#f59e0b", KING: "#f43f5e", "CAL KING": "#a855f7", OTHER: "#94a3b8" };
 
 // ── 3D warehouse: floor + bays + inventory as labeled blocks; drag bays in edit mode ──
-function Warehouse3D({ bays, items, editable, onMoveBay, onPickBay }) {
+// warehouse floor plan: four racks (0-9 & 17-22 wall-mounted, 10-16 & 23-29 double-sided) + elevated couch platform
+const LH = 1.3, Y0 = 0.5, PADW = 2.4, PADD = 2.4;
+const RACKS = [
+  { key: "a", range: [0, 9], z: 12, wall: 14.2, label: "BAY 0-9" },
+  { key: "b", range: [10, 16], z: 6.5, wall: null, label: "BAY 10-16" },
+  { key: "d", range: [23, 29], z: -5, wall: null, label: "BAY 23-29" },
+  { key: "c", range: [17, 22], z: -11, wall: -13.2, label: "BAY 17-22" },
+];
+const FOCI = {
+  all: { pos: [0, 18, 31], tgt: [0, 1.5, 0] },
+  a: { pos: [-20, 4, 12], tgt: [16, 2, 12] },
+  b: { pos: [-20, 4, 6.5], tgt: [16, 2, 6.5] },
+  d: { pos: [-20, 4, -5], tgt: [16, 2, -5] },
+  c: { pos: [-20, 4, -11], tgt: [16, 2, -11] },
+  couch: { pos: [-16, 5.5, 5], tgt: [-16, 2.6, -8] },
+};
+function rackOf(n) { for (const r of RACKS) if (n >= r.range[0] && n <= r.range[1]) return r; return null; }
+function parseBay(name) {
+  const up = (name || "").toUpperCase().trim();
+  const m = up.match(/^(\d+)\s*([A-Z])?/);
+  if (!m) return { pos: null, level: 0, special: true };
+  return { pos: parseInt(m[1]), level: m[2] ? Math.min(m[2].charCodeAt(0) - 65, 9) : 0, special: false };
+}
+function bayWorld(name) {
+  const up = (name || "").toUpperCase().trim(); const p = parseBay(name);
+  if (up.includes("COUCH")) return { x: -16, y: 2.6, z: -8, kind: "couch" };
+  if (p.special) return null;
+  const r = rackOf(p.pos); if (!r) return null;
+  const [a, b] = r.range; const t = b > a ? (p.pos - a) / (b - a) : 0.5;
+  return { x: -15 + t * 30, y: Y0 + p.level * LH, z: r.z, kind: r.wall != null ? "wall" : "double" };
+}
+function Warehouse3D({ bays, items, onPickBay, focus }) {
   const mountRef = useRef(null);
-  const dataRef = useRef({});
-  dataRef.current = { bays, items, editable, onMoveBay, onPickBay };
+  const dataRef = useRef({}); dataRef.current = { bays, items, onPickBay };
+  const focusRef = useRef("all");
   const glRef = useRef({});
   const selRef = useRef(null);
 
@@ -2578,16 +2609,26 @@ function Warehouse3D({ bays, items, editable, onMoveBay, onPickBay }) {
     // eslint-disable-next-line
   }, []);
 
-  useEffect(() => { if (glRef.current.scene) build(); /* eslint-disable-next-line */ }, [bays, items, editable]);
+  useEffect(() => { if (glRef.current.scene) build(); /* eslint-disable-next-line */ }, [bays, items]);
+  useEffect(() => { focusRef.current = focus || "all"; applyFocus(); /* eslint-disable-next-line */ }, [focus]);
 
   function mkLabel(THREE, text, color, scale) {
     const c = document.createElement("canvas"); c.width = 256; c.height = 64;
-    const g = c.getContext("2d"); g.fillStyle = "rgba(10,20,30,0.82)"; g.fillRect(0, 0, 256, 64);
-    g.strokeStyle = color; g.lineWidth = 4; g.strokeRect(2, 2, 252, 60);
-    g.fillStyle = "#fff"; g.font = "bold 28px system-ui,Arial"; g.textAlign = "center"; g.textBaseline = "middle";
+    const g = c.getContext("2d"); g.fillStyle = "rgba(10,20,30,0.85)"; g.fillRect(0, 0, 256, 64);
+    g.strokeStyle = color; g.lineWidth = 5; g.strokeRect(2, 2, 252, 60);
+    g.fillStyle = "#fff"; g.font = "bold 30px system-ui,Arial"; g.textAlign = "center"; g.textBaseline = "middle";
     g.fillText((text || "").slice(0, 22), 128, 34);
     const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(c), depthTest: false }));
     sp.scale.set(scale, scale * 0.25, 1); return sp;
+  }
+
+  function beds(THREE, grp, its, y) {
+    const n = Math.min(its.length, 5);
+    for (let k = 0; k < n; k++) {
+      const it = its[k]; const hex = SIZE_HEX[(it.size || "").toUpperCase()] || "#94a3b8";
+      const bed = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.3, PADD - 0.5), new THREE.MeshStandardMaterial({ color: hex, roughness: 0.7 }));
+      bed.position.set(-PADW / 2 + 0.45 + k * 0.46, y + 0.2, 0); grp.add(bed);
+    }
   }
 
   function build() {
@@ -2596,24 +2637,47 @@ function Warehouse3D({ bays, items, editable, onMoveBay, onPickBay }) {
     gl.pads = [];
     const { bays, items } = dataRef.current;
     const sel = selRef.current;
-    bays.forEach((b) => {
-      const grp = new THREE.Group(); grp.position.set(b.x, 0, b.z); grp.userData.bay = b.name;
-      const pad = new THREE.Mesh(new THREE.BoxGeometry(b.w, 0.06, b.d), new THREE.MeshStandardMaterial({ color: sel === b.name ? 0x22c55e : 0x1d4ed8, transparent: true, opacity: 0.3 }));
-      pad.position.y = 0.03; pad.userData.bay = b.name; grp.add(pad); gl.pads.push(pad);
-      const edge = new THREE.LineSegments(new THREE.EdgesGeometry(pad.geometry), new THREE.LineBasicMaterial({ color: sel === b.name ? 0x22c55e : 0x3b82f6 })); edge.position.y = 0.03; grp.add(edge);
-      const its = items.filter((i) => (i.bay || "") === b.name);
-      const bh = 0.22, bw = Math.min(0.7, b.w - 0.3), bd = Math.min(2.2, b.d - 0.4);
-      const cap = Math.min(its.length, 14);
-      for (let idx = 0; idx < cap; idx++) {
-        const it = its[idx];
-        const hex = SIZE_HEX[(it.size || "").toUpperCase()] || "#94a3b8";
-        const box = new THREE.Mesh(new THREE.BoxGeometry(bw, bh, bd), new THREE.MeshStandardMaterial({ color: hex, roughness: 0.7 }));
-        box.position.y = 0.13 + idx * (bh + 0.04); grp.add(box);
-      }
-      const topY = 0.4 + cap * (bh + 0.04) + 0.5;
-      grp.add((() => { const l = mkLabel(THREE, b.name, sel === b.name ? "#22c55e" : "#3b82f6", 2.2); l.position.y = Math.max(1.6, topY); return l; })());
+    const itemsOf = (name) => items.filter((i) => (i.bay || "").toUpperCase().trim() === name.toUpperCase().trim());
+    let couchName = null;
+    bays.forEach((bb) => {
+      const w = bayWorld(bb.name); if (!w) return;
+      if (w.kind === "couch") { couchName = bb.name; return; }
+      const grp = new THREE.Group(); grp.position.set(w.x, 0, w.z);
+      const shelf = new THREE.Mesh(new THREE.BoxGeometry(PADW, 0.08, PADD), new THREE.MeshStandardMaterial({ color: sel === bb.name ? 0x14532d : 0x18293c }));
+      shelf.position.y = w.y; shelf.userData.bay = bb.name; grp.add(shelf); gl.pads.push(shelf);
+      const edge = new THREE.LineSegments(new THREE.EdgesGeometry(shelf.geometry), new THREE.LineBasicMaterial({ color: sel === bb.name ? 0x22c55e : 0x2b4562 })); edge.position.y = w.y; grp.add(edge);
+      beds(THREE, grp, itemsOf(bb.name), w.y);
+      grp.add((() => { const l = mkLabel(THREE, bb.name, sel === bb.name ? "#22c55e" : "#93c5fd", 1.5); l.position.set(0, w.y + 0.4, PADD / 2 + 0.15); return l; })());
       gl.content.add(grp);
     });
+    RACKS.forEach((r) => {
+      if (r.wall != null) {
+        const wall = new THREE.Mesh(new THREE.PlaneGeometry(38, 4.2), new THREE.MeshStandardMaterial({ color: 0x223449, transparent: true, opacity: 0.18, side: THREE.DoubleSide }));
+        wall.position.set(0, 2.1, r.wall); gl.content.add(wall);
+      }
+      const l = mkLabel(THREE, r.label, "#64748b", 4); l.position.set(0, 3.7, r.z); gl.content.add(l);
+    });
+    if (couchName) {
+      const w = bayWorld(couchName); const top = 2.4;
+      const grp = new THREE.Group(); grp.position.set(w.x, 0, w.z);
+      const legMat = new THREE.MeshStandardMaterial({ color: 0x24384f });
+      [[-2.2, -2.2], [2.2, -2.2], [-2.2, 2.2], [2.2, 2.2]].forEach(([lx, lz]) => { const leg = new THREE.Mesh(new THREE.BoxGeometry(0.18, top, 0.18), legMat); leg.position.set(lx, top / 2, lz); grp.add(leg); });
+      const plat = new THREE.Mesh(new THREE.BoxGeometry(5, 0.18, 5), new THREE.MeshStandardMaterial({ color: sel === couchName ? 0x14532d : 0x1b2c40 }));
+      plat.position.y = top; plat.userData.bay = couchName; grp.add(plat); gl.pads.push(plat);
+      for (let i = 0; i < 4; i++) { const rung = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.08, 0.08), legMat); rung.position.set(-2.7, 0.4 + i * 0.6, 2.3); grp.add(rung); }
+      const its = itemsOf(couchName); const n = Math.min(its.length, 6);
+      for (let k = 0; k < n; k++) { const it = its[k]; const hex = SIZE_HEX[(it.size || "").toUpperCase()] || "#94a3b8"; const bed = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.32, 3), new THREE.MeshStandardMaterial({ color: hex })); bed.position.set(-1.8 + k * 0.6, top + 0.26, 0); grp.add(bed); }
+      grp.add((() => { const l = mkLabel(THREE, "COUCH BAY", sel === couchName ? "#22c55e" : "#fbbf24", 3); l.position.set(0, top + 1.2, 0); return l; })());
+      gl.content.add(grp);
+    }
+  }
+
+  function applyFocus() {
+    const gl = glRef.current; if (!gl.ctr) return;
+    const f = FOCI[focusRef.current] || FOCI.all;
+    gl.cam.position.set(f.pos[0], f.pos[1], f.pos[2]); gl.ctr.target.set(f.tgt[0], f.tgt[1], f.tgt[2]); gl.ctr.update();
+    if (focusRef.current && focusRef.current !== "all") { const a = gl.ctr.getAzimuthalAngle(); gl.ctr.minAzimuthAngle = a - Math.PI * 0.33; gl.ctr.maxAzimuthAngle = a + Math.PI * 0.33; }
+    else { gl.ctr.minAzimuthAngle = -Infinity; gl.ctr.maxAzimuthAngle = Infinity; }
   }
 
   function init() {
@@ -2622,32 +2686,39 @@ function Warehouse3D({ bays, items, editable, onMoveBay, onPickBay }) {
     const renderer = new THREE.WebGLRenderer({ antialias: true }); renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); renderer.setSize(w, h);
     mount.appendChild(renderer.domElement);
     const scene = new THREE.Scene(); scene.background = new THREE.Color(0x0b1520);
-    const cam = new THREE.PerspectiveCamera(50, w / h, 0.1, 500); cam.position.set(3, 26, 31);
-    const ctr = new THREE.OrbitControls(cam, renderer.domElement); ctr.enableDamping = true; ctr.target.set(0, 0, 0);
-    scene.add(new THREE.AmbientLight(0xffffff, 0.8)); const dl = new THREE.DirectionalLight(0xffffff, 0.7); dl.position.set(8, 15, 6); scene.add(dl);
-    const floor = new THREE.Mesh(new THREE.PlaneGeometry(60, 40), new THREE.MeshStandardMaterial({ color: 0x0f1e2b, roughness: 1 })); floor.rotation.x = -Math.PI / 2; scene.add(floor);
+    const cam = new THREE.PerspectiveCamera(55, w / h, 0.1, 500);
+    const ctr = new THREE.OrbitControls(cam, renderer.domElement); ctr.enableDamping = true;
+    ctr.minPolarAngle = Math.PI * 0.12; ctr.maxPolarAngle = Math.PI * 0.49; // no under-view
+    ctr.minDistance = 3; ctr.maxDistance = 55; ctr.enablePan = false;
+    scene.add(new THREE.AmbientLight(0xffffff, 0.9)); const dl = new THREE.DirectionalLight(0xffffff, 0.55); dl.position.set(8, 22, 14); scene.add(dl);
+    const floor = new THREE.Mesh(new THREE.PlaneGeometry(60, 60), new THREE.MeshStandardMaterial({ color: 0x0f1e2b, roughness: 1 })); floor.rotation.x = -Math.PI / 2; scene.add(floor);
     const grid = new THREE.GridHelper(60, 60, 0x1e3a52, 0x16293a); grid.position.y = 0.01; scene.add(grid);
     const content = new THREE.Group(); scene.add(content);
-    const ray = new THREE.Raycaster(), ndc = new THREE.Vector2(), plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), hit = new THREE.Vector3();
-    let drag = null, downXY = null;
+    const ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
+    let downXY = null;
     const pt = (e) => { const r = renderer.domElement.getBoundingClientRect(); const cx = e.touches ? e.touches[0].clientX : e.clientX, cy = e.touches ? e.touches[0].clientY : e.clientY; ndc.x = ((cx - r.left) / r.width) * 2 - 1; ndc.y = -((cy - r.top) / r.height) * 2 + 1; return { cx, cy }; };
-    const onDown = (e) => { const p = pt(e); downXY = p; ray.setFromCamera(ndc, cam); const h = ray.intersectObjects(glRef.current.pads || []); if (h.length && dataRef.current.editable) { drag = h[0].object.parent; ctr.enabled = false; } };
-    const onMove = (e) => { if (!drag) return; pt(e); ray.setFromCamera(ndc, cam); if (ray.ray.intersectPlane(plane, hit)) { drag.position.x = hit.x; drag.position.z = hit.z; } };
+    const onDown = (e) => { downXY = pt(e); };
     const onUp = (e) => {
-      if (drag) { dataRef.current.onMoveBay && dataRef.current.onMoveBay(drag.userData.bay, Math.round(drag.position.x * 100) / 100, Math.round(drag.position.z * 100) / 100); drag = null; ctr.enabled = true; return; }
-      if (downXY) { const p = pt(e); if (Math.abs(p.cx - downXY.cx) < 6 && Math.abs(p.cy - downXY.cy) < 6) { ray.setFromCamera(ndc, cam); const h = ray.intersectObjects(glRef.current.pads || []); const name = h.length ? h[0].object.userData.bay : null; if (name) { selRef.current = name; build(); dataRef.current.onPickBay && dataRef.current.onPickBay(name); } else if (selRef.current) { selRef.current = null; build(); } } }
+      if (!downXY) return; const p = pt(e);
+      if (Math.abs(p.cx - downXY.cx) < 6 && Math.abs(p.cy - downXY.cy) < 6) {
+        ray.setFromCamera(ndc, cam); const hh = ray.intersectObjects(glRef.current.pads || []);
+        const name = hh.length ? hh[0].object.userData.bay : null;
+        if (name) { selRef.current = name; build(); dataRef.current.onPickBay && dataRef.current.onPickBay(name); }
+        else if (selRef.current) { selRef.current = null; build(); }
+      }
+      downXY = null;
     };
-    renderer.domElement.addEventListener("pointerdown", onDown); window.addEventListener("pointermove", onMove); window.addEventListener("pointerup", onUp);
+    renderer.domElement.addEventListener("pointerdown", onDown); window.addEventListener("pointerup", onUp);
     const ro = new ResizeObserver(() => { const W = mount.clientWidth, H = mount.clientHeight; if (W && H) { cam.aspect = W / H; cam.updateProjectionMatrix(); renderer.setSize(W, H); } }); ro.observe(mount);
     let raf; const loop = () => { raf = requestAnimationFrame(loop); ctr.update(); renderer.render(scene, cam); }; loop();
-    glRef.current = { renderer, scene, cam, ctr, content, pads: [], ro, raf, onMove, onUp, dom: renderer.domElement };
-    build();
+    glRef.current = { renderer, scene, cam, ctr, content, pads: [], ro, raf, onUp, dom: renderer.domElement };
+    build(); applyFocus();
   }
 
   function teardown() {
     const gl = glRef.current; if (!gl.renderer) return;
     cancelAnimationFrame(gl.raf); gl.ro && gl.ro.disconnect();
-    window.removeEventListener("pointermove", gl.onMove); window.removeEventListener("pointerup", gl.onUp);
+    window.removeEventListener("pointerup", gl.onUp);
     try { gl.renderer.dispose(); gl.dom && gl.dom.remove(); } catch {}
     glRef.current = {};
   }
@@ -2665,8 +2736,8 @@ function InventoryPanel({ who = "", isEs = false, manager = false }) {
   const [pending, setPending] = useState(null); // +/- confirm
   const [bayRows, setBayRows] = useState([]);   // bay ordering rows
   const [bayForm, setBayForm] = useState(null); // add / edit bay modal
-  const [edit3d, setEdit3d] = useState(false);  // drag-to-place bays in 3D (managers)
   const [pickBay, setPickBay] = useState(null); // tapped bay -> contents drawer
+  const [focus3d, setFocus3d] = useState("all"); // 3D camera focus (overview / a rack)
 
   useEffect(() => {
     let alive = true;
@@ -2783,13 +2854,6 @@ function InventoryPanel({ who = "", isEs = false, manager = false }) {
     setBayForm(null);
   }
 
-  async function moveBay(name, x, z) {
-    const r = bayRows.find((b) => b.name === name) || {};
-    const row = { name, x, z, w: r.w != null ? r.w : 2.4, d: r.d != null ? r.d : 3, sort: r.sort != null ? r.sort : baynum(name) };
-    setBayRows((prev) => [...prev.filter((b) => b.name !== name), { ...r, ...row }]);
-    try { await sb.from("bays").upsert(row, { onConflict: "name" }); } catch {}
-  }
-
   const ql = q.trim().toLowerCase();
   const shown = ql ? items.filter((x) => ((x.name || "") + " " + (x.size || "") + " " + (x.bay || "") + " " + (x.sku || "") + " " + (x.manufacturer || "")).toLowerCase().includes(ql)) : items;
   const groups = {}; shown.forEach((x) => { (groups[x.bay] = groups[x.bay] || []).push(x); });
@@ -2893,14 +2957,16 @@ function InventoryPanel({ who = "", isEs = false, manager = false }) {
 
       {view === "3d" && (
         <div>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "2px 2px 8px" }}>
-            <div style={{ flex: 1, fontSize: 12, color: "#7b8aa0" }}>
-              {(manager && edit3d) ? (isEs ? "Arrastra una bahía para colocarla en su lugar real." : "Drag a bay to place it where it really sits.") : (isEs ? "Arrastra para girar · pellizca para acercar · toca una bahía para ver las camas." : "Drag to orbit · pinch to zoom · tap a bay to see its beds.")}
-            </div>
-            {manager && <button onClick={() => setEdit3d((v) => !v)} style={{ padding: "7px 12px", borderRadius: 9, border: "none", fontWeight: 700, fontSize: 13, cursor: "pointer", background: edit3d ? "#22c55e" : "#16202b", color: edit3d ? "#fff" : "#7b8aa0" }}>{edit3d ? (isEs ? "Listo" : "Done") : (isEs ? "Editar diseño" : "Edit layout")}</button>}
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
+            {[["all", isEs ? "Vista general" : "Overview"], ["a", "0-9"], ["b", "10-16"], ["d", "23-29"], ["c", "17-22"], ["couch", isEs ? "Sofás" : "Couch"]].map(([k, lbl]) => (
+              <button key={k} onClick={() => setFocus3d(k)} style={{ padding: "6px 11px", borderRadius: 8, border: "none", fontWeight: 700, fontSize: 12, cursor: "pointer", background: focus3d === k ? "#2563eb" : "#16202b", color: focus3d === k ? "#fff" : "#7b8aa0" }}>{lbl}</button>
+            ))}
           </div>
-          <div style={{ height: "66vh", borderRadius: 12, overflow: "hidden", background: "#0b1520", border: "1px solid " + (manager && edit3d ? "#22c55e" : "#1e2d3d") }}>
-            <Warehouse3D bays={bays3d} items={items} editable={manager && edit3d} onMoveBay={moveBay} onPickBay={setPickBay} />
+          <div style={{ fontSize: 12, color: "#7b8aa0", margin: "0 2px 8px" }}>
+            {isEs ? "Elige un pasillo arriba · arrastra para mirar · pellizca para acercar · toca una bahía para ver las camas." : "Pick an aisle above · drag to look · pinch to zoom · tap a bay to see its beds."}
+          </div>
+          <div style={{ height: "64vh", borderRadius: 12, overflow: "hidden", background: "#0b1520", border: "1px solid #1e2d3d" }}>
+            <Warehouse3D bays={bays3d} items={items} onPickBay={setPickBay} focus={focus3d} />
           </div>
         </div>
       )}
