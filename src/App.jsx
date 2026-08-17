@@ -2547,13 +2547,22 @@ function CustomerTrackingPage({ driverId, employees, deliveries }) {
 // ═══════════════════════════════════════════════════════════════════════════
 // INVENTORY PANEL — live Supabase inventory + one-tap in/out (offline-safe)
 // ═══════════════════════════════════════════════════════════════════════════
+const SIZE_CODES = { "TWIN": "1010", "TWIN XL": "1020", "FULL": "1030", "QUEEN": "1050", "KING": "1060", "CAL KING": "1070" };
+const SIZE_OPTS = ["TWIN", "TWIN XL", "FULL", "QUEEN", "KING", "CAL KING", "OTHER"];
+function skuWithCode(itemnum, size) {
+  const base = (itemnum || "").trim().replace(/-\d{4}$/, "");
+  const code = SIZE_CODES[(size || "").trim().toUpperCase()];
+  return code ? base + "-" + code : base;
+}
+
 function InventoryPanel({ who = "", isEs = false }) {
   const [items, setItems] = useState([]);
   const [moves, setMoves] = useState([]);
   const [q, setQ] = useState("");
   const [view, setView] = useState("inv");
   const [ready, setReady] = useState(false);
-  const [add, setAdd] = useState(null);
+  const [form, setForm] = useState(null);     // add / edit modal
+  const [pending, setPending] = useState(null); // +/- confirm
 
   useEffect(() => {
     let alive = true;
@@ -2582,7 +2591,8 @@ function InventoryPanel({ who = "", isEs = false }) {
     return () => { alive = false; sb.removeChannel(ch); };
   }, []);
 
-  async function bump(it, delta) {
+  // actual quantity change (called after confirm, or from Add-stock merge)
+  async function applyBump(it, delta) {
     if (delta < 0 && (it.qty || 0) <= 0) return;
     const nq = Math.max(0, (it.qty || 0) + delta);
     setItems((prev) => prev.map((x) => (x.id === it.id ? { ...x, qty: nq } : x)));
@@ -2592,15 +2602,25 @@ function InventoryPanel({ who = "", isEs = false }) {
     setMoves((prev) => [{ ...mv, id: "tmp" + Date.now() }, ...prev].slice(0, 120));
   }
 
-  async function saveAdd() {
-    const bay = (add.bay || "").trim().toUpperCase();
-    const name = (add.name || "").trim();
-    const size = (add.size || "").trim().toUpperCase();
-    const qty = parseInt(add.qty) || 0;
-    const sku = (add.sku || "").trim();
-    if (!bay || !name) { alert("Bay and name are required"); return; }
+  async function saveForm() {
+    const f = form;
+    const bay = (f.bay || "").trim().toUpperCase();
+    const name = (f.name || "").trim();
+    const size = (f.size || "").trim().toUpperCase();
+    const raw = (f.itemnum || "").trim();
+    const qty = parseInt(f.qty) || 0;
+    if (!bay || !name) { alert(isEs ? "Bahía y nombre son obligatorios" : "Bay and name are required"); return; }
+    if (!raw) { alert(isEs ? "El número de artículo es obligatorio" : "Item # is required"); return; }
+    const sku = skuWithCode(raw, size);
+    if (f.mode === "edit") {
+      const payload = { bay, name, size, sku, qty };
+      setItems((prev) => prev.map((x) => (x.id === f.id ? { ...x, ...payload } : x)));
+      await safeWrite({ table: "inventory", op: "update", match: { id: f.id }, payload });
+      setForm(null);
+      return;
+    }
     const ex = items.find((x) => x.bay === bay && (x.name || "").toUpperCase() === name.toUpperCase() && (x.size || "").toUpperCase() === size);
-    if (ex) { await bump(ex, qty); }
+    if (ex) { await applyBump(ex, qty); }
     else {
       const row = { bay, sku, name, size, qty };
       const { data } = await sb.from("inventory").insert(row).select();
@@ -2608,8 +2628,19 @@ function InventoryPanel({ who = "", isEs = false }) {
       const mv = { item_id: (data && data[0] && data[0].id) || null, bay, name, size, dir: "IN", qty, moved_by: who || "", moved_at: new Date().toISOString() };
       sb.from("stock_moves").insert(mv);
     }
-    setAdd(null);
+    setForm(null);
   }
+
+  async function delItem() {
+    if (!form || !window.confirm(isEs ? "¿Eliminar este artículo de forma permanente?" : "Delete this item permanently?")) return;
+    const id = form.id;
+    setItems((prev) => prev.filter((x) => x.id !== id));
+    try { await sb.from("inventory").delete().eq("id", id); } catch {}
+    setForm(null);
+  }
+
+  const openAdd = () => setForm({ mode: "add", bay: "", name: "", size: "QUEEN", itemnum: "", qty: "1" });
+  const openEdit = (r) => setForm({ mode: "edit", id: r.id, bay: r.bay || "", name: r.name || "", size: (r.size || "").toUpperCase(), itemnum: r.sku || "", qty: String(r.qty || 0) });
 
   const baynum = (b) => { const n = (b || "").match(/\d+/); return n ? parseInt(n[0]) : 999; };
   const ql = q.trim().toLowerCase();
@@ -2631,9 +2662,12 @@ function InventoryPanel({ who = "", isEs = false }) {
 
   if (!ready) return <div style={{ padding: 30, textAlign: "center", color: "#475569" }}>Loading inventory…</div>;
 
+  const sizeOpts = (form && form.size && !SIZE_OPTS.includes(form.size)) ? [form.size, ...SIZE_OPTS] : SIZE_OPTS;
+
   return (
     <div style={{ color: "#e2e8f0" }}>
       <input style={S.search} placeholder={isEs ? "Buscar artículo, bahía, SKU…" : "Search item, bay, SKU, size…"} value={q} onChange={(e) => setQ(e.target.value)} />
+      <button onClick={openAdd} style={{ width: "100%", marginBottom: 10, padding: 13, borderRadius: 11, border: "none", background: "#2563eb", color: "#fff", fontWeight: 800, fontSize: 15, cursor: "pointer" }}>+ {isEs ? "Agregar inventario" : "Add stock"}</button>
       <div style={{ display: "flex", gap: 7, marginBottom: 10 }}>
         <button style={S.tabBtn(view === "inv")} onClick={() => setView("inv")}>{isEs ? "Inventario" : "Inventory"}</button>
         <button style={S.tabBtn(view === "log")} onClick={() => setView("log")}>{isEs ? "Actividad" : "Activity"}</button>
@@ -2650,19 +2684,18 @@ function InventoryPanel({ who = "", isEs = false }) {
                 <div style={S.bay}><span style={S.pill}>{bay}</span><span style={{ marginLeft: "auto", fontWeight: 600 }}>{units} {isEs ? "u" : "units"}</span></div>
                 {rows.map((r) => (
                   <div key={r.id} style={S.card}>
-                    <div style={{ minWidth: 0, flex: 1 }}>
-                      <div style={S.nm}>{r.name || "(no name)"}</div>
+                    <div style={{ minWidth: 0, flex: 1, cursor: "pointer" }} onClick={() => openEdit(r)}>
+                      <div style={S.nm}>{r.name || "(no name)"} <span style={{ fontSize: 12, color: "#3b82f6", fontWeight: 600 }}>✎</span></div>
                       <div style={S.sub}>{r.size || ""}{r.sku ? "  ·  " + r.sku : ""}</div>
                     </div>
                     <div style={S.qty((r.qty || 0) <= 1)}>{r.qty || 0}</div>
-                    <button style={S.op("#f43f5e")} onClick={() => bump(r, -1)}>−</button>
-                    <button style={S.op("#22c55e")} onClick={() => bump(r, 1)}>+</button>
+                    <button style={S.op("#f43f5e")} onClick={() => setPending({ it: r, delta: -1 })}>−</button>
+                    <button style={S.op("#22c55e")} onClick={() => setPending({ it: r, delta: 1 })}>+</button>
                   </div>
                 ))}
               </div>
             );
           })}
-          <button onClick={() => setAdd({ bay: "", name: "", size: "", qty: "1", sku: "" })} style={{ width: "100%", marginTop: 14, padding: 13, borderRadius: 11, border: "1px dashed #2b3b4d", background: "#0f1923", color: "#60a5fa", fontWeight: 700, fontSize: 14, cursor: "pointer" }}>+ {isEs ? "Agregar inventario" : "Add stock"}</button>
         </div>
       )}
 
@@ -2679,18 +2712,43 @@ function InventoryPanel({ who = "", isEs = false }) {
         </div>
       )}
 
-      {add && (
-        <div onClick={(e) => { if (e.target === e.currentTarget) setAdd(null); }} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.6)", zIndex: 9999, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
-          <div style={{ background: "#0f1923", border: "1px solid #1e2d3d", borderRadius: "16px 16px 0 0", padding: 16, width: "100%", maxWidth: 520 }}>
-            <div style={{ fontWeight: 800, fontSize: 16, color: "#f1f5f9", marginBottom: 12 }}>{isEs ? "Agregar inventario" : "Add stock"}</div>
-            {[["bay", isEs ? "Bahía (p.ej. 7AR)" : "Bay (e.g. 7AR)"], ["name", isEs ? "Nombre / modelo" : "Name / model"], ["size", "Size (QUEEN)"], ["sku", "Item # (optional)"]].map(([k, ph]) => (
-              <input key={k} placeholder={ph} value={add[k]} onChange={(e) => setAdd({ ...add, [k]: e.target.value })} style={{ ...S.search, marginBottom: 8 }} />
-            ))}
-            <input placeholder="Qty" inputMode="numeric" value={add.qty} onChange={(e) => setAdd({ ...add, qty: e.target.value })} style={{ ...S.search, marginBottom: 8 }} />
-            <div style={{ display: "flex", gap: 9 }}>
-              <button onClick={() => setAdd(null)} style={{ flex: 1, padding: 13, borderRadius: 11, border: "none", background: "#16202b", color: "#e2e8f0", fontWeight: 700, fontSize: 15, cursor: "pointer" }}>{isEs ? "Cancelar" : "Cancel"}</button>
-              <button onClick={saveAdd} style={{ flex: 1, padding: 13, borderRadius: 11, border: "none", background: "#2563eb", color: "#fff", fontWeight: 800, fontSize: 15, cursor: "pointer" }}>{isEs ? "Agregar" : "Add"}</button>
+      {pending && (() => {
+        const it = pending.it, delta = pending.delta, out = delta < 0;
+        const nq = Math.max(0, (it.qty || 0) + delta);
+        return (
+          <div onClick={(e) => { if (e.target === e.currentTarget) setPending(null); }} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.6)", zIndex: 10000, display: "flex", alignItems: "center", justifyContent: "center", padding: 18 }}>
+            <div style={{ background: "#0f1923", border: "1px solid #1e2d3d", borderRadius: 16, padding: 20, width: "100%", maxWidth: 420 }}>
+              <div style={{ fontWeight: 800, fontSize: 18, color: out ? "#fb7185" : "#4ade80", marginBottom: 10 }}>{out ? (isEs ? "Confirmar SALIDA" : "Confirm OUT") : (isEs ? "Confirmar ENTRADA" : "Confirm IN")}</div>
+              <div style={{ fontSize: 15, color: "#e2e8f0", lineHeight: 1.4 }}>{isEs ? "Tomar" : "Take"} <b>1</b> {out ? (isEs ? "de" : "OUT of") : (isEs ? "hacia" : "IN to")} <b>{it.name}</b> {it.size ? "· " + it.size : ""} · {isEs ? "bahía" : "bay"} {it.bay}?</div>
+              <div style={{ fontSize: 14, color: "#7b8aa0", margin: "10px 0 16px" }}>{isEs ? "Nueva cantidad" : "New quantity"}: <b style={{ color: "#f1f5f9", fontSize: 18 }}>{it.qty || 0} → {nq}</b></div>
+              <div style={{ display: "flex", gap: 9 }}>
+                <button onClick={() => setPending(null)} style={{ flex: 1, padding: 14, borderRadius: 11, border: "none", background: "#16202b", color: "#e2e8f0", fontWeight: 700, fontSize: 16, cursor: "pointer" }}>{isEs ? "Cancelar" : "Cancel"}</button>
+                <button onClick={() => { applyBump(it, delta); setPending(null); }} style={{ flex: 1, padding: 14, borderRadius: 11, border: "none", background: out ? "#f43f5e" : "#22c55e", color: "#fff", fontWeight: 800, fontSize: 16, cursor: "pointer" }}>{isEs ? "Confirmar" : "Confirm"}</button>
+              </div>
             </div>
+          </div>
+        );
+      })()}
+
+      {form && (
+        <div onClick={(e) => { if (e.target === e.currentTarget) setForm(null); }} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.6)", zIndex: 9999, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
+          <div style={{ background: "#0f1923", border: "1px solid #1e2d3d", borderRadius: "16px 16px 0 0", padding: 16, width: "100%", maxWidth: 520 }}>
+            <div style={{ fontWeight: 800, fontSize: 16, color: "#f1f5f9", marginBottom: 12 }}>{form.mode === "edit" ? (isEs ? "Editar artículo" : "Edit item") : (isEs ? "Agregar inventario" : "Add stock")}</div>
+            <input placeholder={isEs ? "Bahía (p.ej. 7AR)" : "Bay (e.g. 7AR)"} value={form.bay} onChange={(e) => setForm({ ...form, bay: e.target.value })} style={{ ...S.search, marginBottom: 8 }} />
+            <input placeholder={isEs ? "Nombre / modelo" : "Name / model"} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} style={{ ...S.search, marginBottom: 8 }} />
+            <select value={SIZE_OPTS.includes(form.size) ? form.size : (form.size ? form.size : "OTHER")} onChange={(e) => setForm({ ...form, size: e.target.value })} style={{ ...S.search, marginBottom: 8 }}>
+              {sizeOpts.map((s) => <option key={s} value={s}>{s}{SIZE_CODES[s] ? " (" + SIZE_CODES[s] + ")" : ""}</option>)}
+            </select>
+            <input placeholder={isEs ? "Número de artículo (obligatorio)" : "Item # (required)"} value={form.itemnum} onChange={(e) => setForm({ ...form, itemnum: e.target.value })} style={{ ...S.search, marginBottom: 4 }} />
+            <div style={{ fontSize: 12, color: "#60a5fa", margin: "0 0 8px 2px" }}>{isEs ? "Se guardará como" : "Saves as"}: <b>{skuWithCode(form.itemnum, form.size) || "—"}</b></div>
+            <input placeholder={form.mode === "edit" ? (isEs ? "Cantidad" : "Quantity") : (isEs ? "Cantidad a agregar" : "Qty to add")} inputMode="numeric" value={form.qty} onChange={(e) => setForm({ ...form, qty: e.target.value })} style={{ ...S.search, marginBottom: 8 }} />
+            <div style={{ display: "flex", gap: 9 }}>
+              <button onClick={() => setForm(null)} style={{ flex: 1, padding: 13, borderRadius: 11, border: "none", background: "#16202b", color: "#e2e8f0", fontWeight: 700, fontSize: 15, cursor: "pointer" }}>{isEs ? "Cancelar" : "Cancel"}</button>
+              <button onClick={saveForm} style={{ flex: 1, padding: 13, borderRadius: 11, border: "none", background: "#2563eb", color: "#fff", fontWeight: 800, fontSize: 15, cursor: "pointer" }}>{form.mode === "edit" ? (isEs ? "Guardar" : "Save") : (isEs ? "Agregar" : "Add")}</button>
+            </div>
+            {form.mode === "edit" && (
+              <button onClick={delItem} style={{ width: "100%", marginTop: 10, padding: 11, borderRadius: 11, border: "1px solid #7f1d1d", background: "transparent", color: "#fb7185", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>{isEs ? "Eliminar artículo" : "Delete item"}</button>
+            )}
           </div>
         </div>
       )}
