@@ -2597,6 +2597,16 @@ function InventoryPanel({ who = "", isEs = false }) {
     return () => { alive = false; sb.removeChannel(ch); };
   }, []);
 
+  useEffect(() => {
+    if (!document.querySelector("script[data-modelviewer]")) {
+      const s = document.createElement("script");
+      s.type = "module";
+      s.src = "https://unpkg.com/@google/model-viewer@3.5.0/dist/model-viewer.min.js";
+      s.setAttribute("data-modelviewer", "1");
+      document.head.appendChild(s);
+    }
+  }, []);
+
   // actual quantity change (called after confirm, or from Add-stock merge)
   async function applyBump(it, delta) {
     if (delta < 0 && (it.qty || 0) <= 0) return;
@@ -2708,6 +2718,7 @@ function InventoryPanel({ who = "", isEs = false }) {
       <div style={{ display: "flex", gap: 7, marginBottom: 10 }}>
         <button style={S.tabBtn(view === "inv")} onClick={() => setView("inv")}>{isEs ? "Inventario" : "Inventory"}</button>
         <button style={S.tabBtn(view === "bays")} onClick={() => setView("bays")}>{isEs ? "Bahías" : "Bays"}</button>
+        <button style={S.tabBtn(view === "3d")} onClick={() => setView("3d")}>3D</button>
         <button style={S.tabBtn(view === "log")} onClick={() => setView("log")}>{isEs ? "Actividad" : "Activity"}</button>
       </div>
       <datalist id="inv-baylist">{allBayNames.map((n) => <option key={n} value={n} />)}</datalist>
@@ -2754,6 +2765,15 @@ function InventoryPanel({ who = "", isEs = false }) {
               </div>
             );
           })}
+        </div>
+      )}
+
+      {view === "3d" && (
+        <div>
+          <div style={{ fontSize: 12, color: "#7b8aa0", margin: "2px 2px 8px" }}>{isEs ? "Arrastra para girar · pellizca para acercar. Escaneo 3D del almacén." : "Drag to rotate · pinch to zoom. 3D scan of the warehouse."}</div>
+          <div style={{ height: "68vh", borderRadius: 12, overflow: "hidden", background: "#0b1520", border: "1px solid #1e2d3d" }}>
+            <model-viewer src="/warehouse.glb" camera-controls="" auto-rotate="" touch-action="pan-y" exposure="1.15" interaction-prompt="none" style={{ width: "100%", height: "100%" }}></model-viewer>
+          </div>
         </div>
       )}
 
