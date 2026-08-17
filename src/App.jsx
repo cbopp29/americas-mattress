@@ -2555,6 +2555,104 @@ function skuWithCode(itemnum, size) {
   return code ? base + "-" + code : base;
 }
 
+const SIZE_HEX = { TWIN: "#60a5fa", "TWIN XL": "#38bdf8", FULL: "#34d399", QUEEN: "#f59e0b", KING: "#f43f5e", "CAL KING": "#a855f7", OTHER: "#94a3b8" };
+
+// ── 3D warehouse: floor + bays + inventory as labeled blocks; drag bays in edit mode ──
+function Warehouse3D({ bays, items, editable, onMoveBay }) {
+  const mountRef = useRef(null);
+  const dataRef = useRef({});
+  dataRef.current = { bays, items, editable, onMoveBay };
+  const glRef = useRef({});
+  const selRef = useRef(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const start = () => { if (!cancelled) init(); };
+    if (window.THREE && window.THREE.OrbitControls) start();
+    else if (!document.querySelector("script[data-three]")) {
+      const s1 = document.createElement("script"); s1.src = "https://unpkg.com/three@0.128.0/build/three.min.js"; s1.setAttribute("data-three", "1");
+      s1.onload = () => { const s2 = document.createElement("script"); s2.src = "https://unpkg.com/three@0.128.0/examples/js/controls/OrbitControls.js"; s2.setAttribute("data-three-oc", "1"); s2.onload = start; document.head.appendChild(s2); };
+      document.head.appendChild(s1);
+    } else { const t = setInterval(() => { if (window.THREE && window.THREE.OrbitControls) { clearInterval(t); start(); } }, 120); }
+    return () => { cancelled = true; teardown(); };
+    // eslint-disable-next-line
+  }, []);
+
+  useEffect(() => { if (glRef.current.scene) build(); /* eslint-disable-next-line */ }, [bays, items, editable]);
+
+  function mkLabel(THREE, text, color, scale) {
+    const c = document.createElement("canvas"); c.width = 256; c.height = 64;
+    const g = c.getContext("2d"); g.fillStyle = "rgba(10,20,30,0.82)"; g.fillRect(0, 0, 256, 64);
+    g.strokeStyle = color; g.lineWidth = 4; g.strokeRect(2, 2, 252, 60);
+    g.fillStyle = "#fff"; g.font = "bold 28px system-ui,Arial"; g.textAlign = "center"; g.textBaseline = "middle";
+    g.fillText((text || "").slice(0, 22), 128, 34);
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(c), depthTest: false }));
+    sp.scale.set(scale, scale * 0.25, 1); return sp;
+  }
+
+  function build() {
+    const THREE = window.THREE, gl = glRef.current; if (!gl.content) return;
+    while (gl.content.children.length) gl.content.remove(gl.content.children[0]);
+    gl.pads = [];
+    const { bays, items } = dataRef.current;
+    const sel = selRef.current;
+    bays.forEach((b) => {
+      const grp = new THREE.Group(); grp.position.set(b.x, 0, b.z); grp.userData.bay = b.name;
+      const pad = new THREE.Mesh(new THREE.BoxGeometry(b.w, 0.06, b.d), new THREE.MeshStandardMaterial({ color: sel === b.name ? 0x22c55e : 0x1d4ed8, transparent: true, opacity: 0.3 }));
+      pad.position.y = 0.03; pad.userData.bay = b.name; grp.add(pad); gl.pads.push(pad);
+      const edge = new THREE.LineSegments(new THREE.EdgesGeometry(pad.geometry), new THREE.LineBasicMaterial({ color: sel === b.name ? 0x22c55e : 0x3b82f6 })); edge.position.y = 0.03; grp.add(edge);
+      const its = items.filter((i) => (i.bay || "") === b.name);
+      grp.add((() => { const l = mkLabel(THREE, b.name + " · " + its.length, "#3b82f6", 2.4); l.position.y = 2.5; return l; })());
+      const bh = 0.22, bw = Math.min(0.7, b.w - 0.3), bd = Math.min(2.2, b.d - 0.4);
+      its.forEach((it, idx) => {
+        const hex = SIZE_HEX[(it.size || "").toUpperCase()] || "#94a3b8";
+        const box = new THREE.Mesh(new THREE.BoxGeometry(bw, bh, bd), new THREE.MeshStandardMaterial({ color: hex, roughness: 0.7 }));
+        box.position.y = 0.13 + idx * (bh + 0.04); grp.add(box);
+        if (sel === b.name) { const l = mkLabel(THREE, it.name + " " + (it.size ? it.size[0] : ""), hex, 1.9); l.position.set(0, box.position.y, bd / 2 + 0.05); grp.add(l); }
+      });
+      gl.content.add(grp);
+    });
+  }
+
+  function init() {
+    const THREE = window.THREE, mount = mountRef.current; if (!mount) return;
+    const w = mount.clientWidth || 600, h = mount.clientHeight || 400;
+    const renderer = new THREE.WebGLRenderer({ antialias: true }); renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); renderer.setSize(w, h);
+    mount.appendChild(renderer.domElement);
+    const scene = new THREE.Scene(); scene.background = new THREE.Color(0x0b1520);
+    const cam = new THREE.PerspectiveCamera(50, w / h, 0.1, 500); cam.position.set(10, 13, 17);
+    const ctr = new THREE.OrbitControls(cam, renderer.domElement); ctr.enableDamping = true; ctr.target.set(0, 0, 0);
+    scene.add(new THREE.AmbientLight(0xffffff, 0.8)); const dl = new THREE.DirectionalLight(0xffffff, 0.7); dl.position.set(8, 15, 6); scene.add(dl);
+    const floor = new THREE.Mesh(new THREE.PlaneGeometry(60, 40), new THREE.MeshStandardMaterial({ color: 0x0f1e2b, roughness: 1 })); floor.rotation.x = -Math.PI / 2; scene.add(floor);
+    const grid = new THREE.GridHelper(60, 60, 0x1e3a52, 0x16293a); grid.position.y = 0.01; scene.add(grid);
+    const content = new THREE.Group(); scene.add(content);
+    const ray = new THREE.Raycaster(), ndc = new THREE.Vector2(), plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), hit = new THREE.Vector3();
+    let drag = null, downXY = null;
+    const pt = (e) => { const r = renderer.domElement.getBoundingClientRect(); const cx = e.touches ? e.touches[0].clientX : e.clientX, cy = e.touches ? e.touches[0].clientY : e.clientY; ndc.x = ((cx - r.left) / r.width) * 2 - 1; ndc.y = -((cy - r.top) / r.height) * 2 + 1; return { cx, cy }; };
+    const onDown = (e) => { const p = pt(e); downXY = p; ray.setFromCamera(ndc, cam); const h = ray.intersectObjects(glRef.current.pads || []); if (h.length && dataRef.current.editable) { drag = h[0].object.parent; ctr.enabled = false; } };
+    const onMove = (e) => { if (!drag) return; pt(e); ray.setFromCamera(ndc, cam); if (ray.ray.intersectPlane(plane, hit)) { drag.position.x = hit.x; drag.position.z = hit.z; } };
+    const onUp = (e) => {
+      if (drag) { dataRef.current.onMoveBay && dataRef.current.onMoveBay(drag.userData.bay, Math.round(drag.position.x * 100) / 100, Math.round(drag.position.z * 100) / 100); drag = null; ctr.enabled = true; return; }
+      if (downXY) { const p = pt(e); if (Math.abs(p.cx - downXY.cx) < 6 && Math.abs(p.cy - downXY.cy) < 6) { ray.setFromCamera(ndc, cam); const h = ray.intersectObjects(glRef.current.pads || []); const name = h.length ? h[0].object.userData.bay : null; selRef.current = (selRef.current === name) ? null : name; build(); } }
+    };
+    renderer.domElement.addEventListener("pointerdown", onDown); window.addEventListener("pointermove", onMove); window.addEventListener("pointerup", onUp);
+    const ro = new ResizeObserver(() => { const W = mount.clientWidth, H = mount.clientHeight; if (W && H) { cam.aspect = W / H; cam.updateProjectionMatrix(); renderer.setSize(W, H); } }); ro.observe(mount);
+    let raf; const loop = () => { raf = requestAnimationFrame(loop); ctr.update(); renderer.render(scene, cam); }; loop();
+    glRef.current = { renderer, scene, cam, ctr, content, pads: [], ro, raf, onMove, onUp, dom: renderer.domElement };
+    build();
+  }
+
+  function teardown() {
+    const gl = glRef.current; if (!gl.renderer) return;
+    cancelAnimationFrame(gl.raf); gl.ro && gl.ro.disconnect();
+    window.removeEventListener("pointermove", gl.onMove); window.removeEventListener("pointerup", gl.onUp);
+    try { gl.renderer.dispose(); gl.dom && gl.dom.remove(); } catch {}
+    glRef.current = {};
+  }
+
+  return <div ref={mountRef} style={{ width: "100%", height: "100%" }} />;
+}
+
 function InventoryPanel({ who = "", isEs = false }) {
   const [items, setItems] = useState([]);
   const [moves, setMoves] = useState([]);
@@ -2565,6 +2663,7 @@ function InventoryPanel({ who = "", isEs = false }) {
   const [pending, setPending] = useState(null); // +/- confirm
   const [bayRows, setBayRows] = useState([]);   // bay ordering rows
   const [bayForm, setBayForm] = useState(null); // add / edit bay modal
+  const [edit3d, setEdit3d] = useState(false);  // drag-to-place bays in 3D
 
   useEffect(() => {
     let alive = true;
@@ -2595,16 +2694,6 @@ function InventoryPanel({ who = "", isEs = false }) {
         () => { sb.from("bays").select("*").then(({ data }) => { if (data) setBayRows(data); }); })
       .subscribe();
     return () => { alive = false; sb.removeChannel(ch); };
-  }, []);
-
-  useEffect(() => {
-    if (!document.querySelector("script[data-modelviewer]")) {
-      const s = document.createElement("script");
-      s.type = "module";
-      s.src = "https://unpkg.com/@google/model-viewer@3.5.0/dist/model-viewer.min.js";
-      s.setAttribute("data-modelviewer", "1");
-      document.head.appendChild(s);
-    }
   }, []);
 
   // actual quantity change (called after confirm, or from Add-stock merge)
@@ -2663,8 +2752,9 @@ function InventoryPanel({ who = "", isEs = false }) {
   const bayMeta = {}; bayRows.forEach((b) => { bayMeta[b.name] = b.sort; });
   const bayKey = (b) => (bayMeta[b] != null ? bayMeta[b] : baynum(b));
 
-  const openAddBay = () => setBayForm({ mode: "add", name: "", sort: "" });
-  const openEditBay = (name) => setBayForm({ mode: "edit", origName: name, name, sort: String(bayMeta[name] != null ? bayMeta[name] : baynum(name)) });
+  const bstr = (v) => (v == null ? "" : String(v));
+  const openAddBay = () => setBayForm({ mode: "add", name: "", sort: "", x: "", z: "", w: "", d: "" });
+  const openEditBay = (name) => { const r = bayRows.find((b) => b.name === name) || {}; setBayForm({ mode: "edit", origName: name, name, sort: String(bayMeta[name] != null ? bayMeta[name] : baynum(name)), x: bstr(r.x), z: bstr(r.z), w: bstr(r.w), d: bstr(r.d) }); };
 
   async function saveBay() {
     const f = bayForm;
@@ -2672,12 +2762,13 @@ function InventoryPanel({ who = "", isEs = false }) {
     const parsed = parseInt(f.sort);
     const s = isNaN(parsed) ? 100 : parsed;
     if (!name) { alert(isEs ? "El nombre de la bahía es obligatorio" : "Bay name is required"); return; }
+    const num = (v) => { const n = parseFloat(v); return isNaN(n) ? null : n; };
     if (f.mode === "edit" && f.origName && f.origName !== name) {
       setItems((prev) => prev.map((x) => (x.bay === f.origName ? { ...x, bay: name } : x)));
       try { await sb.from("inventory").update({ bay: name }).eq("bay", f.origName); } catch {}
       try { await sb.from("bays").delete().eq("name", f.origName); } catch {}
     }
-    try { await sb.from("bays").upsert({ name, sort: s }, { onConflict: "name" }); } catch {}
+    try { await sb.from("bays").upsert({ name, sort: s, x: num(f.x), z: num(f.z), w: num(f.w), d: num(f.d) }, { onConflict: "name" }); } catch {}
     const { data } = await sb.from("bays").select("*"); if (data) setBayRows(data);
     setBayForm(null);
   }
@@ -2689,11 +2780,31 @@ function InventoryPanel({ who = "", isEs = false }) {
     setBayForm(null);
   }
 
+  async function moveBay(name, x, z) {
+    const r = bayRows.find((b) => b.name === name) || {};
+    const row = { name, x, z, w: r.w != null ? r.w : 2.4, d: r.d != null ? r.d : 3, sort: r.sort != null ? r.sort : baynum(name) };
+    setBayRows((prev) => [...prev.filter((b) => b.name !== name), { ...r, ...row }]);
+    try { await sb.from("bays").upsert(row, { onConflict: "name" }); } catch {}
+  }
+
   const ql = q.trim().toLowerCase();
   const shown = ql ? items.filter((x) => ((x.name || "") + " " + (x.size || "") + " " + (x.bay || "") + " " + (x.sku || "") + " " + (x.manufacturer || "")).toLowerCase().includes(ql)) : items;
   const groups = {}; shown.forEach((x) => { (groups[x.bay] = groups[x.bay] || []).push(x); });
   const bays = Object.keys(groups).sort((a, b) => bayKey(a) - bayKey(b) || a.localeCompare(b));
   const allBayNames = Array.from(new Set([...items.map((x) => x.bay).filter(Boolean), ...bayRows.map((b) => b.name)])).sort((a, b) => bayKey(a) - bayKey(b) || a.localeCompare(b));
+  // positioned bays for the 3D view (auto-grid any bay without saved x/z)
+  const COLS = 6, GX = 5, GZ = 5;
+  const bays3d = allBayNames.map((name, i) => {
+    const r = bayRows.find((b) => b.name === name) || {};
+    const placed = r.x != null && r.z != null;
+    return {
+      name,
+      x: placed ? r.x : (i % COLS) * GX - ((COLS - 1) * GX) / 2,
+      z: placed ? r.z : Math.floor(i / COLS) * GZ - 5,
+      w: r.w != null ? r.w : 2.4,
+      d: r.d != null ? r.d : 3,
+    };
+  });
 
   const S = {
     search: { width: "100%", padding: "11px 13px", borderRadius: 10, border: "1px solid #1e2d3d", background: "#0f1923", color: "#e2e8f0", fontSize: 15, marginBottom: 10, boxSizing: "border-box" },
@@ -2770,9 +2881,14 @@ function InventoryPanel({ who = "", isEs = false }) {
 
       {view === "3d" && (
         <div>
-          <div style={{ fontSize: 12, color: "#7b8aa0", margin: "2px 2px 8px" }}>{isEs ? "Arrastra para girar · pellizca para acercar. Escaneo 3D del almacén." : "Drag to rotate · pinch to zoom. 3D scan of the warehouse."}</div>
-          <div style={{ height: "68vh", borderRadius: 12, overflow: "hidden", background: "#0b1520", border: "1px solid #1e2d3d" }}>
-            <model-viewer src="/warehouse.glb" camera-controls="" auto-rotate="" touch-action="pan-y" exposure="1.15" interaction-prompt="none" style={{ width: "100%", height: "100%" }}></model-viewer>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "2px 2px 8px" }}>
+            <div style={{ flex: 1, fontSize: 12, color: "#7b8aa0" }}>
+              {edit3d ? (isEs ? "Arrastra una bahía para colocarla. Toca una para ver sus artículos." : "Drag a bay to place it. Tap a bay to see its items.") : (isEs ? "Arrastra para girar · pellizca para acercar · toca una bahía." : "Drag to orbit · pinch to zoom · tap a bay for its items.")}
+            </div>
+            <button onClick={() => setEdit3d((v) => !v)} style={{ padding: "7px 12px", borderRadius: 9, border: "none", fontWeight: 700, fontSize: 13, cursor: "pointer", background: edit3d ? "#22c55e" : "#16202b", color: edit3d ? "#fff" : "#7b8aa0" }}>{edit3d ? (isEs ? "Listo" : "Done") : (isEs ? "Editar diseño" : "Edit layout")}</button>
+          </div>
+          <div style={{ height: "66vh", borderRadius: 12, overflow: "hidden", background: "#0b1520", border: "1px solid " + (edit3d ? "#22c55e" : "#1e2d3d") }}>
+            <Warehouse3D bays={bays3d} items={items} editable={edit3d} onMoveBay={moveBay} />
           </div>
         </div>
       )}
@@ -2837,7 +2953,14 @@ function InventoryPanel({ who = "", isEs = false }) {
           <div style={{ background: "#0f1923", border: "1px solid #1e2d3d", borderRadius: "16px 16px 0 0", padding: 16, width: "100%", maxWidth: 520 }}>
             <div style={{ fontWeight: 800, fontSize: 16, color: "#f1f5f9", marginBottom: 12 }}>{bayForm.mode === "edit" ? (isEs ? "Editar bahía" : "Edit bay") : (isEs ? "Agregar bahía" : "Add bay")}</div>
             <input placeholder={isEs ? "Nombre de la bahía (p.ej. 7AR)" : "Bay name (e.g. 7AR)"} value={bayForm.name} onChange={(e) => setBayForm({ ...bayForm, name: e.target.value })} style={{ ...S.search, marginBottom: 8 }} />
-            <input placeholder={isEs ? "Posición en la lista (menor = más arriba)" : "Position in list (lower = higher up)"} inputMode="numeric" value={bayForm.sort} onChange={(e) => setBayForm({ ...bayForm, sort: e.target.value })} style={{ ...S.search, marginBottom: 8 }} />
+            <input placeholder={isEs ? "Posición en la lista (menor = más arriba)" : "List position (lower = higher up)"} inputMode="numeric" value={bayForm.sort} onChange={(e) => setBayForm({ ...bayForm, sort: e.target.value })} style={{ ...S.search, marginBottom: 8 }} />
+            <div style={{ fontSize: 12, color: "#7b8aa0", margin: "0 0 6px 2px" }}>{isEs ? "Posición en el mapa 3D (o arrástrala en la pestaña 3D)" : "3D map position (or just drag it on the 3D tab)"}</div>
+            <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+              <input placeholder="X" inputMode="numeric" value={bayForm.x} onChange={(e) => setBayForm({ ...bayForm, x: e.target.value })} style={{ ...S.search, marginBottom: 0 }} />
+              <input placeholder="Z" inputMode="numeric" value={bayForm.z} onChange={(e) => setBayForm({ ...bayForm, z: e.target.value })} style={{ ...S.search, marginBottom: 0 }} />
+              <input placeholder={isEs ? "Ancho" : "Width"} inputMode="numeric" value={bayForm.w} onChange={(e) => setBayForm({ ...bayForm, w: e.target.value })} style={{ ...S.search, marginBottom: 0 }} />
+              <input placeholder={isEs ? "Fondo" : "Depth"} inputMode="numeric" value={bayForm.d} onChange={(e) => setBayForm({ ...bayForm, d: e.target.value })} style={{ ...S.search, marginBottom: 0 }} />
+            </div>
             <div style={{ display: "flex", gap: 9 }}>
               <button onClick={() => setBayForm(null)} style={{ flex: 1, padding: 13, borderRadius: 11, border: "none", background: "#16202b", color: "#e2e8f0", fontWeight: 700, fontSize: 15, cursor: "pointer" }}>{isEs ? "Cancelar" : "Cancel"}</button>
               <button onClick={saveBay} style={{ flex: 1, padding: 13, borderRadius: 11, border: "none", background: "#2563eb", color: "#fff", fontWeight: 800, fontSize: 15, cursor: "pointer" }}>{bayForm.mode === "edit" ? (isEs ? "Guardar" : "Save") : (isEs ? "Agregar" : "Add")}</button>
