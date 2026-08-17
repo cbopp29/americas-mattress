@@ -2689,7 +2689,10 @@ function Warehouse3D({ bays, items, onPickBay, focus }) {
     const cam = new THREE.PerspectiveCamera(55, w / h, 0.1, 500);
     const ctr = new THREE.OrbitControls(cam, renderer.domElement); ctr.enableDamping = true;
     ctr.minPolarAngle = Math.PI * 0.12; ctr.maxPolarAngle = Math.PI * 0.49; // no under-view
-    ctr.minDistance = 3; ctr.maxDistance = 55; ctr.enablePan = false;
+    ctr.minDistance = 3; ctr.maxDistance = 55;
+    ctr.enableRotate = false; ctr.enablePan = true; ctr.screenSpacePanning = true; ctr.panSpeed = 1.1; // move & zoom, no 360 spin
+    ctr.mouseButtons = { LEFT: THREE.MOUSE.PAN, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN };
+    ctr.touches = { ONE: THREE.TOUCH.PAN, TWO: THREE.TOUCH.DOLLY_PAN };
     scene.add(new THREE.AmbientLight(0xffffff, 0.9)); const dl = new THREE.DirectionalLight(0xffffff, 0.55); dl.position.set(8, 22, 14); scene.add(dl);
     const floor = new THREE.Mesh(new THREE.PlaneGeometry(60, 60), new THREE.MeshStandardMaterial({ color: 0x0f1e2b, roughness: 1 })); floor.rotation.x = -Math.PI / 2; scene.add(floor);
     const grid = new THREE.GridHelper(60, 60, 0x1e3a52, 0x16293a); grid.position.y = 0.01; scene.add(grid);
@@ -2963,7 +2966,7 @@ function InventoryPanel({ who = "", isEs = false, manager = false }) {
             ))}
           </div>
           <div style={{ fontSize: 12, color: "#7b8aa0", margin: "0 2px 8px" }}>
-            {isEs ? "Elige un pasillo arriba · arrastra para mirar · pellizca para acercar · toca una bahía para ver las camas." : "Pick an aisle above · drag to look · pinch to zoom · tap a bay to see its beds."}
+            {isEs ? "Elige un pasillo arriba · arrastra para moverte · pellizca para acercar · toca una bahía para ver las camas." : "Pick an aisle above · drag to move around · pinch to zoom · tap a bay to see its beds."}
           </div>
           <div style={{ height: "64vh", borderRadius: 12, overflow: "hidden", background: "#0b1520", border: "1px solid #1e2d3d" }}>
             <Warehouse3D bays={bays3d} items={items} onPickBay={setPickBay} focus={focus3d} />
@@ -3054,7 +3057,7 @@ function InventoryPanel({ who = "", isEs = false, manager = false }) {
         const rows = items.filter((x) => (x.bay || "") === pickBay);
         const total = rows.reduce((s, r) => s + (r.qty || 0), 0);
         return (
-          <div onClick={(e) => { if (e.target === e.currentTarget) setPickBay(null); }} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.6)", zIndex: 9998, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
+          <div onPointerDown={(e) => { if (e.target === e.currentTarget) setPickBay(null); }} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.6)", zIndex: 9998, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
             <div style={{ background: "#0f1923", border: "1px solid #1e2d3d", borderRadius: "16px 16px 0 0", padding: 16, width: "100%", maxWidth: 520, maxHeight: "76vh", overflowY: "auto" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
                 <div style={{ fontWeight: 800, fontSize: 17, color: "#f1f5f9" }}>{isEs ? "Bahía" : "Bay"} {pickBay}</div>
