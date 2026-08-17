@@ -2561,8 +2561,10 @@ function InventoryPanel({ who = "", isEs = false }) {
   const [q, setQ] = useState("");
   const [view, setView] = useState("inv");
   const [ready, setReady] = useState(false);
-  const [form, setForm] = useState(null);     // add / edit modal
+  const [form, setForm] = useState(null);     // add / edit item modal
   const [pending, setPending] = useState(null); // +/- confirm
+  const [bayRows, setBayRows] = useState([]);   // bay ordering rows
+  const [bayForm, setBayForm] = useState(null); // add / edit bay modal
 
   useEffect(() => {
     let alive = true;
@@ -2572,13 +2574,15 @@ function InventoryPanel({ who = "", isEs = false }) {
         if (alive) setReady(true);
         return;
       }
-      const [iR, mR] = await Promise.all([
+      const [iR, mR, bR] = await Promise.all([
         sb.from("inventory").select("*"),
         sb.from("stock_moves").select("*").order("id", { ascending: false }).limit(120),
+        sb.from("bays").select("*"),
       ]);
       if (!alive) return;
       if (iR.data) setItems(iR.data);
       if (mR.data) setMoves(mR.data);
+      if (bR.data) setBayRows(bR.data);
       setReady(true);
       try { if (iR.data) await ODB.cacheSet("inventory", iR.data); } catch {}
     })();
@@ -2587,6 +2591,8 @@ function InventoryPanel({ who = "", isEs = false }) {
         () => { sb.from("inventory").select("*").then(({ data }) => { if (data) setItems(data); }); })
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "stock_moves" },
         (p) => { setMoves((prev) => [p.new, ...prev].slice(0, 120)); })
+      .on("postgres_changes", { event: "*", schema: "public", table: "bays" },
+        () => { sb.from("bays").select("*").then(({ data }) => { if (data) setBayRows(data); }); })
       .subscribe();
     return () => { alive = false; sb.removeChannel(ch); };
   }, []);
@@ -2608,12 +2614,13 @@ function InventoryPanel({ who = "", isEs = false }) {
     const name = (f.name || "").trim();
     const size = (f.size || "").trim().toUpperCase();
     const raw = (f.itemnum || "").trim();
+    const mfr = (f.manufacturer || "").trim();
     const qty = parseInt(f.qty) || 0;
     if (!bay || !name) { alert(isEs ? "Bahía y nombre son obligatorios" : "Bay and name are required"); return; }
     if (!raw) { alert(isEs ? "El número de artículo es obligatorio" : "Item # is required"); return; }
     const sku = skuWithCode(raw, size);
     if (f.mode === "edit") {
-      const payload = { bay, name, size, sku, qty };
+      const payload = { bay, name, size, sku, qty, manufacturer: mfr };
       setItems((prev) => prev.map((x) => (x.id === f.id ? { ...x, ...payload } : x)));
       await safeWrite({ table: "inventory", op: "update", match: { id: f.id }, payload });
       setForm(null);
@@ -2622,7 +2629,7 @@ function InventoryPanel({ who = "", isEs = false }) {
     const ex = items.find((x) => x.bay === bay && (x.name || "").toUpperCase() === name.toUpperCase() && (x.size || "").toUpperCase() === size);
     if (ex) { await applyBump(ex, qty); }
     else {
-      const row = { bay, sku, name, size, qty };
+      const row = { bay, sku, name, size, qty, manufacturer: mfr };
       const { data } = await sb.from("inventory").insert(row).select();
       if (data && data[0]) setItems((prev) => [...prev, data[0]]);
       const mv = { item_id: (data && data[0] && data[0].id) || null, bay, name, size, dir: "IN", qty, moved_by: who || "", moved_at: new Date().toISOString() };
@@ -2639,14 +2646,44 @@ function InventoryPanel({ who = "", isEs = false }) {
     setForm(null);
   }
 
-  const openAdd = () => setForm({ mode: "add", bay: "", name: "", size: "QUEEN", itemnum: "", qty: "1" });
-  const openEdit = (r) => setForm({ mode: "edit", id: r.id, bay: r.bay || "", name: r.name || "", size: (r.size || "").toUpperCase(), itemnum: r.sku || "", qty: String(r.qty || 0) });
+  const openAdd = () => setForm({ mode: "add", bay: "", name: "", manufacturer: "", size: "QUEEN", itemnum: "", qty: "1" });
+  const openEdit = (r) => setForm({ mode: "edit", id: r.id, bay: r.bay || "", name: r.name || "", manufacturer: r.manufacturer || "", size: (r.size || "").toUpperCase(), itemnum: r.sku || "", qty: String(r.qty || 0) });
 
   const baynum = (b) => { const n = (b || "").match(/\d+/); return n ? parseInt(n[0]) : 999; };
+  const bayMeta = {}; bayRows.forEach((b) => { bayMeta[b.name] = b.sort; });
+  const bayKey = (b) => (bayMeta[b] != null ? bayMeta[b] : baynum(b));
+
+  const openAddBay = () => setBayForm({ mode: "add", name: "", sort: "" });
+  const openEditBay = (name) => setBayForm({ mode: "edit", origName: name, name, sort: String(bayMeta[name] != null ? bayMeta[name] : baynum(name)) });
+
+  async function saveBay() {
+    const f = bayForm;
+    const name = (f.name || "").trim().toUpperCase();
+    const parsed = parseInt(f.sort);
+    const s = isNaN(parsed) ? 100 : parsed;
+    if (!name) { alert(isEs ? "El nombre de la bahía es obligatorio" : "Bay name is required"); return; }
+    if (f.mode === "edit" && f.origName && f.origName !== name) {
+      setItems((prev) => prev.map((x) => (x.bay === f.origName ? { ...x, bay: name } : x)));
+      try { await sb.from("inventory").update({ bay: name }).eq("bay", f.origName); } catch {}
+      try { await sb.from("bays").delete().eq("name", f.origName); } catch {}
+    }
+    try { await sb.from("bays").upsert({ name, sort: s }, { onConflict: "name" }); } catch {}
+    const { data } = await sb.from("bays").select("*"); if (data) setBayRows(data);
+    setBayForm(null);
+  }
+  async function delBay() {
+    if (!bayForm) return;
+    if (!window.confirm(isEs ? "¿Quitar esta bahía del orden? (los artículos NO se eliminan)" : "Remove this bay from the ordering? (items are NOT deleted)")) return;
+    try { await sb.from("bays").delete().eq("name", bayForm.origName || bayForm.name); } catch {}
+    const { data } = await sb.from("bays").select("*"); if (data) setBayRows(data);
+    setBayForm(null);
+  }
+
   const ql = q.trim().toLowerCase();
-  const shown = ql ? items.filter((x) => ((x.name || "") + " " + (x.size || "") + " " + (x.bay || "") + " " + (x.sku || "")).toLowerCase().includes(ql)) : items;
+  const shown = ql ? items.filter((x) => ((x.name || "") + " " + (x.size || "") + " " + (x.bay || "") + " " + (x.sku || "") + " " + (x.manufacturer || "")).toLowerCase().includes(ql)) : items;
   const groups = {}; shown.forEach((x) => { (groups[x.bay] = groups[x.bay] || []).push(x); });
-  const bays = Object.keys(groups).sort((a, b) => baynum(a) - baynum(b) || a.localeCompare(b));
+  const bays = Object.keys(groups).sort((a, b) => bayKey(a) - bayKey(b) || a.localeCompare(b));
+  const allBayNames = Array.from(new Set([...items.map((x) => x.bay).filter(Boolean), ...bayRows.map((b) => b.name)])).sort((a, b) => bayKey(a) - bayKey(b) || a.localeCompare(b));
 
   const S = {
     search: { width: "100%", padding: "11px 13px", borderRadius: 10, border: "1px solid #1e2d3d", background: "#0f1923", color: "#e2e8f0", fontSize: 15, marginBottom: 10, boxSizing: "border-box" },
@@ -2670,8 +2707,10 @@ function InventoryPanel({ who = "", isEs = false }) {
       <button onClick={openAdd} style={{ width: "100%", marginBottom: 10, padding: 13, borderRadius: 11, border: "none", background: "#2563eb", color: "#fff", fontWeight: 800, fontSize: 15, cursor: "pointer" }}>+ {isEs ? "Agregar inventario" : "Add stock"}</button>
       <div style={{ display: "flex", gap: 7, marginBottom: 10 }}>
         <button style={S.tabBtn(view === "inv")} onClick={() => setView("inv")}>{isEs ? "Inventario" : "Inventory"}</button>
+        <button style={S.tabBtn(view === "bays")} onClick={() => setView("bays")}>{isEs ? "Bahías" : "Bays"}</button>
         <button style={S.tabBtn(view === "log")} onClick={() => setView("log")}>{isEs ? "Actividad" : "Activity"}</button>
       </div>
+      <datalist id="inv-baylist">{allBayNames.map((n) => <option key={n} value={n} />)}</datalist>
 
       {view === "inv" && (
         <div>
@@ -2686,13 +2725,32 @@ function InventoryPanel({ who = "", isEs = false }) {
                   <div key={r.id} style={S.card}>
                     <div style={{ minWidth: 0, flex: 1, cursor: "pointer" }} onClick={() => openEdit(r)}>
                       <div style={S.nm}>{r.name || "(no name)"} <span style={{ fontSize: 12, color: "#3b82f6", fontWeight: 600 }}>✎</span></div>
-                      <div style={S.sub}>{r.size || ""}{r.sku ? "  ·  " + r.sku : ""}</div>
+                      <div style={S.sub}>{[r.manufacturer, r.size, r.sku].filter(Boolean).join("  ·  ")}</div>
                     </div>
                     <div style={S.qty((r.qty || 0) <= 1)}>{r.qty || 0}</div>
                     <button style={S.op("#f43f5e")} onClick={() => setPending({ it: r, delta: -1 })}>−</button>
                     <button style={S.op("#22c55e")} onClick={() => setPending({ it: r, delta: 1 })}>+</button>
                   </div>
                 ))}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {view === "bays" && (
+        <div>
+          <button onClick={openAddBay} style={{ width: "100%", marginBottom: 8, padding: 12, borderRadius: 11, border: "1px dashed #2b3b4d", background: "#0f1923", color: "#60a5fa", fontWeight: 700, fontSize: 14, cursor: "pointer" }}>+ {isEs ? "Agregar bahía" : "Add bay"}</button>
+          <div style={{ fontSize: 12, color: "#7b8aa0", margin: "2px 2px 10px" }}>{isEs ? "El número fija el orden (menor = más arriba). Toca una bahía para renombrarla o moverla." : "The number sets the order (lower = higher up). Tap a bay to rename or move it."}</div>
+          {allBayNames.length === 0 && <div style={{ padding: 30, textAlign: "center", color: "#475569" }}>{isEs ? "Aún no hay bahías." : "No bays yet."}</div>}
+          {allBayNames.map((name) => {
+            const cnt = items.filter((x) => x.bay === name).reduce((s, r) => s + (r.qty || 0), 0);
+            const pos = bayMeta[name] != null ? bayMeta[name] : baynum(name);
+            return (
+              <div key={name} style={{ ...S.card, cursor: "pointer" }} onClick={() => openEditBay(name)}>
+                <span style={{ ...S.pill, fontWeight: 800, minWidth: 30, textAlign: "center" }}>{pos}</span>
+                <div style={{ flex: 1, fontWeight: 700, color: "#f1f5f9" }}>{name} <span style={{ fontSize: 12, color: "#3b82f6" }}>✎</span></div>
+                <span style={{ fontSize: 12, color: "#7b8aa0" }}>{cnt} {isEs ? "u" : "units"}</span>
               </div>
             );
           })}
@@ -2734,8 +2792,9 @@ function InventoryPanel({ who = "", isEs = false }) {
         <div onClick={(e) => { if (e.target === e.currentTarget) setForm(null); }} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.6)", zIndex: 9999, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
           <div style={{ background: "#0f1923", border: "1px solid #1e2d3d", borderRadius: "16px 16px 0 0", padding: 16, width: "100%", maxWidth: 520 }}>
             <div style={{ fontWeight: 800, fontSize: 16, color: "#f1f5f9", marginBottom: 12 }}>{form.mode === "edit" ? (isEs ? "Editar artículo" : "Edit item") : (isEs ? "Agregar inventario" : "Add stock")}</div>
-            <input placeholder={isEs ? "Bahía (p.ej. 7AR)" : "Bay (e.g. 7AR)"} value={form.bay} onChange={(e) => setForm({ ...form, bay: e.target.value })} style={{ ...S.search, marginBottom: 8 }} />
+            <input list="inv-baylist" placeholder={isEs ? "Bahía (p.ej. 7AR)" : "Bay (e.g. 7AR)"} value={form.bay} onChange={(e) => setForm({ ...form, bay: e.target.value })} style={{ ...S.search, marginBottom: 8 }} />
             <input placeholder={isEs ? "Nombre / modelo" : "Name / model"} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} style={{ ...S.search, marginBottom: 8 }} />
+            <input placeholder={isEs ? "Fabricante" : "Manufacturer"} value={form.manufacturer} onChange={(e) => setForm({ ...form, manufacturer: e.target.value })} style={{ ...S.search, marginBottom: 8 }} />
             <select value={SIZE_OPTS.includes(form.size) ? form.size : (form.size ? form.size : "OTHER")} onChange={(e) => setForm({ ...form, size: e.target.value })} style={{ ...S.search, marginBottom: 8 }}>
               {sizeOpts.map((s) => <option key={s} value={s}>{s}{SIZE_CODES[s] ? " (" + SIZE_CODES[s] + ")" : ""}</option>)}
             </select>
@@ -2748,6 +2807,23 @@ function InventoryPanel({ who = "", isEs = false }) {
             </div>
             {form.mode === "edit" && (
               <button onClick={delItem} style={{ width: "100%", marginTop: 10, padding: 11, borderRadius: 11, border: "1px solid #7f1d1d", background: "transparent", color: "#fb7185", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>{isEs ? "Eliminar artículo" : "Delete item"}</button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {bayForm && (
+        <div onClick={(e) => { if (e.target === e.currentTarget) setBayForm(null); }} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.6)", zIndex: 9999, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
+          <div style={{ background: "#0f1923", border: "1px solid #1e2d3d", borderRadius: "16px 16px 0 0", padding: 16, width: "100%", maxWidth: 520 }}>
+            <div style={{ fontWeight: 800, fontSize: 16, color: "#f1f5f9", marginBottom: 12 }}>{bayForm.mode === "edit" ? (isEs ? "Editar bahía" : "Edit bay") : (isEs ? "Agregar bahía" : "Add bay")}</div>
+            <input placeholder={isEs ? "Nombre de la bahía (p.ej. 7AR)" : "Bay name (e.g. 7AR)"} value={bayForm.name} onChange={(e) => setBayForm({ ...bayForm, name: e.target.value })} style={{ ...S.search, marginBottom: 8 }} />
+            <input placeholder={isEs ? "Posición en la lista (menor = más arriba)" : "Position in list (lower = higher up)"} inputMode="numeric" value={bayForm.sort} onChange={(e) => setBayForm({ ...bayForm, sort: e.target.value })} style={{ ...S.search, marginBottom: 8 }} />
+            <div style={{ display: "flex", gap: 9 }}>
+              <button onClick={() => setBayForm(null)} style={{ flex: 1, padding: 13, borderRadius: 11, border: "none", background: "#16202b", color: "#e2e8f0", fontWeight: 700, fontSize: 15, cursor: "pointer" }}>{isEs ? "Cancelar" : "Cancel"}</button>
+              <button onClick={saveBay} style={{ flex: 1, padding: 13, borderRadius: 11, border: "none", background: "#2563eb", color: "#fff", fontWeight: 800, fontSize: 15, cursor: "pointer" }}>{bayForm.mode === "edit" ? (isEs ? "Guardar" : "Save") : (isEs ? "Agregar" : "Add")}</button>
+            </div>
+            {bayForm.mode === "edit" && (
+              <button onClick={delBay} style={{ width: "100%", marginTop: 10, padding: 11, borderRadius: 11, border: "1px solid #7f1d1d", background: "transparent", color: "#fb7185", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>{isEs ? "Quitar del orden" : "Remove from ordering"}</button>
             )}
           </div>
         </div>
