@@ -1704,7 +1704,7 @@ function DriverView({ user, deliveries, customTasks, baseTasks, messages, proble
                 <div style={{fontSize:11,color:"#475569",fontWeight:700,letterSpacing:".08em",textTransform:"uppercase",marginBottom:8}}>{cat}</div>
                 {trainingFiles.filter(t=>t.category===cat).map(t=>{
                   const signed=(completions||[]).find(c=>c.training_id===t.id&&c.emp_id===user.id);
-                  const getEmbed=url=>{if(!url)return null;const yt=url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([^&\s]+)/);if(yt)return`https://www.youtube.com/embed/${yt[1]}`;const vi=url.match(/vimeo\.com\/(\d+)/);if(vi)return`https://player.vimeo.com/video/${vi[1]}`;return url;};
+                  const getEmbed=url=>{if(!url)return null;const yt=url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)([^&?\s]+)/);if(yt)return{type:"iframe",src:`https://www.youtube.com/embed/${yt[1]}`};const vi=url.match(/vimeo\.com\/(\d+)/);if(vi)return{type:"iframe",src:`https://player.vimeo.com/video/${vi[1]}`};const gd=url.match(/drive\.google\.com\/file\/d\/([^/]+)/);if(gd)return{type:"iframe",src:`https://drive.google.com/file/d/${gd[1]}/preview`};const lo=url.match(/loom\.com\/share\/([^/?\s]+)/);if(lo)return{type:"iframe",src:`https://www.loom.com/embed/${lo[1]}`};if(/\.(mp4|mov|webm|m4v|ogg)(\?|$)/i.test(url))return{type:"video",src:url};return{type:"iframe",src:url};};
                   const embed=getEmbed(t.video_url);
                   return(<TrainingCard key={t.id} t={t} embed={embed} signed={signed} user={user} isEs={isEs} sb={sb} completions={completions||[]} setCompletions={setCompletions} cardStyle={cardStyle}/>);
                 })}
@@ -1735,7 +1735,9 @@ function TrainingCard({ t, embed, signed, user, isEs, sb, completions, setComple
       </div>
       {open&&(
         <div style={{borderTop:"1px solid #1e2d3d"}}>
-          {embed&&<div style={{position:"relative",paddingBottom:"56.25%",height:0}}><iframe src={embed} style={{position:"absolute",top:0,left:0,width:"100%",height:"100%",border:0}} allowFullScreen title={t.title}/></div>}
+          {embed&&(embed.type==="video"
+            ? <video src={embed.src} controls playsInline preload="metadata" style={{width:"100%",display:"block",background:"#000"}}/>
+            : <div style={{position:"relative",paddingBottom:"56.25%",height:0}}><iframe src={embed.src} style={{position:"absolute",top:0,left:0,width:"100%",height:"100%",border:0}} allowFullScreen allow="autoplay; fullscreen; picture-in-picture" title={t.title}/></div>)}
           {t.content&&<div style={{padding:"12px 16px",fontSize:13,color:"#94a3b8",lineHeight:1.6}}>{t.content}</div>}
           {t.requires_signature&&!signed&&(
             <div style={{padding:"12px 16px",borderTop:"1px solid #1e2d3d"}}>
@@ -2558,33 +2560,22 @@ function skuWithCode(itemnum, size) {
 const SIZE_HEX = { TWIN: "#60a5fa", "TWIN XL": "#38bdf8", FULL: "#34d399", QUEEN: "#f59e0b", KING: "#f43f5e", "CAL KING": "#a855f7", OTHER: "#94a3b8" };
 
 // ── 3D warehouse: floor + bays + inventory as labeled blocks; drag bays in edit mode ──
-// warehouse floor plan: four racks (0-9 & 17-22 wall-mounted, 10-16 & 23-29 double-sided) + elevated couch platform
-const LH = 1.3, Y0 = 0.5, PADD = 2.4;
-const RACKS = [
-  { key: "a", range: [0, 9], z: 12, wall: 14.2, label: "BAY 0-9" },
-  { key: "b", range: [10, 16], z: 6.5, wall: null, label: "BAY 10-16" },
-  { key: "d", range: [23, 29], z: -5, wall: null, label: "BAY 23-29" },
-  { key: "c", range: [17, 22], z: -11, wall: -13.2, label: "BAY 17-22" },
-];
-const FOCI = {
-  all: { pos: [0, 18, 31], tgt: [0, 1.5, 0] },
-  a: { pos: [-20, 4, 12], tgt: [16, 2, 12] },
-  b: { pos: [-20, 4, 6.5], tgt: [16, 2, 6.5] },
-  d: { pos: [-20, 4, -5], tgt: [16, 2, -5] },
-  c: { pos: [-20, 4, -11], tgt: [16, 2, -11] },
-  couch: { pos: [-17, 6.5, 9], tgt: [-17, 3, -7] },
-};
-function rackOf(n) { for (const r of RACKS) if (n >= r.range[0] && n <= r.range[1]) return r; return null; }
+// first-person aisle walk: pick an aisle, walk it (scroll / arrows / drag / buttons), tap a bay to see its beds
+const AISLES = { a: [0, 9], b: [10, 16], d: [23, 29], c: [17, 22] };
+const SP = 4.4, LH = 1.35, Y0 = 0.6;
 function parseBay(name) {
   const up = (name || "").toUpperCase().trim();
   const m = up.match(/^(\d+)\s*([A-C])?\s*([LR])?/);
   if (!m) return { pos: null, level: 0, side: null, special: true };
   return { pos: parseInt(m[1]), level: m[2] ? m[2].charCodeAt(0) - 65 : 0, side: m[3] || null, special: false };
 }
-function Warehouse3D({ bays, items, onPickBay, focus }) {
+function couchNameFrom(items) {
+  const it = (items || []).find((i) => (i.bay || "").toUpperCase().includes("COUCH"));
+  return it ? it.bay : "Couch Bay";
+}
+function Warehouse3D({ items, focus, onPickBay }) {
   const mountRef = useRef(null);
-  const dataRef = useRef({}); dataRef.current = { bays, items, onPickBay };
-  const focusRef = useRef("all");
+  const dataRef = useRef({}); dataRef.current = { items, focus, onPickBay };
   const glRef = useRef({});
   const selRef = useRef(null);
 
@@ -2601,12 +2592,11 @@ function Warehouse3D({ bays, items, onPickBay, focus }) {
     // eslint-disable-next-line
   }, []);
 
-  useEffect(() => { if (glRef.current.scene) build(); /* eslint-disable-next-line */ }, [bays, items]);
-  useEffect(() => { focusRef.current = focus || "all"; applyFocus(); /* eslint-disable-next-line */ }, [focus]);
+  useEffect(() => { if (glRef.current.scene) build(); /* eslint-disable-next-line */ }, [items, focus]);
 
   function mkLabel(THREE, text, color, scale) {
     const c = document.createElement("canvas"); c.width = 256; c.height = 64;
-    const g = c.getContext("2d"); g.fillStyle = "rgba(10,20,30,0.85)"; g.fillRect(0, 0, 256, 64);
+    const g = c.getContext("2d"); g.fillStyle = "rgba(10,20,30,0.88)"; g.fillRect(0, 0, 256, 64);
     g.strokeStyle = color; g.lineWidth = 5; g.strokeRect(2, 2, 252, 60);
     g.fillStyle = "#fff"; g.font = "bold 30px system-ui,Arial"; g.textAlign = "center"; g.textBaseline = "middle";
     g.fillText((text || "").slice(0, 22), 128, 34);
@@ -2618,64 +2608,51 @@ function Warehouse3D({ bays, items, onPickBay, focus }) {
     const THREE = window.THREE, gl = glRef.current; if (!gl.content) return;
     while (gl.content.children.length) gl.content.remove(gl.content.children[0]);
     gl.pads = [];
-    const { bays, items } = dataRef.current;
-    const sel = selRef.current;
-    const posSet = new Set(); let couchName = null;
-    const consider = (nm) => { const p = parseBay(nm); if (p.special) { if ((nm || "").toUpperCase().includes("COUCH")) couchName = nm; return; } if (rackOf(p.pos)) posSet.add(p.pos); };
-    bays.forEach((b) => consider(b.name));
-    items.forEach((i) => consider(i.bay));
+    const { items, focus } = dataRef.current; const sel = selRef.current;
+    const focusChanged = gl.lastFocus !== focus; gl.lastFocus = focus;
     const H = Y0 + 3 * LH;
-    Array.from(posSet).sort((a, b) => a - b).forEach((pos) => {
-      const r = rackOf(pos); const [a, b] = r.range; const t = b > a ? (pos - a) / (b - a) : 0.5;
-      const posStr = String(pos); const on = sel === posStr;
-      const unit = new THREE.Group(); unit.position.set(-15 + t * 30, 0, r.z);
-      for (let lv = 0; lv < 3; lv++) {
-        for (const side of ["L", "R"]) {
-          const cx = side === "L" ? -0.55 : 0.55, cy = Y0 + lv * LH;
-          const cell = new THREE.Mesh(new THREE.BoxGeometry(0.95, 0.06, PADD), new THREE.MeshStandardMaterial({ color: on ? 0x14532d : 0x18293c }));
-          cell.position.set(cx, cy, 0); cell.userData.bay = posStr; unit.add(cell); gl.pads.push(cell);
-          const ed = new THREE.LineSegments(new THREE.EdgesGeometry(cell.geometry), new THREE.LineBasicMaterial({ color: on ? 0x22c55e : 0x2b4562 })); ed.position.copy(cell.position); unit.add(ed);
-          const its = items.filter((i) => { const p = parseBay(i.bay); return p.pos === pos && p.level === lv && (p.side === side || (p.side == null && side === "L")); });
-          const n = Math.min(its.length, 3);
-          for (let k = 0; k < n; k++) { const it = its[k]; const hex = SIZE_HEX[(it.size || "").toUpperCase()] || "#94a3b8"; const bed = new THREE.Mesh(new THREE.BoxGeometry(0.72, 0.2, PADD - 0.6), new THREE.MeshStandardMaterial({ color: hex, roughness: 0.7 })); bed.position.set(cx, cy + 0.16 + k * 0.22, 0); unit.add(bed); }
-        }
-      }
-      const postMat = new THREE.MeshStandardMaterial({ color: 0x24384f });
-      [[-1.1, PADD / 2 - 0.1], [1.1, PADD / 2 - 0.1], [-1.1, -(PADD / 2 - 0.1)], [1.1, -(PADD / 2 - 0.1)]].forEach(([px, pz]) => { const post = new THREE.Mesh(new THREE.BoxGeometry(0.08, H, 0.08), postMat); post.position.set(px, H / 2, pz); unit.add(post); });
-      unit.add((() => { const l = mkLabel(THREE, "Bay " + pos, on ? "#22c55e" : "#93c5fd", 2.1); l.position.set(0, H + 0.35, PADD / 2 + 0.15); return l; })());
-      gl.content.add(unit);
-    });
-    RACKS.forEach((r) => {
-      if (r.wall != null) {
-        const wall = new THREE.Mesh(new THREE.PlaneGeometry(38, 5), new THREE.MeshStandardMaterial({ color: 0x223449, transparent: true, opacity: 0.16, side: THREE.DoubleSide }));
-        wall.position.set(0, 2.5, r.wall); gl.content.add(wall);
-      }
-      const l = mkLabel(THREE, r.label, "#64748b", 4); l.position.set(0, H + 1.2, r.z); gl.content.add(l);
-    });
-    if (couchName) {
-      const top = 2.7, on = sel === couchName;
-      const grp = new THREE.Group(); grp.position.set(-17, 0, -7);
+    const clickMat = () => new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false });
+
+    if (focus === "couch") {
+      const name = couchNameFrom(items); const on = sel === name; const top = 2.6;
+      const grp = new THREE.Group(); grp.position.set(0, 0, -7);
       const legMat = new THREE.MeshStandardMaterial({ color: 0x24384f });
       [[-4.4, -2.2], [4.4, -2.2], [-4.4, 2.2], [4.4, 2.2], [0, -2.2], [0, 2.2]].forEach(([lx, lz]) => { const leg = new THREE.Mesh(new THREE.BoxGeometry(0.22, top, 0.22), legMat); leg.position.set(lx, top / 2, lz); grp.add(leg); });
-      const plat = new THREE.Mesh(new THREE.BoxGeometry(9.6, 0.2, 5), new THREE.MeshStandardMaterial({ color: on ? 0x14532d : 0x1b2c40 }));
-      plat.position.y = top; plat.userData.bay = couchName; grp.add(plat); gl.pads.push(plat);
+      const plat = new THREE.Mesh(new THREE.BoxGeometry(9.6, 0.22, 5), new THREE.MeshStandardMaterial({ color: on ? 0x14532d : 0x1b2c40 })); plat.position.y = top; grp.add(plat);
       grp.add((() => { const e = new THREE.LineSegments(new THREE.EdgesGeometry(plat.geometry), new THREE.LineBasicMaterial({ color: on ? 0x22c55e : 0x334862 })); e.position.y = top; return e; })());
+      const box = new THREE.Mesh(new THREE.BoxGeometry(9.8, 2.4, 5.2), clickMat()); box.position.y = top + 1; box.userData.bay = name; grp.add(box); gl.pads.push(box);
       for (let i = 0; i < 5; i++) { const rung = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.08, 0.08), legMat); rung.position.set(-5.1, 0.45 + i * (top / 5), 2.1); grp.add(rung); }
-      // 8 stacks of mattresses across the platform
-      const its = items.filter((i) => (i.bay || "").toUpperCase().trim() === couchName.toUpperCase().trim());
-      const cap = Math.min(its.length, 48);
+      const its = items.filter((i) => (i.bay || "").toUpperCase().trim() === name.toUpperCase().trim()); const cap = Math.min(its.length, 48);
       for (let k = 0; k < cap; k++) { const it = its[k]; const hex = SIZE_HEX[(it.size || "").toUpperCase()] || "#94a3b8"; const col = k % 8, row = Math.floor(k / 8); const bed = new THREE.Mesh(new THREE.BoxGeometry(0.95, 0.18, 3), new THREE.MeshStandardMaterial({ color: hex, roughness: 0.7 })); bed.position.set(-4.05 + col * 1.16, top + 0.2 + row * 0.2, 0); grp.add(bed); }
       grp.add((() => { const l = mkLabel(THREE, "COUCH BAY", on ? "#22c55e" : "#fbbf24", 3.6); l.position.set(0, top + 1.7, 0); return l; })());
       gl.content.add(grp);
+      gl.minZ = -4; gl.maxZ = 8; if (focusChanged) gl.walkZ = 8;
+      return;
     }
-  }
 
-  function applyFocus() {
-    const gl = glRef.current; if (!gl.ctr) return;
-    const f = FOCI[focusRef.current] || FOCI.all;
-    gl.cam.position.set(f.pos[0], f.pos[1], f.pos[2]); gl.ctr.target.set(f.tgt[0], f.tgt[1], f.tgt[2]); gl.ctr.update();
-    if (focusRef.current && focusRef.current !== "all") { const a = gl.ctr.getAzimuthalAngle(); gl.ctr.minAzimuthAngle = a - Math.PI * 0.33; gl.ctr.maxAzimuthAngle = a + Math.PI * 0.33; }
-    else { gl.ctr.minAzimuthAngle = -Infinity; gl.ctr.maxAzimuthAngle = Infinity; }
+    const range = AISLES[focus] || AISLES.a;
+    let count = 0;
+    for (let pos = range[0]; pos <= range[1]; pos++) {
+      const i = pos - range[0]; const z = -i * SP; count = i + 1;
+      const on = sel === String(pos);
+      const unit = new THREE.Group(); unit.position.set(2.7, 0, z);
+      const box = new THREE.Mesh(new THREE.BoxGeometry(2.3, H + 0.4, 2.4), clickMat()); box.position.y = H / 2; box.userData.bay = String(pos); unit.add(box); gl.pads.push(box);
+      for (let lv = 0; lv < 3; lv++) {
+        for (const side of ["L", "R"]) {
+          const cx = side === "L" ? -0.55 : 0.55, cy = Y0 + lv * LH;
+          const cell = new THREE.Mesh(new THREE.BoxGeometry(0.95, 0.06, 2.2), new THREE.MeshStandardMaterial({ color: on ? 0x14532d : 0x18293c })); cell.position.set(cx, cy, 0); unit.add(cell);
+          const ed = new THREE.LineSegments(new THREE.EdgesGeometry(cell.geometry), new THREE.LineBasicMaterial({ color: on ? 0x22c55e : 0x2b4562 })); ed.position.copy(cell.position); unit.add(ed);
+          const its = items.filter((it) => { const p = parseBay(it.bay); return p.pos === pos && p.level === lv && (p.side === side || (p.side == null && side === "L")); });
+          const n = Math.min(its.length, 3);
+          for (let k = 0; k < n; k++) { const it = its[k]; const hex = SIZE_HEX[(it.size || "").toUpperCase()] || "#94a3b8"; const bed = new THREE.Mesh(new THREE.BoxGeometry(0.72, 0.2, 2.0), new THREE.MeshStandardMaterial({ color: hex, roughness: 0.7 })); bed.position.set(cx, cy + 0.15 + k * 0.22, 0); unit.add(bed); }
+        }
+      }
+      const postMat = new THREE.MeshStandardMaterial({ color: 0x24384f });
+      [[-1.15, 1.05], [1.15, 1.05], [-1.15, -1.05], [1.15, -1.05]].forEach(([px, pz]) => { const post = new THREE.Mesh(new THREE.BoxGeometry(0.08, H, 0.08), postMat); post.position.set(px, H / 2, pz); unit.add(post); });
+      unit.add((() => { const l = mkLabel(THREE, "Bay " + pos, on ? "#22c55e" : "#93c5fd", 2.3); l.position.set(-1.15, H - 0.2, 1.25); return l; })());
+      gl.content.add(unit);
+    }
+    gl.minZ = -(count - 1) * SP - 3; gl.maxZ = 8; if (focusChanged) gl.walkZ = 8;
   }
 
   function init() {
@@ -2683,53 +2660,58 @@ function Warehouse3D({ bays, items, onPickBay, focus }) {
     const w = mount.clientWidth || 600, h = mount.clientHeight || 400;
     const renderer = new THREE.WebGLRenderer({ antialias: true }); renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); renderer.setSize(w, h);
     mount.appendChild(renderer.domElement);
-    const scene = new THREE.Scene(); scene.background = new THREE.Color(0x0b1520);
-    const cam = new THREE.PerspectiveCamera(55, w / h, 0.1, 500);
-    const ctr = new THREE.OrbitControls(cam, renderer.domElement); ctr.enableDamping = true;
-    ctr.minPolarAngle = Math.PI * 0.12; ctr.maxPolarAngle = Math.PI * 0.49; // no under-view
-    ctr.minDistance = 3; ctr.maxDistance = 55;
-    ctr.enableRotate = false; ctr.enablePan = true; ctr.screenSpacePanning = true; ctr.panSpeed = 1.1; // move & zoom, no 360 spin
-    ctr.mouseButtons = { LEFT: THREE.MOUSE.PAN, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN };
-    ctr.touches = { ONE: THREE.TOUCH.PAN, TWO: THREE.TOUCH.DOLLY_PAN };
-    scene.add(new THREE.AmbientLight(0xffffff, 0.9)); const dl = new THREE.DirectionalLight(0xffffff, 0.55); dl.position.set(8, 22, 14); scene.add(dl);
-    const floor = new THREE.Mesh(new THREE.PlaneGeometry(60, 60), new THREE.MeshStandardMaterial({ color: 0x0f1e2b, roughness: 1 })); floor.rotation.x = -Math.PI / 2; scene.add(floor);
-    const grid = new THREE.GridHelper(60, 60, 0x1e3a52, 0x16293a); grid.position.y = 0.01; scene.add(grid);
+    const scene = new THREE.Scene(); scene.background = new THREE.Color(0x0b1520); scene.fog = new THREE.Fog(0x0b1520, 14, 60);
+    const cam = new THREE.PerspectiveCamera(64, w / h, 0.1, 500);
+    scene.add(new THREE.AmbientLight(0xffffff, 0.92)); const dl = new THREE.DirectionalLight(0xffffff, 0.5); dl.position.set(4, 20, 8); scene.add(dl);
+    const floor = new THREE.Mesh(new THREE.PlaneGeometry(24, 160), new THREE.MeshStandardMaterial({ color: 0x0f1e2b, roughness: 1 })); floor.rotation.x = -Math.PI / 2; floor.position.z = -50; scene.add(floor);
+    const grid = new THREE.GridHelper(160, 80, 0x1e3a52, 0x16293a); grid.position.set(0, 0.01, -50); scene.add(grid);
     const content = new THREE.Group(); scene.add(content);
-    const ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
-    let downXY = null;
-    const pt = (e) => { const r = renderer.domElement.getBoundingClientRect(); const cx = e.touches ? e.touches[0].clientX : e.clientX, cy = e.touches ? e.touches[0].clientY : e.clientY; ndc.x = ((cx - r.left) / r.width) * 2 - 1; ndc.y = -((cy - r.top) / r.height) * 2 + 1; return { cx, cy }; };
-    const onDown = (e) => { downXY = pt(e); };
-    const onUp = (e) => {
-      if (!downXY) return; const p = pt(e);
-      if (Math.abs(p.cx - downXY.cx) < 6 && Math.abs(p.cy - downXY.cy) < 6) {
-        ray.setFromCamera(ndc, cam); const hh = ray.intersectObjects(glRef.current.pads || []);
-        const name = hh.length ? hh[0].object.userData.bay : null;
-        if (name) { selRef.current = name; build(); dataRef.current.onPickBay && dataRef.current.onPickBay(name); }
-        else if (selRef.current) { selRef.current = null; build(); }
-      }
-      downXY = null;
-    };
-    renderer.domElement.addEventListener("pointerdown", onDown); window.addEventListener("pointerup", onUp);
-    const ro = new ResizeObserver(() => { const W = mount.clientWidth, H = mount.clientHeight; if (W && H) { cam.aspect = W / H; cam.updateProjectionMatrix(); renderer.setSize(W, H); } }); ro.observe(mount);
-    const state = { renderer, scene, cam, ctr, content, pads: [], ro, onUp, dom: renderer.domElement, stopped: false, raf: 0 };
+
+    const state = { renderer, scene, cam, content, pads: [], stopped: false, raf: 0, walkZ: 8, minZ: -40, maxZ: 8, camX: -1.9, camY: 3.0, dom: renderer.domElement };
     glRef.current = state;
-    const loop = () => { if (state.stopped) return; ctr.update(); renderer.render(scene, cam); state.raf = requestAnimationFrame(loop); };
+    const clamp = () => { state.walkZ = Math.max(state.minZ, Math.min(state.maxZ, state.walkZ)); };
+    state.step = (d) => { state.walkZ += d; clamp(); };
+
+    const ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
+    const pt = (e) => { const r = renderer.domElement.getBoundingClientRect(); const cx = e.touches ? e.touches[0].clientX : e.clientX, cy = e.touches ? e.touches[0].clientY : e.clientY; ndc.x = ((cx - r.left) / r.width) * 2 - 1; ndc.y = -((cy - r.top) / r.height) * 2 + 1; return { cx, cy }; };
+    let ptr = null, dragging = false;
+    const onDown = (e) => { const p = pt(e); ptr = { x: p.cx, y: p.cy, z: state.walkZ }; dragging = false; };
+    const onMove = (e) => { if (!ptr) return; const p = pt(e); if (Math.abs(p.cx - ptr.x) > 6 || Math.abs(p.cy - ptr.y) > 6) dragging = true; if (dragging) { state.walkZ = ptr.z + (p.cy - ptr.y) * 0.05; clamp(); } };
+    const onUp = () => {
+      if (ptr && !dragging) { ray.setFromCamera(ndc, cam); const hh = ray.intersectObjects(state.pads || []); const name = hh.length ? hh[0].object.userData.bay : null; if (name) { selRef.current = name; build(); dataRef.current.onPickBay && dataRef.current.onPickBay(name); } else if (selRef.current) { selRef.current = null; build(); } }
+      ptr = null; dragging = false;
+    };
+    const onWheel = (e) => { e.preventDefault(); state.walkZ += e.deltaY * 0.012; clamp(); };
+    const onKey = (e) => { if (e.code === "ArrowUp" || e.code === "KeyW") { state.step(-1.7); e.preventDefault(); } else if (e.code === "ArrowDown" || e.code === "KeyS") { state.step(1.7); e.preventDefault(); } };
+    renderer.domElement.addEventListener("pointerdown", onDown); window.addEventListener("pointermove", onMove); window.addEventListener("pointerup", onUp);
+    renderer.domElement.addEventListener("wheel", onWheel, { passive: false }); window.addEventListener("keydown", onKey);
+    state.onMove = onMove; state.onUp = onUp; state.onKey = onKey;
+
+    const ro = new ResizeObserver(() => { const W = mount.clientWidth, H = mount.clientHeight; if (W && H) { cam.aspect = W / H; cam.updateProjectionMatrix(); renderer.setSize(W, H); } }); ro.observe(mount); state.ro = ro;
+    const loop = () => { if (state.stopped) return; cam.position.set(state.camX, state.camY, state.walkZ); cam.lookAt(state.camX + 2.7, 1.4, state.walkZ - 13); renderer.render(scene, cam); state.raf = requestAnimationFrame(loop); };
     state.raf = requestAnimationFrame(loop);
-    build(); applyFocus();
+    build();
   }
 
   function teardown() {
     const gl = glRef.current; if (!gl.renderer) return;
     gl.stopped = true; cancelAnimationFrame(gl.raf);
     gl.ro && gl.ro.disconnect();
-    window.removeEventListener("pointerup", gl.onUp);
-    try { gl.ctr && gl.ctr.dispose(); } catch {}
+    window.removeEventListener("pointermove", gl.onMove); window.removeEventListener("pointerup", gl.onUp); window.removeEventListener("keydown", gl.onKey);
     try { gl.renderer.forceContextLoss(); } catch {}
     try { gl.renderer.dispose(); gl.dom && gl.dom.remove(); } catch {}
     glRef.current = {};
   }
 
-  return <div ref={mountRef} style={{ width: "100%", height: "100%" }} />;
+  return (
+    <div style={{ position: "relative", width: "100%", height: "100%" }}>
+      <div ref={mountRef} style={{ width: "100%", height: "100%" }} />
+      <div style={{ position: "absolute", bottom: 12, left: "50%", transform: "translateX(-50%)", display: "flex", gap: 12 }}>
+        <button onClick={() => glRef.current.step && glRef.current.step(-2.4)} style={{ width: 60, height: 46, borderRadius: 11, border: "none", background: "rgba(37,99,235,.92)", color: "#fff", fontSize: 22, fontWeight: 800, cursor: "pointer" }}>▲</button>
+        <button onClick={() => glRef.current.step && glRef.current.step(2.4)} style={{ width: 60, height: 46, borderRadius: 11, border: "none", background: "rgba(22,32,43,.92)", color: "#e2e8f0", fontSize: 22, fontWeight: 800, cursor: "pointer" }}>▼</button>
+      </div>
+    </div>
+  );
 }
 
 function InventoryPanel({ who = "", isEs = false, manager = false }) {
@@ -2743,7 +2725,7 @@ function InventoryPanel({ who = "", isEs = false, manager = false }) {
   const [bayRows, setBayRows] = useState([]);   // bay ordering rows
   const [bayForm, setBayForm] = useState(null); // add / edit bay modal
   const [pickBay, setPickBay] = useState(null); // tapped bay -> contents drawer
-  const [focus3d, setFocus3d] = useState("all"); // 3D camera focus (overview / a rack)
+  const [focus3d, setFocus3d] = useState("a"); // which aisle you're walking
 
   useEffect(() => {
     let alive = true;
@@ -2865,28 +2847,6 @@ function InventoryPanel({ who = "", isEs = false, manager = false }) {
   const groups = {}; shown.forEach((x) => { (groups[x.bay] = groups[x.bay] || []).push(x); });
   const bays = Object.keys(groups).sort((a, b) => bayKey(a) - bayKey(b) || a.localeCompare(b));
   const allBayNames = Array.from(new Set([...items.map((x) => x.bay).filter(Boolean), ...bayRows.map((b) => b.name)])).sort((a, b) => bayKey(a) - bayKey(b) || a.localeCompare(b));
-  // real-world default layout: 0-9 right wall, 10-16 middle, 17-22 left wall, 23-29 middle-2, couch/stacks
-  const zonePos = (name) => {
-    const up = (name || "").toUpperCase();
-    const L = (a, b, t) => a + (b - a) * t;
-    if (up.includes("COUCH")) return { x: 0, z: 17, w: 6, d: 2.6 };
-    if (up.includes("STACK")) { const s = baynum(name) || 1; return { x: -6 + (s - 1) * 4, z: -18, w: 2.4, d: 2.4 }; }
-    const n = baynum(name);
-    if (n >= 0 && n <= 9) return { x: 19, z: L(-15, 15, n / 9), w: 2.6, d: 2.4 };
-    if (n >= 10 && n <= 16) return { x: -5, z: L(-12, 12, (n - 10) / 6), w: 2.4, d: 2.4 };
-    if (n >= 17 && n <= 22) return { x: -19, z: L(-15, 15, (n - 17) / 5), w: 2.6, d: 2.4 };
-    if (n >= 23 && n <= 29) return { x: 5, z: L(-12, 12, (n - 23) / 6), w: 2.4, d: 2.4 };
-    return null;
-  };
-  const seen3d = {};
-  const bays3d = allBayNames.map((name, i) => {
-    const r = bayRows.find((b) => b.name === name) || {};
-    if (r.x != null && r.z != null) return { name, x: r.x, z: r.z, w: r.w != null ? r.w : 2.4, d: r.d != null ? r.d : 2.4 };
-    let p = zonePos(name) || { x: -19 + (i % 6) * 3, z: 20, w: 2.2, d: 2.2 };
-    const key = Math.round(p.x) + "," + Math.round(p.z);
-    if (seen3d[key]) { p = { ...p, x: p.x + seen3d[key] * 1.5 }; seen3d[key]++; } else seen3d[key] = 1;
-    return { name, x: p.x, z: p.z, w: p.w, d: p.d };
-  });
 
   const S = {
     search: { width: "100%", padding: "11px 13px", borderRadius: 10, border: "1px solid #1e2d3d", background: "#0f1923", color: "#e2e8f0", fontSize: 15, marginBottom: 10, boxSizing: "border-box" },
@@ -2964,15 +2924,15 @@ function InventoryPanel({ who = "", isEs = false, manager = false }) {
       {view === "3d" && (
         <div>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
-            {[["all", isEs ? "Vista general" : "Overview"], ["a", "0-9"], ["b", "10-16"], ["d", "23-29"], ["c", "17-22"], ["couch", isEs ? "Sofás" : "Couch"]].map(([k, lbl]) => (
+            {[["a", isEs ? "Pasillo 0-9" : "Aisle 0-9"], ["b", "10-16"], ["d", "23-29"], ["c", "17-22"], ["couch", isEs ? "Sofás" : "Couch Bay"]].map(([k, lbl]) => (
               <button key={k} onClick={() => setFocus3d(k)} style={{ padding: "6px 11px", borderRadius: 8, border: "none", fontWeight: 700, fontSize: 12, cursor: "pointer", background: focus3d === k ? "#2563eb" : "#16202b", color: focus3d === k ? "#fff" : "#7b8aa0" }}>{lbl}</button>
             ))}
           </div>
           <div style={{ fontSize: 12, color: "#7b8aa0", margin: "0 2px 8px" }}>
-            {isEs ? "Elige un pasillo arriba · arrastra para moverte · pellizca para acercar · toca una bahía para ver las camas." : "Pick an aisle above · drag to move around · pinch to zoom · tap a bay to see its beds."}
+            {isEs ? "Camina el pasillo con ▲▼, la rueda o las flechas · toca una bahía para ver las camas." : "Walk the aisle with ▲▼, scroll, or arrow keys · tap a bay to see its beds."}
           </div>
           <div style={{ height: "64vh", borderRadius: 12, overflow: "hidden", background: "#0b1520", border: "1px solid #1e2d3d" }}>
-            <Warehouse3D bays={bays3d} items={items} onPickBay={setPickBay} focus={focus3d} />
+            <Warehouse3D items={items} onPickBay={setPickBay} focus={focus3d} />
           </div>
         </div>
       )}
@@ -3612,15 +3572,39 @@ export default function App() {
         {/* DASHBOARD */}
         {tab==="dashboard"&&(
           <div className="fade">
-            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(110px,1fr))",gap:10,marginBottom:18}} /* responsive */>
-              {[{l:"Total",v:stats.total,c:"#3b82f6",i:"📦"},{l:"Scheduled",v:stats.scheduled,c:"#64748b",i:"🕐"},{l:"In Transit",v:stats.inTransit,c:"#3b82f6",i:"🚛"},{l:"Delivered",v:stats.delivered,c:"#22c55e",i:"✅"},{l:"Issues",v:stats.issues,c:"#ef4444",i:"⚠️"}].map(s=>(
-                <div key={s.l} style={{...C.card,padding:"13px 15px"}}>
-                  <div style={{fontSize:18,marginBottom:4}}>{s.i}</div>
-                  <div style={{fontSize:26,fontWeight:700,color:s.c,fontFamily:"'DM Mono',monospace",lineHeight:1}}>{s.v}</div>
-                  <div style={{fontSize:10,color:"#475569",marginTop:4}}>{s.l}</div>
+            {(() => {
+              const openProblems = problems.filter(p => !p.resolved);
+              const issues = deliveries.filter(d => ["Issue", "Rescheduled"].includes(d.status));
+              const unassigned = deliveries.filter(d => !d.assigned_to && d.status !== "Delivered");
+              const inTransit = deliveries.filter(d => d.status === "In Transit");
+              const workingToday = employees.filter(e => working(e, selectedDay));
+              const rows = [];
+              openProblems.forEach(p => rows.push({ sev: "#ef4444", icon: "⚠️", title: p.description || "Problem reported", sub: [p.emp_name, p.type, p.customer].filter(Boolean).join(" · "), go: "problems" }));
+              issues.forEach(d => rows.push({ sev: "#ef4444", icon: "🚫", title: `${d.customer} — ${d.status}`, sub: (d.items || []).map(i => `${i.qty}x ${i.name}`).join(", "), go: "tasks" }));
+              unassigned.forEach(d => rows.push({ sev: "#f59e0b", icon: "🚚", title: `${d.customer} — needs a driver`, sub: d.delivery_window || "Unassigned delivery", go: "tasks" }));
+              workingToday.forEach(emp => { const eds = getEmpDels(emp.id); const done = eds.filter(d => d.status === "Delivered").length; const left = eds.length - done; if (left > 0) rows.push({ sev: "#3b82f6", icon: "📋", title: `${emp.name}: ${left} deliver${left === 1 ? "y" : "ies"} left`, sub: `${done}/${eds.length} done`, go: "tasks" }); });
+              inTransit.forEach(d => rows.push({ sev: "#3b82f6", icon: "🛻", title: `${d.customer} — in transit`, sub: (employees.find(e => sameId(e.id, d.assigned_to)) || {}).name || "", go: "tasks" }));
+              return (
+                <div style={{ marginBottom: 18 }}>
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 9 }}>
+                    <div style={{ fontSize: 15, fontWeight: 700, color: "#f1f5f9" }}>Needs attention</div>
+                    <div style={{ fontSize: 11, color: "#475569" }}>{rows.length} item{rows.length === 1 ? "" : "s"} · {selectedDay}</div>
+                  </div>
+                  {rows.length === 0 ? (
+                    <div style={{ ...C.card, padding: 18, textAlign: "center", color: "#4ade80", fontWeight: 600 }}>✅ All caught up — nothing needs attention.</div>
+                  ) : rows.map((r, i) => (
+                    <div key={i} onClick={() => setTab(r.go)} style={{ ...C.card, padding: "11px 14px", marginBottom: 7, display: "flex", alignItems: "center", gap: 11, cursor: "pointer", borderLeft: `3px solid ${r.sev}` }}>
+                      <div style={{ fontSize: 18 }}>{r.icon}</div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 13, fontWeight: 600, color: "#e2e8f0" }}>{r.title}</div>
+                        {r.sub && <div style={{ fontSize: 11, color: "#64748b", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.sub}</div>}
+                      </div>
+                      <div style={{ fontSize: 16, color: "#334155" }}>›</div>
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
+              );
+            })()}
             <div style={{display:"flex",gap:6,marginBottom:14,flexWrap:"wrap",alignItems:"center"}}>
               <span style={{fontSize:11,color:"#475569"}}>Day:</span>
               {ALL_DAYS.map(d=>(
