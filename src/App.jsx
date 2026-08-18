@@ -2560,19 +2560,33 @@ function skuWithCode(itemnum, size) {
 const SIZE_HEX = { TWIN: "#60a5fa", "TWIN XL": "#38bdf8", FULL: "#34d399", QUEEN: "#f59e0b", KING: "#f43f5e", "CAL KING": "#a855f7", OTHER: "#94a3b8" };
 
 // ── 3D warehouse: floor + bays + inventory as labeled blocks; drag bays in edit mode ──
-// first-person aisle walk: pick an aisle, walk it (scroll / arrows / drag / buttons), tap a bay to see its beds
-const AISLES = { a: [0, 9], b: [10, 16], d: [23, 29], c: [17, 22] };
-const SP = 4.4, LH = 1.35, Y0 = 0.6;
+// full-warehouse first-person walk: all racks on one floor, move + turn (no aerial / no under)
+const LH = 1.3, Y0 = 0.5;
+const RACKS = [
+  { key: "a", range: [0, 9], z: 11, wall: 13.5, label: "BAY 0-9" },
+  { key: "b", range: [10, 16], z: 5, wall: null, label: "BAY 10-16" },
+  { key: "d", range: [23, 29], z: -5, wall: null, label: "BAY 23-29" },
+  { key: "c", range: [17, 22], z: -11, wall: -13.5, label: "BAY 17-22" },
+];
+const HALF_PI = Math.PI / 2;
+const VIEWS = {
+  a: { x: -18, z: 8, yaw: HALF_PI }, b: { x: -18, z: 2, yaw: HALF_PI },
+  d: { x: -18, z: -2, yaw: HALF_PI }, c: { x: -18, z: -8, yaw: HALF_PI },
+  couch: { x: -18, z: 0, yaw: -HALF_PI },
+};
+function rackOf(n) { for (const r of RACKS) if (n >= r.range[0] && n <= r.range[1]) return r; return null; }
 function parseBay(name) {
   const up = (name || "").toUpperCase().trim();
   const m = up.match(/^(\d+)\s*([A-C])?\s*([LR])?/);
   if (!m) return { pos: null, level: 0, side: null, special: true };
   return { pos: parseInt(m[1]), level: m[2] ? m[2].charCodeAt(0) - 65 : 0, side: m[3] || null, special: false };
 }
-function couchNameFrom(items) {
-  const it = (items || []).find((i) => (i.bay || "").toUpperCase().includes("COUCH"));
-  return it ? it.bay : "Couch Bay";
+function bayPos(pos) {
+  const r = rackOf(pos); if (!r) return null;
+  const [a, b] = r.range; const count = b - a + 1; const i = pos - a;
+  return { x: (i - (count - 1) / 2) * 3.3, z: r.z };
 }
+function couchNameFrom(items) { const it = (items || []).find((i) => (i.bay || "").toUpperCase().includes("COUCH")); return it ? it.bay : "Couch Bay"; }
 function Warehouse3D({ items, focus, onPickBay }) {
   const mountRef = useRef(null);
   const dataRef = useRef({}); dataRef.current = { items, focus, onPickBay };
@@ -2592,7 +2606,8 @@ function Warehouse3D({ items, focus, onPickBay }) {
     // eslint-disable-next-line
   }, []);
 
-  useEffect(() => { if (glRef.current.scene) build(); /* eslint-disable-next-line */ }, [items, focus]);
+  useEffect(() => { if (glRef.current.scene) build(); /* eslint-disable-next-line */ }, [items]);
+  useEffect(() => { const gl = glRef.current; const v = VIEWS[focus]; if (gl && v) { gl.camX = v.x; gl.camZ = v.z; gl.yaw = v.yaw; } /* eslint-disable-next-line */ }, [focus]);
 
   function mkLabel(THREE, text, color, scale) {
     const c = document.createElement("canvas"); c.width = 256; c.height = 64;
@@ -2608,51 +2623,50 @@ function Warehouse3D({ items, focus, onPickBay }) {
     const THREE = window.THREE, gl = glRef.current; if (!gl.content) return;
     while (gl.content.children.length) gl.content.remove(gl.content.children[0]);
     gl.pads = [];
-    const { items, focus } = dataRef.current; const sel = selRef.current;
-    const focusChanged = gl.lastFocus !== focus; gl.lastFocus = focus;
+    const { items } = dataRef.current; const sel = selRef.current;
     const H = Y0 + 3 * LH;
     const clickMat = () => new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false });
+    const posSet = new Set(); let couchName = null;
+    const consider = (nm) => { const p = parseBay(nm); if (p.special) { if ((nm || "").toUpperCase().includes("COUCH")) couchName = nm; return; } if (rackOf(p.pos)) posSet.add(p.pos); };
+    (items || []).forEach((i) => consider(i.bay));
+    RACKS.forEach((r) => { for (let p = r.range[0]; p <= r.range[1]; p++) posSet.add(p); });
+    if (!couchName) couchName = couchNameFrom(items);
 
-    if (focus === "couch") {
-      const name = couchNameFrom(items); const on = sel === name; const top = 2.6;
-      const grp = new THREE.Group(); grp.position.set(0, 0, -7);
-      const legMat = new THREE.MeshStandardMaterial({ color: 0x24384f });
-      [[-4.4, -2.2], [4.4, -2.2], [-4.4, 2.2], [4.4, 2.2], [0, -2.2], [0, 2.2]].forEach(([lx, lz]) => { const leg = new THREE.Mesh(new THREE.BoxGeometry(0.22, top, 0.22), legMat); leg.position.set(lx, top / 2, lz); grp.add(leg); });
-      const plat = new THREE.Mesh(new THREE.BoxGeometry(9.6, 0.22, 5), new THREE.MeshStandardMaterial({ color: on ? 0x14532d : 0x1b2c40 })); plat.position.y = top; grp.add(plat);
-      grp.add((() => { const e = new THREE.LineSegments(new THREE.EdgesGeometry(plat.geometry), new THREE.LineBasicMaterial({ color: on ? 0x22c55e : 0x334862 })); e.position.y = top; return e; })());
-      const box = new THREE.Mesh(new THREE.BoxGeometry(9.8, 2.4, 5.2), clickMat()); box.position.y = top + 1; box.userData.bay = name; grp.add(box); gl.pads.push(box);
-      for (let i = 0; i < 5; i++) { const rung = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.08, 0.08), legMat); rung.position.set(-5.1, 0.45 + i * (top / 5), 2.1); grp.add(rung); }
-      const its = items.filter((i) => (i.bay || "").toUpperCase().trim() === name.toUpperCase().trim()); const cap = Math.min(its.length, 48);
-      for (let k = 0; k < cap; k++) { const it = its[k]; const hex = SIZE_HEX[(it.size || "").toUpperCase()] || "#94a3b8"; const col = k % 8, row = Math.floor(k / 8); const bed = new THREE.Mesh(new THREE.BoxGeometry(0.95, 0.18, 3), new THREE.MeshStandardMaterial({ color: hex, roughness: 0.7 })); bed.position.set(-4.05 + col * 1.16, top + 0.2 + row * 0.2, 0); grp.add(bed); }
-      grp.add((() => { const l = mkLabel(THREE, "COUCH BAY", on ? "#22c55e" : "#fbbf24", 3.6); l.position.set(0, top + 1.7, 0); return l; })());
-      gl.content.add(grp);
-      gl.minZ = -4; gl.maxZ = 8; if (focusChanged) gl.walkZ = 8;
-      return;
-    }
-
-    const range = AISLES[focus] || AISLES.a;
-    let count = 0;
-    for (let pos = range[0]; pos <= range[1]; pos++) {
-      const i = pos - range[0]; const z = -i * SP; count = i + 1;
-      const on = sel === String(pos);
-      const unit = new THREE.Group(); unit.position.set(2.7, 0, z);
+    Array.from(posSet).sort((a, b) => a - b).forEach((pos) => {
+      const bp = bayPos(pos); if (!bp) return; const on = sel === String(pos);
+      const unit = new THREE.Group(); unit.position.set(bp.x, 0, bp.z);
       const box = new THREE.Mesh(new THREE.BoxGeometry(2.3, H + 0.4, 2.4), clickMat()); box.position.y = H / 2; box.userData.bay = String(pos); unit.add(box); gl.pads.push(box);
       for (let lv = 0; lv < 3; lv++) {
         for (const side of ["L", "R"]) {
           const cx = side === "L" ? -0.55 : 0.55, cy = Y0 + lv * LH;
           const cell = new THREE.Mesh(new THREE.BoxGeometry(0.95, 0.06, 2.2), new THREE.MeshStandardMaterial({ color: on ? 0x14532d : 0x18293c })); cell.position.set(cx, cy, 0); unit.add(cell);
           const ed = new THREE.LineSegments(new THREE.EdgesGeometry(cell.geometry), new THREE.LineBasicMaterial({ color: on ? 0x22c55e : 0x2b4562 })); ed.position.copy(cell.position); unit.add(ed);
-          const its = items.filter((it) => { const p = parseBay(it.bay); return p.pos === pos && p.level === lv && (p.side === side || (p.side == null && side === "L")); });
+          const its = (items || []).filter((it) => { const p = parseBay(it.bay); return p.pos === pos && p.level === lv && (p.side === side || (p.side == null && side === "L")); });
           const n = Math.min(its.length, 3);
           for (let k = 0; k < n; k++) { const it = its[k]; const hex = SIZE_HEX[(it.size || "").toUpperCase()] || "#94a3b8"; const bed = new THREE.Mesh(new THREE.BoxGeometry(0.72, 0.2, 2.0), new THREE.MeshStandardMaterial({ color: hex, roughness: 0.7 })); bed.position.set(cx, cy + 0.15 + k * 0.22, 0); unit.add(bed); }
         }
       }
       const postMat = new THREE.MeshStandardMaterial({ color: 0x24384f });
       [[-1.15, 1.05], [1.15, 1.05], [-1.15, -1.05], [1.15, -1.05]].forEach(([px, pz]) => { const post = new THREE.Mesh(new THREE.BoxGeometry(0.08, H, 0.08), postMat); post.position.set(px, H / 2, pz); unit.add(post); });
-      unit.add((() => { const l = mkLabel(THREE, "Bay " + pos, on ? "#22c55e" : "#93c5fd", 2.3); l.position.set(-1.15, H - 0.2, 1.25); return l; })());
+      unit.add((() => { const l = mkLabel(THREE, "Bay " + pos, on ? "#22c55e" : "#93c5fd", 2.1); l.position.set(0, H + 0.3, 0); return l; })());
       gl.content.add(unit);
+    });
+    RACKS.forEach((r) => {
+      const l = mkLabel(THREE, r.label, "#64748b", 4.5); l.position.set(0, H + 1.4, r.z); gl.content.add(l);
+    });
+    if (couchName) {
+      const on = sel === couchName; const top = 2.6;
+      const grp = new THREE.Group(); grp.position.set(-25, 0, 0);
+      const legMat = new THREE.MeshStandardMaterial({ color: 0x24384f });
+      [[-4.4, -2.2], [4.4, -2.2], [-4.4, 2.2], [4.4, 2.2], [0, -2.2], [0, 2.2]].forEach(([lx, lz]) => { const leg = new THREE.Mesh(new THREE.BoxGeometry(0.22, top, 0.22), legMat); leg.position.set(lx, top / 2, lz); grp.add(leg); });
+      const plat = new THREE.Mesh(new THREE.BoxGeometry(9.6, 0.22, 5), new THREE.MeshStandardMaterial({ color: on ? 0x14532d : 0x1b2c40 })); plat.position.y = top; grp.add(plat);
+      const box = new THREE.Mesh(new THREE.BoxGeometry(9.8, 2.4, 5.2), clickMat()); box.position.y = top + 1; box.userData.bay = couchName; grp.add(box); gl.pads.push(box);
+      for (let i = 0; i < 5; i++) { const rung = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.08, 0.08), legMat); rung.position.set(-5.1, 0.45 + i * (top / 5), 2.1); grp.add(rung); }
+      const its = (items || []).filter((i) => (i.bay || "").toUpperCase().trim() === couchName.toUpperCase().trim()); const cap = Math.min(its.length, 48);
+      for (let k = 0; k < cap; k++) { const it = its[k]; const hex = SIZE_HEX[(it.size || "").toUpperCase()] || "#94a3b8"; const col = k % 8, row = Math.floor(k / 8); const bed = new THREE.Mesh(new THREE.BoxGeometry(0.95, 0.18, 3), new THREE.MeshStandardMaterial({ color: hex, roughness: 0.7 })); bed.position.set(-4.05 + col * 1.16, top + 0.2 + row * 0.2, 0); grp.add(bed); }
+      grp.add((() => { const l = mkLabel(THREE, "COUCH BAY", on ? "#22c55e" : "#fbbf24", 3.6); l.position.set(0, top + 1.7, 0); return l; })());
+      gl.content.add(grp);
     }
-    gl.minZ = -(count - 1) * SP - 3; gl.maxZ = 8; if (focusChanged) gl.walkZ = 8;
   }
 
   function init() {
@@ -2660,35 +2674,48 @@ function Warehouse3D({ items, focus, onPickBay }) {
     const w = mount.clientWidth || 600, h = mount.clientHeight || 400;
     const renderer = new THREE.WebGLRenderer({ antialias: true }); renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); renderer.setSize(w, h);
     mount.appendChild(renderer.domElement);
-    const scene = new THREE.Scene(); scene.background = new THREE.Color(0x0b1520); scene.fog = new THREE.Fog(0x0b1520, 14, 60);
-    const cam = new THREE.PerspectiveCamera(64, w / h, 0.1, 500);
-    scene.add(new THREE.AmbientLight(0xffffff, 0.92)); const dl = new THREE.DirectionalLight(0xffffff, 0.5); dl.position.set(4, 20, 8); scene.add(dl);
-    const floor = new THREE.Mesh(new THREE.PlaneGeometry(24, 160), new THREE.MeshStandardMaterial({ color: 0x0f1e2b, roughness: 1 })); floor.rotation.x = -Math.PI / 2; floor.position.z = -50; scene.add(floor);
-    const grid = new THREE.GridHelper(160, 80, 0x1e3a52, 0x16293a); grid.position.set(0, 0.01, -50); scene.add(grid);
+    const scene = new THREE.Scene(); scene.background = new THREE.Color(0x0b1520); scene.fog = new THREE.Fog(0x0b1520, 16, 72);
+    const cam = new THREE.PerspectiveCamera(66, w / h, 0.1, 500);
+    scene.add(new THREE.AmbientLight(0xffffff, 0.92)); const dl = new THREE.DirectionalLight(0xffffff, 0.5); dl.position.set(6, 22, 10); scene.add(dl);
+    const floor = new THREE.Mesh(new THREE.PlaneGeometry(70, 40), new THREE.MeshStandardMaterial({ color: 0x0f1e2b, roughness: 1 })); floor.rotation.x = -Math.PI / 2; scene.add(floor);
+    const grid = new THREE.GridHelper(70, 70, 0x1e3a52, 0x16293a); grid.position.y = 0.01; scene.add(grid);
     const content = new THREE.Group(); scene.add(content);
 
-    const state = { renderer, scene, cam, content, pads: [], stopped: false, raf: 0, walkZ: 8, minZ: -40, maxZ: 8, camX: -1.9, camY: 3.0, dom: renderer.domElement };
+    const v = VIEWS[dataRef.current.focus] || VIEWS.b;
+    const state = { renderer, scene, cam, content, pads: [], stopped: false, raf: 0, camX: v.x, camZ: v.z, camY: 2.6, yaw: v.yaw, dom: renderer.domElement };
     glRef.current = state;
-    const clamp = () => { state.walkZ = Math.max(state.minZ, Math.min(state.maxZ, state.walkZ)); };
-    state.step = (d) => { state.walkZ += d; clamp(); };
+    const clampPos = () => { state.camX = Math.max(-29, Math.min(24, state.camX)); state.camZ = Math.max(-12.6, Math.min(12.6, state.camZ)); };
+    state.move = (d) => { state.camX += Math.sin(state.yaw) * d; state.camZ += -Math.cos(state.yaw) * d; clampPos(); };
+    state.turn = (d) => { state.yaw += d; };
 
     const ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
     const pt = (e) => { const r = renderer.domElement.getBoundingClientRect(); const cx = e.touches ? e.touches[0].clientX : e.clientX, cy = e.touches ? e.touches[0].clientY : e.clientY; ndc.x = ((cx - r.left) / r.width) * 2 - 1; ndc.y = -((cy - r.top) / r.height) * 2 + 1; return { cx, cy }; };
-    let ptr = null, dragging = false;
-    const onDown = (e) => { const p = pt(e); ptr = { x: p.cx, y: p.cy, z: state.walkZ }; dragging = false; };
-    const onMove = (e) => { if (!ptr) return; const p = pt(e); if (Math.abs(p.cx - ptr.x) > 6 || Math.abs(p.cy - ptr.y) > 6) dragging = true; if (dragging) { state.walkZ = ptr.z + (p.cy - ptr.y) * 0.05; clamp(); } };
+    let ptr = null, moved = 0, lastX = 0, lastY = 0;
+    const onDown = (e) => { const p = pt(e); ptr = p; moved = 0; lastX = p.cx; lastY = p.cy; };
+    const onMove = (e) => { if (!ptr) return; const p = pt(e); const dx = p.cx - lastX, dy = p.cy - lastY; moved += Math.abs(dx) + Math.abs(dy); state.turn(-dx * 0.005); state.move(-dy * 0.03); lastX = p.cx; lastY = p.cy; };
     const onUp = () => {
-      if (ptr && !dragging) { ray.setFromCamera(ndc, cam); const hh = ray.intersectObjects(state.pads || []); const name = hh.length ? hh[0].object.userData.bay : null; if (name) { selRef.current = name; build(); dataRef.current.onPickBay && dataRef.current.onPickBay(name); } else if (selRef.current) { selRef.current = null; build(); } }
-      ptr = null; dragging = false;
+      if (ptr && moved < 7) { ray.setFromCamera(ndc, cam); const hh = ray.intersectObjects(state.pads || []); const name = hh.length ? hh[0].object.userData.bay : null; if (name) { selRef.current = name; build(); dataRef.current.onPickBay && dataRef.current.onPickBay(name); } else if (selRef.current) { selRef.current = null; build(); } }
+      ptr = null;
     };
-    const onWheel = (e) => { e.preventDefault(); state.walkZ += e.deltaY * 0.012; clamp(); };
-    const onKey = (e) => { if (e.code === "ArrowUp" || e.code === "KeyW") { state.step(-1.7); e.preventDefault(); } else if (e.code === "ArrowDown" || e.code === "KeyS") { state.step(1.7); e.preventDefault(); } };
+    const onWheel = (e) => { e.preventDefault(); state.move(-e.deltaY * 0.01); };
+    const onKey = (e) => {
+      const c = e.code;
+      if (c === "ArrowUp" || c === "KeyW") { state.move(1); e.preventDefault(); }
+      else if (c === "ArrowDown" || c === "KeyS") { state.move(-1); e.preventDefault(); }
+      else if (c === "ArrowLeft" || c === "KeyA") { state.turn(0.12); e.preventDefault(); }
+      else if (c === "ArrowRight" || c === "KeyD") { state.turn(-0.12); e.preventDefault(); }
+    };
     renderer.domElement.addEventListener("pointerdown", onDown); window.addEventListener("pointermove", onMove); window.addEventListener("pointerup", onUp);
     renderer.domElement.addEventListener("wheel", onWheel, { passive: false }); window.addEventListener("keydown", onKey);
     state.onMove = onMove; state.onUp = onUp; state.onKey = onKey;
 
     const ro = new ResizeObserver(() => { const W = mount.clientWidth, H = mount.clientHeight; if (W && H) { cam.aspect = W / H; cam.updateProjectionMatrix(); renderer.setSize(W, H); } }); ro.observe(mount); state.ro = ro;
-    const loop = () => { if (state.stopped) return; cam.position.set(state.camX, state.camY, state.walkZ); cam.lookAt(state.camX + 2.7, 1.4, state.walkZ - 13); renderer.render(scene, cam); state.raf = requestAnimationFrame(loop); };
+    const loop = () => {
+      if (state.stopped) return;
+      cam.position.set(state.camX, state.camY, state.camZ);
+      cam.lookAt(state.camX + Math.sin(state.yaw) * 4, state.camY - 1.0, state.camZ - Math.cos(state.yaw) * 4);
+      renderer.render(scene, cam); state.raf = requestAnimationFrame(loop);
+    };
     state.raf = requestAnimationFrame(loop);
     build();
   }
@@ -2703,12 +2730,15 @@ function Warehouse3D({ items, focus, onPickBay }) {
     glRef.current = {};
   }
 
+  const btn = { width: 52, height: 44, borderRadius: 10, border: "none", color: "#fff", fontSize: 20, fontWeight: 800, cursor: "pointer" };
   return (
     <div style={{ position: "relative", width: "100%", height: "100%" }}>
       <div ref={mountRef} style={{ width: "100%", height: "100%" }} />
-      <div style={{ position: "absolute", bottom: 12, left: "50%", transform: "translateX(-50%)", display: "flex", gap: 12 }}>
-        <button onClick={() => glRef.current.step && glRef.current.step(-2.4)} style={{ width: 60, height: 46, borderRadius: 11, border: "none", background: "rgba(37,99,235,.92)", color: "#fff", fontSize: 22, fontWeight: 800, cursor: "pointer" }}>▲</button>
-        <button onClick={() => glRef.current.step && glRef.current.step(2.4)} style={{ width: 60, height: 46, borderRadius: 11, border: "none", background: "rgba(22,32,43,.92)", color: "#e2e8f0", fontSize: 22, fontWeight: 800, cursor: "pointer" }}>▼</button>
+      <div style={{ position: "absolute", bottom: 12, left: "50%", transform: "translateX(-50%)", display: "flex", gap: 8, alignItems: "center" }}>
+        <button onClick={() => glRef.current.turn && glRef.current.turn(0.4)} style={{ ...btn, background: "rgba(22,32,43,.92)" }}>◀</button>
+        <button onClick={() => glRef.current.move && glRef.current.move(2)} style={{ ...btn, background: "rgba(37,99,235,.92)" }}>▲</button>
+        <button onClick={() => glRef.current.move && glRef.current.move(-2)} style={{ ...btn, background: "rgba(22,32,43,.92)" }}>▼</button>
+        <button onClick={() => glRef.current.turn && glRef.current.turn(-0.4)} style={{ ...btn, background: "rgba(22,32,43,.92)" }}>▶</button>
       </div>
     </div>
   );
@@ -2929,7 +2959,7 @@ function InventoryPanel({ who = "", isEs = false, manager = false }) {
             ))}
           </div>
           <div style={{ fontSize: 12, color: "#7b8aa0", margin: "0 2px 8px" }}>
-            {isEs ? "Camina el pasillo con ▲▼, la rueda o las flechas · toca una bahía para ver las camas." : "Walk the aisle with ▲▼, scroll, or arrow keys · tap a bay to see its beds."}
+            {isEs ? "Camina: ▲▼ avanzar, ◀▶ girar (o arrastra / flechas / rueda) · toca una bahía para ver las camas. Los botones te llevan a cada zona." : "Walk: ▲▼ move, ◀▶ turn (or drag / arrow keys / scroll) · tap a bay to see its beds. Buttons jump you to each area."}
           </div>
           <div style={{ height: "64vh", borderRadius: 12, overflow: "hidden", background: "#0b1520", border: "1px solid #1e2d3d" }}>
             <Warehouse3D items={items} onPickBay={setPickBay} focus={focus3d} />
