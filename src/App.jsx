@@ -2566,7 +2566,7 @@ const RACKS = [
   { key: "a", range: [0, 9], z: 11, wall: 13.5, label: "BAY 0-9" },
   { key: "b", range: [10, 16], z: 5, wall: null, label: "BAY 10-16" },
   { key: "d", range: [23, 29], z: -5, wall: null, label: "BAY 23-29" },
-  { key: "c", range: [17, 22], z: -11, wall: -13.5, label: "BAY 17-22" },
+  { key: "c", range: [17, 22], z: -11, wall: -13.5, label: "BAY 17-22", rev: true },
 ];
 const HALF_PI = Math.PI / 2;
 const VIEWS = {
@@ -2583,7 +2583,7 @@ function parseBay(name) {
 }
 function bayPos(pos) {
   const r = rackOf(pos); if (!r) return null;
-  const [a, b] = r.range; const count = b - a + 1; const i = pos - a;
+  const [a, b] = r.range; const count = b - a + 1; const i = r.rev ? (b - pos) : (pos - a);
   return { x: (i - (count - 1) / 2) * 3.3, z: r.z };
 }
 function couchNameFrom(items) { const it = (items || []).find((i) => (i.bay || "").toUpperCase().includes("COUCH")); return it ? it.bay : "Couch Bay"; }
