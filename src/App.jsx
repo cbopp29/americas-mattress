@@ -2744,6 +2744,242 @@ function Warehouse3D({ items, focus, onPickBay }) {
   );
 }
 
+const COUNT_SEED=[["M58911","10 Inch Pocketed Hybrid Twin Mattress","TWIN","S",1],["M59011","12 Inch Pocketed Hybrid Twin Mattress","TWIN","S",1],["HLNIB700811053.1010","BR Harmony MAUI MEDIUM FIRM Twin","TWIN","S",1],["BBCOAL-8510","Bunkie Board Charcoal Twin","TWIN","S",2],["89006491","ErgoPlatform Twin","TWIN","S",14],["89006491","ErgoPlatform Twin","TWIN","A",1],["500700401.6010","FB BUNKIE BOARD TWIN Extreme Lo Pro","TWIN","S",1],["500700401.6010","FB BUNKIE BOARD TWIN Extreme Lo Pro","TWIN","A",1],["HLOB500100072-1010","HLOB500100072-1010 RENEWED Night Plush Twin","TWIN","S",1],["PB33","HighRIZE Platform TWIN Grey","TWIN","S",31],["M62511","Limited Edition Firm Twin Mattress","TWIN","S",1],["M41211","Limited Edition PT Twin Mattress","TWIN","S",4],["M41111","Limited Edition Plush Twin Mattress","TWIN","S",3],["FS500959261-1010","PLA23 CALLA LILLY FM TT Twin","TWIN","A",1],["FS500954266-1010","PLA23 CALLA LILLY PL ET Twin","TWIN","A",1],["FS500958162-1010","PLA23 DAISY BAY PL TT Twin","TWIN","A",1],["500104381-1010","PSL 23 DAZZLING NIGHT 12IN MED Twin","TWIN","S",1],["FS500320761-1010","PSL26 CASCADE CANYON FM TT TWIN FS","TWIN","S",2],["FS500320661-1010","PSL26 CASCADE CANYON MD TT TWIN FS","TWIN","S",2],["FS500314043-1010","PSL26 CASCADE CANYON PL PT TWIN FS","TWIN","S",2],["CHILL1233","PurChill 12 in Twin","TWIN","S",3],["CHILL833","PurChill 8 in Twin","TWIN","S",1],["HLOB500103163-1010","RENEWED SLEEP PS PT Twin","TWIN","S",1],["500124399-6010","SER 23 PRIVATE LABEL Twin LoPro","TWIN","S",4],["500124399-5010","SER 23 PRIVATE LABELTwin Box","TWIN","S",10],["M62611","Sandia LE Plush Twin Mattress","TWIN","S",1],["500945461-1010","serta-perfect-day 10in Mattress 3 - Medium Twin","TWIN","S",2],["FS500945461-1010","serta-perfect-day 10in Mattress 3 - Medium Twin","TWIN","A",1],["500949941-1010","serta-perfect-day 12in Mattress 2 - Medium Firm Twin","TWIN","S",4],["FS500949941-1010","serta-perfect-day 12in Mattress 2 - Medium Firm Twin","TWIN","A",1],["FS500945791-1010","serta-perfect-day 7Iin Mattress 2 - Medium Firm Twin","TWIN","A",1],["500945791-1010","serta-perfect-day 7in Mattress 2 - Medium Firm Twin","TWIN","S",1],["500833019-7520","BASELOGIC BRONZE TXL","TWIN XL","S",1],["500833819-7520","BASELOGIC GOLD TXL","TWIN XL","S",6],["500833419-7520","BASELOGIC SILVER TXL","TWIN XL","S",5],["HLNIB700811496-1020","BRB 22 KX-Class FM TT TXL","TWIN XL","S",1],["HLW700812249-1020","BRB 24 S4 FM SPT TXL","TWIN XL","A",1],["HLW700810016.1020","BRB C-CLASS MEDIUM TXL","TWIN XL","A",1],["HLNIB700812489-1020","BRB HY 24 S4 PL APT TXL","TWIN XL","S",1],["700813278-1020","BRB HY 26 SERIES 4 XCS FM TT TXL","TWIN XL","S",1],["700813279-1020","BRB HY 26 SERIES 4 XCS MD TT TXL","TWIN XL","S",1],["700812175-1020","BRB24 S4 Gold PS SummitPT TXL","TWIN XL","S",1],["HLW700810906.1020","BRP Carbon Series Medium TXL","TWIN XL","A",1],["500801338.1020","CF 3000 HYBRID PLUSH TXL","TWIN XL","A",1],["89006485","ErgoPlatform TXL","TWIN XL","S",11],["500700401.6020","FB BUNKIE BOARD TWIN XL Extreme Lo Pro","TWIN XL","S",4],["HLOB700811191-1020","HLH 21 EMPRESS SERIES L1 PLT Twin XL","TWIN XL","A",1],["PB33XL","HighRIZE Platform TXL Grey","TWIN XL","S",4],["PB33XL","HighRIZE Platform TXL Grey","TWIN XL","A",2],["500802151-1020","ICF 24 ASPIRE MD TT TXL","TWIN XL","A",1],["HLNIB500800082-1020","ICF 24 AVEDA PS TT TXL","TWIN XL","S",1],["500800561-1020","ICP 24 Ambrose Firm Tight Top TXL","TWIN XL","S",2],["500803762-1020","ICP 24 Ambrose Plush Tight Top TXL","TWIN XL","S",2],["500800381-1020","ICP 24 Chelsea Medium Tight Top TXL","TWIN XL","A",1],["M41171","Limited Edition Plush Twin XL Mattress","TWIN XL","A",1],["FS89005388","Rio 4.0 TXL Floor Sample","TWIN XL","S",2],["500124399-5020","SER 23 PRIVATE LABEL TXL Box","TWIN XL","S",16],["500124399-6020","SER 23 PRIVATE LABELTXL LoPro","TWIN XL","S",6],["500833019-7530","BASELOGIC BRONZE Full","FULL","S",1],["500833819-7530","BASELOGIC GOLD Full","FULL","S",1],["500833419-7530","BASELOGIC SILVER Full","FULL","S",2],["BD500124399-5030","BD PRIVATE LABEL Full Box","FULL","S",1],["700812798-1030","BR 25 L2 MED TT Full","FULL","S",1],["700812801-1030","BR 25 L2 PL PT Full","FULL","S",1],["700812797-1030","BR 25 L2 XFM TT Full","FULL","S",3],["700812532-1030","BR WC 25 L3 MED FM TT Full","FULL","S",2],["700812535-1030","BR WC 25 L3 PL PT Full","FULL","S",1],["700812531-1030","BR WC 25 L3 XFM TT Full","FULL","S",2],["HLOB700811494-1030","BRB 22 CX-CLASS MD Hybrid TT Full","FULL","S",1],["HLOB700811794-1030","BRB 23 B-Class PL TT Full","FULL","S",1],["HLNIB700812445-1030","BRB HY 24 S3 PL TT Full","FULL","S",1],["700812446-1030","BRB HY 24 SERIES 3 MD TT Full","FULL","S",1],["HLNIB700812151-1030","BRB24 S1 Charcoal Med TT Full","FULL","S",1],["HLNIB700812245-1030","BRB24 S2 Amethyst FM TT Full","FULL","S",1],["700812169-1030","BRB24 S3 Silver Med TT Full","FULL","S",1],["HLNIB700810906.1030","BRP Carbon Series Medium Full","FULL","A",2],["HLOB700810907.1030","BRP Carbon Series Plush Full","FULL","S",1],["5486.6030","Black box spring Full LoPro","FULL","A",1],["BBCOAL-8530","Bunkie Boards Charcoal Full","FULL","S",5],["GFM325AF","Corsicana 8 in All foam FM Full","FULL","S",2],["HLW500802791-1030","Elana FM Full (tear on bottom of cover)","FULL","A",1],["89006487","ErgoPlatform Full","FULL","S",15],["89006487","ErgoPlatform Full","FULL","A",1],["500700401.6030","FB BUNKIE BOARD FULL Extreme Lo Pro","FULL","S",3],["PB46","HighRIZE Platform FULL Grey","FULL","S",20],["500802151-1030","ICF 24 ASPIRE MD TT Full","FULL","S",1],["500802952-1030","ICF 24 ASPIRE PL TT Full","FULL","S",1],["HLNIB500800081-1030","ICF 24 AVEDA MD TT Full","FULL","S",1],["HLNIB500800082-1030","ICF 24 AVEDA PL TT Full","FULL","S",1],["500802791-1030","ICF 24 ELANA FM TT Full","FULL","S",1],["M41221","Limited Edition PT Full Mattress","FULL","A",1],["M41121","Limited Edition Plush Full Mattress","FULL","S",1],["500959261-1030","PLA23 CALLA LILLY FM TT Full","FULL","S",3],["500959361-1030","PLA23 DAISY BAY FM TT Full","FULL","S",1],["500958162-1030","PLA23 DAISY BAY PL TT Full","FULL","S",1],["HLNIB500951722-1030","PLA23 HASTINGS MEADOW PL TT Full","FULL","S",1],["500302311-1030","PSL 23 BLUE LAGOON NTS MD TT Full","FULL","S",2],["HLNIB500104181-1030","PSL 23 COBALT CALM XFM TT Full","FULL","S",2],["500104581-1030","PSL 23 DAZZLING NIGHT 12IN FM Full","FULL","S",1],["HLOB500105862-1030","PSL 23 EUPHORIC NTS 14IN PL Full","FULL","S",1],["500301523-1030","PSL23 BLUE LAGOON NTS PL PT Full","FULL","S",4],["500110071-1030","PSL26 CASCADE BLUFF FM TT Full","FULL","S",2],["500110172-1030","PSL26 CASCADE BLUFF PL TT Full","FULL","S",2],["500320761-1030","PSL26 CASCADE CANYON FM TT Full","FULL","S",2],["500320661-1030","PSL26 CASCADE CANYON MD TT Full","FULL","S",2],["500314043-1030","PSL26 CASCADE CANYON PL PT Full","FULL","S",2],["500100491-1030","PSX 24 KNOX FM TT Full","FULL","S",1],["500100092-1030","PSX 24 KNOX PL TT Full","FULL","S",1],["CHILL1046","PurChill 10 inch Full","FULL","S",5],["CHILL846","PurChill 8 in Full","FULL","S",7],["500124399-5030","SER 23 PRIVATE LABEL Full Box","FULL","S",13],["500124399-6030","SER 23 PRIVATE LABEL Full LoPro","FULL","S",5],["500949941-1030","Serta-perfect-day 12in Mattress 2 - Medium Firm Full","FULL","S",4],["HLNIB500801091-1030","iCo-Eco 23 Q10 Medium Full","FULL","S",1],["500401378-1030","iSeries IS25 NXG 2500HY PL ZC Full","FULL","S",1],["500400738-1030","iSeries NXG Hybrid 3500 FM Full","FULL","S",1],["500945461-1030","serta-perfect-day 10in Mattress 3 - Medium Full","FULL","S",1],["HLW700812175-1050","24 Series 4 PL SPT Queen (snag on bottom)","QUEEN","A",1],["OS.WKL050QQAB","50 Series Adjustable Bed Base, Queen Head up ONLY","QUEEN","A",1],["HLFS500430088-1050","ARC 21 ARCTIC PL ZP Queen","QUEEN","A",1],["HLFS500430848-1050","ARC 21 ARCTIC PREMIER FM ZP Queen","QUEEN","A",1],["500833019-7550","BASELOGIC BRONZE Queen","QUEEN","S",1],["500833819-7550","BASELOGIC GOLD Queen","QUEEN","S",1],["500837519-7550","BASELOGIC PEARL QUEEN","QUEEN","S",2],["500834219-7550","BASELOGIC PLATINUM Queen","QUEEN","S",1],["500833419-7550","BASELOGIC SILVER Queen","QUEEN","S",4],["700812798-1050","BR 25 L2 MED TT Queen","QUEEN","S",2],["700812801-1050","BR 25 L2 PL PT Queen","QUEEN","S",1],["700812801-1050","BR 25 L2 PL PT Queen","QUEEN","A",1],["FS700812801-1050","BR 25 L2 PL PT Queen FS","QUEEN","A",1],["700812797-1050","BR 25 L2 XFM TT Queen","QUEEN","S",3],["700812532-1050","BR WC 25 L3 MED FM TT Queen","QUEEN","S",4],["700812535-1050","BR WC 25 L3 PL PT Queen","QUEEN","S",5],["700812531-1050","BR WC 25 L3 XFM TT Queen","QUEEN","S",1],["HLNIB700812443-1050","BRB HY 24 S2 MD APT Queen","QUEEN","S",1],["HLNIB700812443-1050","BRB HY 24 S2 MD APT Queen","QUEEN","A",1],["700812444-1050","BRB HY 24 SERIES 3 FM TT Queen","QUEEN","S",2],["FS700812444-1050","BRB HY 24 SERIES 3 FM TT Queen","QUEEN","A",1],["700812446-1050","BRB HY 24 SERIES 3 MD TT Queen","QUEEN","S",1],["700813278-1050","BRB HY 26 SERIES 4 XCS FM TT Queen","QUEEN","S",2],["FS700813278-1050","BRB HY 26 SERIES 4 XCS FM TT Queen","QUEEN","A",1],["700813278-1059","BRB HY 26 SERIES 4 XCS FM TT Split Head Queen","QUEEN","S",1],["700813279-1050","BRB HY 26 SERIES 4 XCS MD TT Queen","QUEEN","S",2],["700813280-1050","BRB HY 26 SERIES 5 XCS PL TT Queen","QUEEN","S",2],["700813280-1059","BRB HY 26 SERIES 5 XCS PL TT Split Head Queen","QUEEN","S",1],["HLNIB700812245-1050","BRB24 S2 Amethyst FM TT Queen","QUEEN","S",1],["700812167-1050","BRB24 S3 Silver FM TT Queen","QUEEN","S",1],["700812167-1050","BRB24 S3 Silver FM TT Queen","QUEEN","A",1],["700812169-1050","BRB24 S3 Silver Med TT Queen","QUEEN","S",2],["700812173-1050","BRB24 S3 Silver PS PT Queen","QUEEN","S",1],["700812175-1050","BRB24 S4 Gold PS SummitPT Queen","QUEEN","S",1],["700812988-1050","BS BG Casa Grande Med PT Queen","QUEEN","S",1],["FS500833819-7559","BaseLogic Gold Split-Head base Queen","QUEEN","A",1],["500833819-7559","BaseLogic Gold_Split-Head_base Queen","QUEEN","S",1],["FS700754766.5050","Beautyrest Black Luxury Base Queen","QUEEN","S",1],["700754766.7550","Black Luxury Adjustable Base Queen","QUEEN","S",3],["BBCOAL-8550","Bunkie Boards Charcoal Queen","QUEEN","S",7],["STQQOACARLHB","Carlisle Upholstered Headboard, Queen, Oat","QUEEN","S",1],["GFM325AQ","Corsicana 8 in All foam FM Queen","QUEEN","S",5],["FSZZQQCE05DD","Cotton Encased Down Blend Z Feather + Down, Queen","QUEEN","A",2],["ZZQQCE05DD","Cotton Encased Down Blend Z Feather + Down, Queen","QUEEN","A",2],["STQQOAEASTPL","Eastman Upholstered Platform Bed, Queen, Oat","QUEEN","S",3],["STQQOAEASTPL","Eastman Upholstered Platform Bed, Queen, Oat","QUEEN","A",22],["89006484","ErgoPlatform Queen","QUEEN","S",35],["89006484","ErgoPlatform Queen","QUEEN","A",5],["500700401.6050","FB BUNKIE BOARD QUEEN Extreme Lo Pro","QUEEN","S",4],["FSPCFRIOP603","Floor sample Sub Z Queen","QUEEN","A",2],["M98X32","Foundation Queen Foundation","QUEEN","A",1],["FSZZQQOOGM","Gelled Microfiber queen","QUEEN","A",1],["700811189-1050","HLH 21 EMPRESS SERIES L1 MTT Queen","QUEEN","A",1],["STQQOAHENNHB","Hennessy Upholstered Headboard, Queen, Oat","QUEEN","S",3],["STQQOAHENNHB","Hennessy Upholstered Headboard, Queen, Oat","QUEEN","A",18],["PB50","HighRIZE Platform QUEEN Grey","QUEEN","S",43],["PB50","HighRIZE Platform QUEEN Grey","QUEEN","A",9],["HLFS500804838-1050","IC 23 F30LTX FM TT Queen","QUEEN","A",1],["HLFS500804938-1050","IC 23 F30LTX PL TT Queen","QUEEN","A",1],["HLFS500801651-1050","IC 23 S50UHD MD TT Queen","QUEEN","A",2],["500802151-1050","ICF 24 ASPIRE MD TT Queen","QUEEN","S",1],["500802952-1050","ICF 24 ASPIRE PL TT Queen","QUEEN","S",2],["FS500802952-1050","ICF 24 ASPIRE PL TT Queen","QUEEN","A",1],["500802791-1050","ICF 24 ELANA FM TT Queen","QUEEN","S",2],["500802791-1050","ICF 24 ELANA FM TT Queen","QUEEN","A",1],["500800561-1050","ICP 24 AMBROSE FM TT Queen","QUEEN","S",1],["500803762-1050","ICP 24 AMBROSE PL TT Queen","QUEEN","S",3],["500800022-1050","ICP 24 CANTERBURY PL TT Queen","QUEEN","S",2],["500800381-1050","ICP 24 CHELSEA MD TT Queen","QUEEN","S",1],["500400498-1050","IS25 NXG 1500HY FM ZC Queen","QUEEN","S",2],["500401538-1050","IS25 NXG 4500HY PL ZC Queen","QUEEN","S",1],["500401538-1059","IS25 NXG 4500HY PL ZC Queen Split Head","QUEEN","S",1],["HLW700811497-1050","KX Class PL TT Queen (side incasement failed)","QUEEN","A",1],["HLW700812535-1050","L3 PL PT Q (tear on bottom)","QUEEN","A",1],["HLW700811053.1050","Maui Medium FM Queen (lump in middle)","QUEEN","A",1],["500959261-1050","PLA23 CALLA LILLY FM TT Queen","QUEEN","S",2],["500959361-1050","PLA23 DAISY BAY FM TT Queen","QUEEN","S",2],["500958162-1050","PLA23 DAISY BAY PL TT Queen","QUEEN","S",2],["500302512-1050","PSL 23 BLUE LAGOON NTS PL TT Queen","QUEEN","S",1],["500104581-1050","PSL 23 DAZZLING NIGHT 12IN FM Queen","QUEEN","S",1],["FS500104581-1050","PSL 23 DAZZLING NIGHT 12IN FM Queen FS","QUEEN","S",1],["500104381-1050","PSL 23 DAZZLING NIGHT 12IN MED Queen","QUEEN","S",3],["500104381-1050","PSL 23 DAZZLING NIGHT 12IN MED Queen","QUEEN","A",2],["500301523-1050","PSL23 BLUE LAGOON NTS PL PT Queen","QUEEN","S",1],["500110071-1050","PSL26 CASCADE BLUFF FM TT Queen","QUEEN","S",2],["500110172-1050","PSL26 CASCADE BLUFF PL TT Queen","QUEEN","S",3],["FS500320761-1050","PSL26 CASCADE CANYON FM TT QUEEN FS","QUEEN","S",1],["500320761-1050","PSL26 CASCADE CANYON FM TT Queen","QUEEN","S",3],["FS500320661-1050","PSL26 CASCADE CANYON MD TT QUEEN FS","QUEEN","S",1],["500320661-1050","PSL26 CASCADE CANYON MD TT Queen","QUEEN","S",2],["FS500314043-1050","PSL26 CASCADE CANYON PL PT QUEEN FS","QUEEN","S",1],["500314043-1050","PSL26 CASCADE CANYON PL PT Queen","QUEEN","S",3],["500100491-1050","PSX 24 KNOX FM TT Queen","QUEEN","S",1],["500100491-1050","PSX 24 KNOX FM TT Queen","QUEEN","A",1],["500100092-1050","PSX 24 KNOX PL TT Queen","QUEEN","S",1],["HLPT500829419.7550","PT MOTION PERFECT IV Queen FS Sold As Is","QUEEN","S",1],["M20331","Peak 2.0 12 Hybrid Queen Mattress","QUEEN","S",1],["CHILL1250","PurChill 12 in Queen","QUEEN","S",11],["CHILL1250","PurChill 12 in Queen","QUEEN","A",1],["CHILL850","PurChill 8 in Queen","QUEEN","S",10],["CHILL850","PurChill 8 in Queen","QUEEN","A",1],["CHILL1050SQ","PureChill 10 in RV Short Queen 60x75","QUEEN","S",5],["500124399-5050","SER 23 PRIVATE LABEL Queen Box","QUEEN","S",18],["500124399-5050","SER 23 PRIVATE LABEL Queen Box","QUEEN","A",1],["500124399-6050","SER 23 PRIVATE LABEL Queen LoPro","QUEEN","S",4],["500124399-6050","SER 23 PRIVATE LABEL Queen LoPro","QUEEN","A",1],["FS500833019-7550","SSB 25 BaseLogic Bronze Queen fs","QUEEN","S",1],["ST0008UBDQQST","Scoresby Upholstered Bed-Queen-Stone/Box Spring Required /Closeout","QUEEN","S",1],["500122199-5050","Serta 2021 Box Spring MedBlue Queen","QUEEN","A",2],["500949941-1050","Serta-perfect-day 12in Mattress 2 - Medium Firm Queen","QUEEN","S",3],["B625-97","Shawbeck Queen/King Rails","QUEEN","S",1],["PCCBD403","Suncliff CBD Cooling Softcell Chill Queen","QUEEN","S",19],["STQG5","Twin/Full Queen Glide Frame (5 Glides & Cntr cross rail)","QUEEN","S",3],["STQG5","Twin/Full Queen Glide Frame (5 Glides & Cntr cross rail)","QUEEN","A",8],["26360Q","Venacha Queen Bed Gray Fabric w/4 Slats - Box Spring Required","QUEEN","A",1],["ZZQQSCMPASZL","Z Shoulder Cutout Zoned Dough + Lavender, Queen, Mid Loft","QUEEN","S",1],["ZZQQSCMPASZL","Z Shoulder Cutout Zoned Dough + Lavender, Queen, Mid Loft","QUEEN","A",1],["500400578-1050","iSeries IS25 NXG 2500 PL ZC Foam Queen","QUEEN","S",2],["500401378-1050","iSeries IS25 NXG 2500HY PL ZC Queen","QUEEN","S",2],["FS500401538-1059","iSeries IS25 NXG 4500HY PL ZC Queen Split Head FS","QUEEN","A",1],["500400098-1050","iSeries NXG Foam 1500 LXFM Foam Queen","QUEEN","S",2],["500400338-1050","iSeries NXG Foam IS25 NXG 3500 MD Queen","QUEEN","S",2],["500400338-1059","iSeries NXG Foam IS25 NXG 3500 MD Queen Split Head","QUEEN","S",1],["500400738-1059","iSeries NXG Hybrid 3500 FM Queen Split Head","QUEEN","A",1],["500401938-1059","iSeries NXG Hybrid 3500 Medium Split Head Queen","QUEEN","S",1],["500945461-1050","serta-perfect-day 10in Mattress 3 - Medium Queen","QUEEN","S",3],["500945791-1050","serta-perfect-day 7in Mattress 2 - Medium Firm Queen","QUEEN","S",4],["500833019-7560","BASELOGIC BRONZE DivKing (1pc)","KING","S",1],["500833819-7560","BASELOGIC GOLD DivKing (1 pc)","KING","S",3],["500837519-7570","BASELOGIC PEARL DIV CalKing 1 pc.","KING","S",2],["500833419-7560","BASELOGIC SILVER DivKing (1pc)","KING","S",5],["500833419-7560","BASELOGIC SILVER DivKing (1pc)","KING","A",1],["500833419-7571","BASELOGIC SILVER Split CalKing (2 pc REQUIRED)","KING","S",2],["700812798-1060","BR 25 L2 MED TT King","KING","S",3],["700812801-1060","BR 25 L2 PL PT King","KING","S",2],["700812797-1060","BR 25 L2 XFM TT King","KING","S",2],["700812532-1060","BR WC 25 L3 MED FM TT King","KING","S",2],["700812535-1060","BR WC 25 L3 PL PT King","KING","S",3],["700812531-1060","BR WC 25 L3 XFM TT King","KING","S",2],["700812531-1060","BR WC 25 L3 XFM TT King","KING","A",1],["700812554-1060","BR WC 25 L4 PL PT King SPECIAL ORDER","KING","S",1],["700811497-1071","BRB 22 KX-Class PL TT Split CalKing","KING","A",1],["700812444-1060","BRB HY 24 SERIES 3 FM TT King","KING","A",2],["700812446-1060","BRB HY 24 SERIES 3 MD TT King","KING","S",1],["FS700812489-1060","BRB HY 24 SERIES 4 PL APT STD KING","KING","S",2],["HLW700812444-1060","BRB HY 24 Series 3 FM TT King (snag in bottom)","KING","A",1],["700813278-1060","BRB HY 26 SERIES 4 XCS FM TT King","KING","S",1],["700813278-1069","BRB HY 26 SERIES 4 XCS FM TT Split Head King","KING","S",2],["700813279-1060","BRB HY 26 SERIES 4 XCS MD TT King","KING","S",1],["700813279-1069","BRB HY 26 SERIES 4 XCS MD TT Split Head King","KING","S",1],["700813280-1060","BRB HY 26 SERIES 5 XCS PL TT King","KING","S",1],["700813280-1069","BRB HY 26 SERIES 5 XCS PL TT Split Head King","KING","S",1],["700810873.1060","BRB X Class Hybrid Medium King","KING","A",1],["700810874.1060","BRB X Class Hybrid Plush King","KING","A",1],["700812169-1060","BRB24 S3 Silver Med TT King","KING","S",1],["700812175-1060","BRB24 S4 Gold PS SummitPT King","KING","A",2],["700812988-1060","BS BG Casa Grande Med PT King","KING","S",2],["500833819-7569","BaseLogic Gold_Split-Head_base King","KING","S",2],["700754766.7566","Black Luxury Adjustable Base DivKing","KING","S",1],["GFM325AK","Corsicana 8 in All foam FM King","KING","S",3],["STKKOAEASTPL","Eastman Upholstered Platform Bed, King, Oat","KING","A",1],["89006488","ErgoPlatform King","KING","S",6],["89006488","ErgoPlatform King","KING","A",2],["1113.1070","Factory Select LuxFM CalKing","KING","S",1],["GC1266","GelComfort 11-12 in Bed n Box King","KING","A",1],["GC1066","GelComfort 9-10 in King","KING","S",1],["GC1066","GelComfort 9-10 in King","KING","A",1],["STKKOAHENNHB","Hennessy Upholstered Headboard, King, Oat","KING","A",1],["PB60","HighRIZE Platform CAL-KING Grey","KING","S",1],["PB66","HighRIZE Platform KING Grey","KING","S",4],["500802151-1060","ICF 24 ASPIRE MD TT King","KING","S",3],["500802952-1060","ICF 24 ASPIRE PL TT King","KING","S",1],["500800561-1060","ICP 24 AMBROSE FM TT King","KING","S",1],["500803762-1060","ICP 24 AMBROSE PL TT King","KING","S",2],["500803762-1060","ICP 24 AMBROSE PL TT King","KING","A",1],["500800022-1060","ICP 24 CANTERBURY PL TT King","KING","S",3],["500800381-1060","ICP 24 CHELSEA MD TT King","KING","S",3],["500400978-1060","IS25 NXG 2500HY MD ZC King","KING","S",1],["500400978-1060","IS25 NXG 2500HY MD ZC King","KING","A",1],["500401538-1069","IS25 NXG 4500HY PL ZC King Split Head","KING","S",3],["ST0008UBDKKST","Malouf Box Spring Compatible Scoresby Upholstered Bed , King, Stone","KING","S",1],["500833819-7579","New! CA KING SPLIT-HEAD BASELOGIC GOLD","KING","S",1],["500959261-1060","PLA23 CALLA LILLY FM TT King","KING","S",1],["500300421-1060","PSL 23 BLUE LAGOON NTS FM TT King","KING","S",1],["500302311-1060","PSL 23 BLUE LAGOON NTS MD TT King","KING","S",1],["500104581-1060","PSL 23 DAZZLING NIGHT 12IN FM King","KING","S",1],["500110071-1060","PSL26 CASCADE BLUFF FM TT King","KING","S",1],["500110172-1060","PSL26 CASCADE BLUFF PL TT King","KING","S",1],["500320761-1060","PSL26 CASCADE CANYON FM TT King","KING","S",1],["500320661-1060","PSL26 CASCADE CANYON MD TT King","KING","S",2],["500314043-1060","PSL26 CASCADE CANYON PL PT King","KING","S",2],["500100491-1060","PSX 24 KNOX FM TT King","KING","S",1],["500100092-1060","PSX 24 KNOX PL TT King","KING","S",1],["05113180228","Packing Tape","KING","S",38],["CHILL1066","PurChill 10 inch King","KING","S",2],["CHILL1066","PurChill 10 inch King","KING","A",1],["CHILL1266","PurChill 12 in King","KING","S",7],["CHILL1266","PurChill 12 in King","KING","A",1],["WKKKRDTN21HB","Reed Upholstered Headboard King Tan- IN STOCK ONLY- Not available for special order!!!","KING","S",1],["500949941-1060","Serta-perfect-day 12in Mattress 2 - Medium Firm King","KING","S",1],["ZBRD-7007KG","Upholstered King Bed frame Charcoal","KING","A",1],["500400578-1060","iSeries IS25 NXG 2500 PL ZC Foam King","KING","S",2],["500400098-1060","iSeries NXG Foam 1500 LXFM Foam King","KING","S",2],["500400338-1069","iSeries NXG Foam IS25 NXG 3500 MD King Split Head","KING","S",2],["500400738-1060","iSeries NXG Hybrid 3500 FM King","KING","S",1],["500400738-1060","iSeries NXG Hybrid 3500 FM King","KING","A",1],["500400738-1069","iSeries NXG Hybrid 3500 FM King Split Head","KING","S",1],["500945791-1060","serta-perfect-day 7in Mattress 2 - Medium Firm King","KING","S",2],["HLOB500800561-1070","AMBROSE FM CAL KING AINT","CAL KING","A",1],["HLOB700812447-1070","BRB HY 24 S4 FM APT Cal King","CAL KING","A",1],["700813279-1070","BRB HY 26 SERIES 4 XCS MD TT CalKing","CAL KING","S",1],["700812173-1070","BRB24 S3 Silver PS PT CalKing","CAL KING","A",1],["B211-69","Drystan King/California King Bookcase Headboard","CAL KING","A",1],["500700401.6070","FB BUNKIE BOARD Split CAL KING Extreme Lo Pro","CAL KING","S",2],["500300421-1070","PSL23 BLUE LAGOON NIGHTS FM TT Cal King","CAL KING","S",1],["500301523-1070","PSL23 BLUE LAGOON NTS PL PT Cal King","CAL KING","A",1],["500100491-1070","PSX 24 KNOX FM TT Cal King","CAL KING","A",1],["500124399-5070","SER 23 PRIVATE LABEL Split Cal King Box","CAL KING","S",2],["500124399-6070","SER 23 PRIVATE LABEL Split Cal King LoPro","CAL KING","S",2]];
+
+// ── EZ Pro PDF import (self-serve): parse the export in-browser, refresh the count list ──
+const IMP_EXCL = ["PROTECTOR", "WARRANTY", "PROTECTION", "PILLOW", "SHEET", "ENCASEMENT", "MATTRESS PAD", " MP ", " MP-", "MP -"];
+const IMP_SIZE = { "1010": "TWIN", "1020": "TWIN XL", "1030": "FULL", "1040": "FULL XL", "1050": "QUEEN", "1060": "KING", "1070": "CAL KING" };
+function impSizeOf(item, desc) {
+  const m = (item || "").match(/-\s*(10[1-7]0)\b/); if (m && IMP_SIZE[m[1]]) return IMP_SIZE[m[1]];
+  const d = (desc || "").toUpperCase();
+  for (const [w, s] of [["CAL KING", "CAL KING"], ["CALIFORNIA KING", "CAL KING"], ["TWIN XL", "TWIN XL"], ["TXL", "TWIN XL"], ["QUEEN", "QUEEN"], ["KING", "KING"], ["FULL", "FULL"], ["TWIN", "TWIN"]]) if (d.includes(w)) return s;
+  return "";
+}
+function ensurePdfjs(cb) {
+  const WSRC = "https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.worker.min.js";
+  if (window.pdfjsLib) { window.pdfjsLib.GlobalWorkerOptions.workerSrc = WSRC; cb(); return; }
+  if (!document.querySelector("script[data-pdfjs]")) {
+    const s = document.createElement("script"); s.src = "https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.min.js"; s.setAttribute("data-pdfjs", "1");
+    s.onload = () => { window.pdfjsLib.GlobalWorkerOptions.workerSrc = WSRC; cb(); };
+    document.head.appendChild(s);
+  } else { const t = setInterval(() => { if (window.pdfjsLib) { clearInterval(t); window.pdfjsLib.GlobalWorkerOptions.workerSrc = WSRC; cb(); } }, 120); }
+}
+async function parseEzProPdf(file) {
+  const buf = await file.arrayBuffer();
+  const pdf = await window.pdfjsLib.getDocument({ data: buf }).promise;
+  const colf = (x, W) => { const r = x / W; if (r < 0.077) return "n"; if (r < 0.173) return "man"; if (r < 0.298) return "item"; if (r < 0.826) return "desc"; return "qty"; };
+  const recs = []; let allText = "";
+  for (let p = 1; p <= pdf.numPages; p++) {
+    const page = await pdf.getPage(p); const vp = page.getViewport({ scale: 1 }); const W = vp.width, Hh = vp.height;
+    const tc = await page.getTextContent();
+    const items = tc.items.map((it) => ({ str: it.str, x: it.transform[4], top: Hh - it.transform[5] })).filter((it) => it.str.trim() !== "");
+    allText += " " + items.map((i) => i.str).join(" ");
+    items.sort((a, b) => a.top - b.top || a.x - b.x);
+    const lines = []; let cur = [], ct = null;
+    for (const it of items) { if (ct === null || Math.abs(it.top - ct) <= 5) { cur.push(it); if (ct === null) ct = it.top; } else { lines.push(cur); cur = [it]; ct = it.top; } }
+    if (cur.length) lines.push(cur);
+    for (const ln of lines) {
+      const cols = { n: [], man: [], item: [], desc: [], qty: [] };
+      ln.sort((a, b) => a.x - b.x); for (const it of ln) cols[colf(it.x, W)].push(it.str);
+      const nf = cols.n.join(" ").trim();
+      if (/^\d+$/.test(nf)) recs.push({ item: cols.item.slice(), desc: cols.desc.slice(), qty: cols.qty.slice() });
+      else if (recs.length) { const r = recs[recs.length - 1]; r.item.push(...cols.item); r.desc.push(...cols.desc); r.qty.push(...cols.qty); }
+    }
+  }
+  const category = /AS\s*IS/i.test(allText) ? "AS-IS" : "STOCK";
+  return recs.map((r) => {
+    const item = r.item.join("").replace(/\s/g, "");
+    const desc = r.desc.join(" ").trim();
+    const qs = r.qty.filter((t) => /^\d+$/.test(t)); const qty = qs.length ? +qs[qs.length - 1] : 0;
+    return { item_no: item, description: desc, size: impSizeOf(item, desc), category, expected: qty };
+  }).filter((r) => r.description);
+}
+
+// ── COUNT: reconcile physical vs the EZ Pro paper copy, bay by bay ──
+function CountPanel({ who = "", isEs = false, bays = [], manager = false }) {
+  const [rows, setRows] = useState([]);
+  const [ready, setReady] = useState(false);
+  const [q, setQ] = useState("");
+  const [bay, setBay] = useState("");
+  const [filter, setFilter] = useState("todo");
+  const [add, setAdd] = useState(null);
+  const [importing, setImporting] = useState(false);
+  const [preview, setPreview] = useState(null);
+
+  useEffect(() => {
+    load();
+    const ch = sb.channel("count-ch").on("postgres_changes", { event: "*", schema: "public", table: "count_items" }, () => load(true)).subscribe();
+    return () => sb.removeChannel(ch);
+    // eslint-disable-next-line
+  }, []);
+
+  async function onFiles(files) {
+    if (!files.length) return;
+    setImporting(true);
+    try {
+      await new Promise((res) => ensurePdfjs(res));
+      let all = [];
+      for (const f of files) all = all.concat(await parseEzProPdf(f));
+      const kept = all.filter((r) => { if (!r.size) return false; const d = " " + r.description.toUpperCase() + " "; return !IMP_EXCL.some((k) => d.includes(k)); });
+      setPreview({ items: kept, units: kept.reduce((s, r) => s + r.expected, 0), files: files.length, total: all.length });
+    } catch (e) { alert((isEs ? "No se pudo leer el PDF: " : "Couldn't read the PDF: ") + e); }
+    setImporting(false);
+  }
+  async function commitImport() {
+    const rows = preview.items.map((r) => ({ item_no: r.item_no, description: r.description, size: r.size, category: r.category, expected: r.expected, counted: 0, bay: "" }));
+    try {
+      await sb.from("count_items").delete().neq("id", -1);
+      for (let i = 0; i < rows.length; i += 400) await sb.from("count_items").insert(rows.slice(i, i + 400));
+    } catch (e) {}
+    setPreview(null); load();
+  }
+
+  async function load(quiet) {
+    const { data, error } = await sb.from("count_items").select("*");
+    if (error) { setReady(true); return; }
+    if (!quiet && data && data.length === 0) {
+      const seed = COUNT_SEED.map((t) => ({ item_no: t[0], description: t[1], size: t[2], category: t[3] === "S" ? "STOCK" : "AS-IS", expected: t[4], counted: 0, bay: "" }));
+      try { await sb.from("count_items").insert(seed); } catch {}
+      const r2 = await sb.from("count_items").select("*"); setRows(r2.data || []);
+    } else setRows(data || []);
+    setReady(true);
+  }
+
+  async function bump(it, delta) {
+    const nc = Math.max(0, (it.counted || 0) + delta);
+    const patch = { counted: nc }; if (delta > 0 && bay) patch.bay = bay.trim().toUpperCase();
+    setRows((prev) => prev.map((x) => (x.id === it.id ? { ...x, ...patch } : x)));
+    try { await sb.from("count_items").update(patch).eq("id", it.id); } catch {}
+  }
+
+  async function saveAdd() {
+    const desc = (add.description || "").trim(); if (!desc) { alert(isEs ? "Descripción requerida" : "Description required"); return; }
+    const row = { item_no: (add.item_no || "").trim(), description: desc, size: (add.size || "").trim().toUpperCase(), category: "NEW", expected: 0, counted: 1, bay: bay.trim().toUpperCase() };
+    const { data } = await sb.from("count_items").insert(row).select();
+    if (data && data[0]) setRows((prev) => [...prev, data[0]]);
+    setAdd(null);
+  }
+
+  async function resetCount() {
+    if (!window.confirm(isEs ? "¿Reiniciar TODO el conteo a 0? (borra las nuevas)" : "Reset the whole count to 0? (removes added items)")) return;
+    setRows((prev) => prev.filter((x) => x.category !== "NEW").map((x) => ({ ...x, counted: 0, bay: "" })));
+    try { await sb.from("count_items").delete().eq("category", "NEW"); await sb.from("count_items").update({ counted: 0, bay: "" }).neq("id", -1); } catch {}
+    load();
+  }
+
+  const SO = { TWIN: 1, "TWIN XL": 2, FULL: 3, "FULL XL": 4, QUEEN: 5, KING: 6, "CAL KING": 7 };
+  const totExp = rows.reduce((s, r) => s + (r.expected || 0), 0);
+  const totCnt = rows.reduce((s, r) => s + (r.counted || 0), 0);
+  const nMissing = rows.filter((r) => (r.expected || 0) > 0 && (r.counted || 0) === 0).length;
+  const nExtra = rows.filter((r) => (r.expected || 0) === 0 && (r.counted || 0) > 0).length;
+  const nOver = rows.filter((r) => (r.counted || 0) > (r.expected || 0) && (r.expected || 0) > 0).length;
+  const nDone = rows.filter((r) => (r.counted || 0) >= (r.expected || 0) && (r.expected || 0) > 0).length;
+
+  const ql = q.trim().toLowerCase();
+  let shown = rows.filter((r) => {
+    if (ql && !((r.description || "") + " " + (r.item_no || "") + " " + (r.size || "")).toLowerCase().includes(ql)) return false;
+    if (filter === "todo") return (r.expected || 0) > (r.counted || 0);
+    if (filter === "missing") return (r.expected || 0) > 0 && (r.counted || 0) === 0;
+    if (filter === "extra") return (r.expected || 0) === 0 && (r.counted || 0) > 0;
+    if (filter === "over") return (r.counted || 0) > (r.expected || 0) && (r.expected || 0) > 0;
+    if (filter === "counted") return (r.counted || 0) > 0;
+    return true;
+  });
+  shown = shown.sort((a, b) => (SO[a.size] || 9) - (SO[b.size] || 9) || (a.description || "").localeCompare(b.description || "")).slice(0, 300);
+
+  const S = {
+    inp: { width: "100%", padding: "11px 13px", borderRadius: 10, border: "1px solid #1e2d3d", background: "#0f1923", color: "#e2e8f0", fontSize: 15, boxSizing: "border-box" },
+    chip: (on) => ({ padding: "6px 11px", borderRadius: 8, border: "none", fontWeight: 700, fontSize: 12, cursor: "pointer", background: on ? "#2563eb" : "#16202b", color: on ? "#fff" : "#7b8aa0" }),
+    card: { background: "#0f1923", border: "1px solid #1e2d3d", borderRadius: 12, padding: 11, margin: "7px 0", display: "flex", alignItems: "center", gap: 10 },
+    op: (bg) => ({ width: 42, height: 42, borderRadius: 11, border: "none", fontSize: 21, fontWeight: 800, color: "#fff", background: bg, cursor: "pointer" }),
+  };
+  if (!ready) return <div style={{ padding: 30, textAlign: "center", color: "#475569" }}>{isEs ? "Cargando conteo…" : "Loading count…"}</div>;
+
+  const pct = totExp ? Math.min(100, Math.round((totCnt / totExp) * 100)) : 0;
+  return (
+    <div style={{ color: "#e2e8f0" }}>
+      <div style={{ background: "#0f1923", border: "1px solid #1e2d3d", borderRadius: 12, padding: 12, marginBottom: 10 }}>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+          <div style={{ fontSize: 22, fontWeight: 800, color: "#f1f5f9" }}>{totCnt}<span style={{ color: "#475569", fontSize: 15 }}> / {totExp}</span></div>
+          <div style={{ fontSize: 12, color: "#7b8aa0" }}>{isEs ? "unidades contadas" : "units counted"} · {pct}%</div>
+          {manager && <button onClick={resetCount} style={{ marginLeft: "auto", padding: "5px 10px", borderRadius: 8, border: "1px solid #7f1d1d", background: "transparent", color: "#fb7185", fontWeight: 700, fontSize: 11, cursor: "pointer" }}>{isEs ? "Reiniciar" : "Reset"}</button>}
+        </div>
+        <div style={{ height: 6, background: "#16202b", borderRadius: 4, marginTop: 8, overflow: "hidden" }}><div style={{ height: "100%", width: pct + "%", background: "#22c55e" }} /></div>
+      </div>
+
+      {manager && (
+        <label style={{ display: "block", marginBottom: 8, padding: 11, borderRadius: 11, border: "1px dashed #2b3b4d", background: "#0f1923", color: "#60a5fa", fontWeight: 700, fontSize: 13, cursor: "pointer", textAlign: "center" }}>
+          {importing ? (isEs ? "Leyendo PDF…" : "Reading PDF…") : "⬆ " + (isEs ? "Actualizar lista desde PDF de EZ Pro" : "Update list from EZ Pro PDF")}
+          <input type="file" accept="application/pdf,.pdf" multiple style={{ display: "none" }} onChange={(e) => { onFiles(Array.from(e.target.files || [])); e.target.value = ""; }} />
+        </label>
+      )}
+
+      <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+        <input list="count-baylist" value={bay} onChange={(e) => setBay(e.target.value)} placeholder={isEs ? "Bahía actual (p.ej. 6BR)" : "Current bay (e.g. 6BR)"} style={{ ...S.inp, flex: 1 }} />
+      </div>
+      <datalist id="count-baylist">{bays.map((n) => <option key={n} value={n} />)}</datalist>
+      <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={isEs ? "Buscar modelo o item… (p.ej. S2 Amethyst)" : "Search model or item #… (e.g. S2 Amethyst)"} style={{ ...S.inp, marginBottom: 8 }} />
+
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
+        {[["todo", (isEs ? "Faltan" : "To count") + " " + (rows.length - nDone)], ["counted", isEs ? "Contados" : "Counted"], ["missing", (isEs ? "Sin encontrar" : "Missing") + " " + nMissing], ["over", (isEs ? "De más" : "Over") + " " + nOver], ["extra", (isEs ? "Nuevos" : "New/extra") + " " + nExtra], ["all", isEs ? "Todo" : "All"]].map(([k, lbl]) => (
+          <button key={k} onClick={() => setFilter(k)} style={S.chip(filter === k)}>{lbl}</button>
+        ))}
+      </div>
+
+      <button onClick={() => setAdd({ item_no: "", description: "", size: "QUEEN" })} style={{ width: "100%", marginBottom: 10, padding: 11, borderRadius: 11, border: "1px dashed #2b3b4d", background: "#0f1923", color: "#60a5fa", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>+ {isEs ? "Agregar artículo que no está en la lista" : "Add item not on the list"}</button>
+
+      {shown.length === 0 && <div style={{ padding: 26, textAlign: "center", color: "#475569" }}>{isEs ? "Nada aquí." : "Nothing here."}</div>}
+      {shown.map((r) => {
+        const exp = r.expected || 0, cnt = r.counted || 0;
+        const col = cnt === 0 ? "#475569" : cnt === exp ? "#22c55e" : cnt > exp ? "#f43f5e" : "#f59e0b";
+        return (
+          <div key={r.id} style={S.card}>
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <div style={{ fontWeight: 700, fontSize: 14, color: "#f1f5f9", lineHeight: 1.2 }}>{r.description}</div>
+              <div style={{ color: "#7b8aa0", fontSize: 11, marginTop: 2 }}>{r.size}{r.item_no ? " · " + r.item_no : ""}{r.bay ? "  ·  📍" + r.bay : ""}{r.category === "AS-IS" ? "  ·  AS-IS" : r.category === "NEW" ? "  ·  NEW" : ""}</div>
+            </div>
+            <div style={{ textAlign: "center", minWidth: 46 }}>
+              <div style={{ fontSize: 19, fontWeight: 800, color: col }}>{cnt}<span style={{ color: "#475569", fontSize: 12, fontWeight: 600 }}>/{exp}</span></div>
+            </div>
+            <button style={S.op("#f43f5e")} onClick={() => bump(r, -1)}>−</button>
+            <button style={S.op("#22c55e")} onClick={() => bump(r, 1)}>+</button>
+          </div>
+        );
+      })}
+
+      {add && (
+        <div onPointerDown={(e) => { if (e.target === e.currentTarget) setAdd(null); }} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.6)", zIndex: 9999, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
+          <div style={{ background: "#0f1923", border: "1px solid #1e2d3d", borderRadius: "16px 16px 0 0", padding: 16, width: "100%", maxWidth: 520 }}>
+            <div style={{ fontWeight: 800, fontSize: 16, color: "#f1f5f9", marginBottom: 12 }}>{isEs ? "Nuevo artículo (no en la lista)" : "New item (not on the list)"}</div>
+            <input placeholder={isEs ? "Descripción / modelo" : "Description / model"} value={add.description} onChange={(e) => setAdd({ ...add, description: e.target.value })} style={{ ...S.inp, marginBottom: 8 }} />
+            <input placeholder="Item #" value={add.item_no} onChange={(e) => setAdd({ ...add, item_no: e.target.value })} style={{ ...S.inp, marginBottom: 8 }} />
+            <select value={add.size} onChange={(e) => setAdd({ ...add, size: e.target.value })} style={{ ...S.inp, marginBottom: 8 }}>{["TWIN", "TWIN XL", "FULL", "QUEEN", "KING", "CAL KING", ""].map((s) => <option key={s} value={s}>{s || "—"}</option>)}</select>
+            <div style={{ fontSize: 12, color: "#7b8aa0", marginBottom: 8 }}>{isEs ? "Se cuenta en la bahía" : "Counts into bay"}: <b>{bay || (isEs ? "(ninguna)" : "(none)")}</b></div>
+            <div style={{ display: "flex", gap: 9 }}>
+              <button onClick={() => setAdd(null)} style={{ flex: 1, padding: 13, borderRadius: 11, border: "none", background: "#16202b", color: "#e2e8f0", fontWeight: 700, fontSize: 15, cursor: "pointer" }}>{isEs ? "Cancelar" : "Cancel"}</button>
+              <button onClick={saveAdd} style={{ flex: 1, padding: 13, borderRadius: 11, border: "none", background: "#2563eb", color: "#fff", fontWeight: 800, fontSize: 15, cursor: "pointer" }}>{isEs ? "Agregar +1" : "Add +1"}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {preview && (
+        <div onPointerDown={(e) => { if (e.target === e.currentTarget) setPreview(null); }} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.6)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", padding: 18 }}>
+          <div style={{ background: "#0f1923", border: "1px solid #1e2d3d", borderRadius: 16, padding: 20, width: "100%", maxWidth: 440 }}>
+            <div style={{ fontWeight: 800, fontSize: 17, color: "#f1f5f9", marginBottom: 8 }}>{isEs ? "Actualizar lista de conteo" : "Update the count list"}</div>
+            <div style={{ fontSize: 14, color: "#e2e8f0", lineHeight: 1.5 }}>{isEs ? "Encontré" : "Found"} <b style={{ color: "#22c55e" }}>{preview.items.length}</b> {isEs ? "colchones y bases" : "mattresses & bases"} (<b>{preview.units}</b> {isEs ? "unidades" : "units"}) {isEs ? "en" : "from"} {preview.files} {isEs ? "archivo(s)" : "file(s)"}.</div>
+            <div style={{ fontSize: 12, color: "#f59e0b", margin: "10px 0 16px" }}>{isEs ? "Esto reemplaza la lista actual y pone los conteos a 0." : "This replaces the current list and resets all counts to 0."}</div>
+            <div style={{ display: "flex", gap: 9 }}>
+              <button onClick={() => setPreview(null)} style={{ flex: 1, padding: 13, borderRadius: 11, border: "none", background: "#16202b", color: "#e2e8f0", fontWeight: 700, fontSize: 15, cursor: "pointer" }}>{isEs ? "Cancelar" : "Cancel"}</button>
+              <button onClick={commitImport} style={{ flex: 1, padding: 13, borderRadius: 11, border: "none", background: "#2563eb", color: "#fff", fontWeight: 800, fontSize: 15, cursor: "pointer" }}>{isEs ? "Reemplazar" : "Replace list"}</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function InventoryPanel({ who = "", isEs = false, manager = false }) {
   const [items, setItems] = useState([]);
   const [moves, setMoves] = useState([]);
@@ -2902,6 +3138,7 @@ function InventoryPanel({ who = "", isEs = false, manager = false }) {
         <button style={S.tabBtn(view === "inv")} onClick={() => setView("inv")}>{isEs ? "Inventario" : "Inventory"}</button>
         {manager && <button style={S.tabBtn(view === "bays")} onClick={() => setView("bays")}>{isEs ? "Bahías" : "Bays"}</button>}
         <button style={S.tabBtn(view === "3d")} onClick={() => setView("3d")}>3D</button>
+        <button style={S.tabBtn(view === "count")} onClick={() => setView("count")}>{isEs ? "Conteo" : "Count"}</button>
         <button style={S.tabBtn(view === "log")} onClick={() => setView("log")}>{isEs ? "Actividad" : "Activity"}</button>
       </div>
       <datalist id="inv-baylist">{allBayNames.map((n) => <option key={n} value={n} />)}</datalist>
@@ -2966,6 +3203,8 @@ function InventoryPanel({ who = "", isEs = false, manager = false }) {
           </div>
         </div>
       )}
+
+      {view === "count" && <CountPanel who={who} isEs={isEs} bays={allBayNames} manager={manager} />}
 
       {view === "log" && (
         <div>
