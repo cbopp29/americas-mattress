@@ -2805,6 +2805,7 @@ function CountPanel({ who = "", isEs = false, bays = [], manager = false }) {
   const [add, setAdd] = useState(null);
   const [importing, setImporting] = useState(false);
   const [preview, setPreview] = useState(null);
+  const [sizeF, setSizeF] = useState("ALL");
 
   useEffect(() => {
     load();
@@ -2875,8 +2876,14 @@ function CountPanel({ who = "", isEs = false, bays = [], manager = false }) {
   const nOver = rows.filter((r) => (r.counted || 0) > (r.expected || 0) && (r.expected || 0) > 0).length;
   const nDone = rows.filter((r) => (r.counted || 0) >= (r.expected || 0) && (r.expected || 0) > 0).length;
 
+  const bayCount = {}; rows.forEach((r) => { if (r.bay && (r.counted || 0) > 0) bayCount[r.bay] = (bayCount[r.bay] || 0) + (r.counted || 0); });
+  const bnum = (b) => { const m = (b || "").match(/\d+/); return m ? +m[0] : 999; };
+  const bayChips = Array.from(new Set([...bays, ...Object.keys(bayCount)])).sort((a, b) => bnum(a) - bnum(b) || a.localeCompare(b));
+  const SIZES = ["ALL", "TWIN", "TWIN XL", "FULL", "QUEEN", "KING", "CAL KING"];
+
   const ql = q.trim().toLowerCase();
   let shown = rows.filter((r) => {
+    if (sizeF !== "ALL" && (r.size || "") !== sizeF) return false;
     if (ql && !((r.description || "") + " " + (r.item_no || "") + " " + (r.size || "")).toLowerCase().includes(ql)) return false;
     if (filter === "todo") return (r.expected || 0) > (r.counted || 0);
     if (filter === "missing") return (r.expected || 0) > 0 && (r.counted || 0) === 0;
@@ -2914,10 +2921,17 @@ function CountPanel({ who = "", isEs = false, bays = [], manager = false }) {
         </label>
       )}
 
-      <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
-        <input list="count-baylist" value={bay} onChange={(e) => setBay(e.target.value)} placeholder={isEs ? "Bahía actual (p.ej. 6BR)" : "Current bay (e.g. 6BR)"} style={{ ...S.inp, flex: 1 }} />
+      <div style={{ fontSize: 12, color: "#7b8aa0", margin: "0 2px 4px" }}>{isEs ? "Bahía actual" : "Current bay"}: <b style={{ color: bay ? "#22c55e" : "#fb7185" }}>{bay || (isEs ? "elige una ↓" : "pick one ↓")}</b></div>
+      <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 4, marginBottom: 6 }}>
+        {bayChips.map((b) => (
+          <button key={b} onClick={() => setBay(b)} style={{ flex: "0 0 auto", padding: "7px 11px", borderRadius: 9, border: "none", fontWeight: 800, fontSize: 13, cursor: "pointer", whiteSpace: "nowrap", background: bay === b ? "#2563eb" : "#16202b", color: bay === b ? "#fff" : "#93c5fd" }}>{b}{bayCount[b] ? <span style={{ fontWeight: 600, fontSize: 11, color: bay === b ? "#dbeafe" : "#64748b" }}> ·{bayCount[b]}</span> : ""}</button>
+        ))}
+        <input list="count-baylist" value={bay} onChange={(e) => setBay(e.target.value.toUpperCase())} placeholder={isEs ? "+bahía" : "+bay"} style={{ ...S.inp, flex: "0 0 92px", padding: "7px 9px" }} />
       </div>
       <datalist id="count-baylist">{bays.map((n) => <option key={n} value={n} />)}</datalist>
+      <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 4, marginBottom: 8 }}>
+        {SIZES.map((s) => <button key={s} onClick={() => setSizeF(s)} style={{ flex: "0 0 auto", ...S.chip(sizeF === s), whiteSpace: "nowrap" }}>{s === "ALL" ? (isEs ? "Todas" : "All sizes") : s}</button>)}
+      </div>
       <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={isEs ? "Buscar modelo o item… (p.ej. S2 Amethyst)" : "Search model or item #… (e.g. S2 Amethyst)"} style={{ ...S.inp, marginBottom: 8 }} />
 
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
