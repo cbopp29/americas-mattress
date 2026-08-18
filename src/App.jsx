@@ -2806,6 +2806,7 @@ function CountPanel({ who = "", isEs = false, bays = [], manager = false }) {
   const [importing, setImporting] = useState(false);
   const [preview, setPreview] = useState(null);
   const [sizeF, setSizeF] = useState("ALL");
+  const [showReport, setShowReport] = useState(false);
 
   useEffect(() => {
     load();
@@ -2834,6 +2835,21 @@ function CountPanel({ who = "", isEs = false, bays = [], manager = false }) {
     } catch (e) {}
     setPreview(null); load();
   }
+
+  function csvq(s) { s = String(s == null ? "" : s); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }
+  function statusOf(r) { const e = r.expected || 0, c = r.counted || 0; if (e === 0 && c > 0) return "NEW"; if (c === 0 && e > 0) return "MISSING"; if (c > e) return "OVER"; if (c < e) return "UNDER"; return "OK"; }
+  function downloadReportCSV() {
+    const hdr = ["Category", "Item #", "Description", "Size", "Expected", "Counted", "Diff", "Status", "Bay"];
+    const lines = [hdr.join(",")];
+    rows.slice().sort((a, b) => (a.bay || "~").localeCompare(b.bay || "~") || (a.description || "").localeCompare(b.description || "")).forEach((r) => {
+      const diff = (r.counted || 0) - (r.expected || 0);
+      lines.push([r.category, r.item_no, r.description, r.size, r.expected || 0, r.counted || 0, diff, statusOf(r), r.bay || ""].map(csvq).join(","));
+    });
+    const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" });
+    const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "Inventory Count " + new Date().toISOString().slice(0, 10) + ".csv";
+    document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500);
+  }
+  function copySummary(text) { try { navigator.clipboard.writeText(text).then(() => alert(isEs ? "Resumen copiado" : "Summary copied"), () => window.prompt(isEs ? "Copia:" : "Copy:", text)); } catch (e) { window.prompt(isEs ? "Copia:" : "Copy:", text); } }
 
   async function load(quiet) {
     const { data, error } = await sb.from("count_items").select("*");
@@ -2875,6 +2891,8 @@ function CountPanel({ who = "", isEs = false, bays = [], manager = false }) {
   const nExtra = rows.filter((r) => (r.expected || 0) === 0 && (r.counted || 0) > 0).length;
   const nOver = rows.filter((r) => (r.counted || 0) > (r.expected || 0) && (r.expected || 0) > 0).length;
   const nDone = rows.filter((r) => (r.counted || 0) >= (r.expected || 0) && (r.expected || 0) > 0).length;
+  const nUnder = rows.filter((r) => (r.counted || 0) > 0 && (r.counted || 0) < (r.expected || 0)).length;
+  const bySize = {}; rows.forEach((r) => { const k = r.size || "—"; (bySize[k] = bySize[k] || { e: 0, c: 0 }); bySize[k].e += r.expected || 0; bySize[k].c += r.counted || 0; });
 
   const bayCount = {}; rows.forEach((r) => { if (r.bay && (r.counted || 0) > 0) bayCount[r.bay] = (bayCount[r.bay] || 0) + (r.counted || 0); });
   const bnum = (b) => { const m = (b || "").match(/\d+/); return m ? +m[0] : 999; };
@@ -2909,7 +2927,8 @@ function CountPanel({ who = "", isEs = false, bays = [], manager = false }) {
         <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
           <div style={{ fontSize: 22, fontWeight: 800, color: "#f1f5f9" }}>{totCnt}<span style={{ color: "#475569", fontSize: 15 }}> / {totExp}</span></div>
           <div style={{ fontSize: 12, color: "#7b8aa0" }}>{isEs ? "unidades contadas" : "units counted"} · {pct}%</div>
-          {manager && <button onClick={resetCount} style={{ marginLeft: "auto", padding: "5px 10px", borderRadius: 8, border: "1px solid #7f1d1d", background: "transparent", color: "#fb7185", fontWeight: 700, fontSize: 11, cursor: "pointer" }}>{isEs ? "Reiniciar" : "Reset"}</button>}
+          <button onClick={() => setShowReport(true)} style={{ marginLeft: "auto", padding: "5px 10px", borderRadius: 8, border: "none", background: "#16342a", color: "#4ade80", fontWeight: 700, fontSize: 11, cursor: "pointer" }}>📄 {isEs ? "Reporte" : "Report"}</button>
+          {manager && <button onClick={resetCount} style={{ padding: "5px 10px", borderRadius: 8, border: "1px solid #7f1d1d", background: "transparent", color: "#fb7185", fontWeight: 700, fontSize: 11, cursor: "pointer" }}>{isEs ? "Reiniciar" : "Reset"}</button>}
         </div>
         <div style={{ height: 6, background: "#16202b", borderRadius: 4, marginTop: 8, overflow: "hidden" }}><div style={{ height: "100%", width: pct + "%", background: "#22c55e" }} /></div>
       </div>
@@ -2990,6 +3009,43 @@ function CountPanel({ who = "", isEs = false, bays = [], manager = false }) {
           </div>
         </div>
       )}
+
+      {showReport && (() => {
+        const diff = totCnt - totExp;
+        const order = ["TWIN", "TWIN XL", "FULL", "QUEEN", "KING", "CAL KING"];
+        const sizes = order.filter((s) => bySize[s]);
+        const dt = new Date().toLocaleString([], { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
+        const text = "INVENTORY COUNT — " + dt + "\nCounted by: " + (who || "—") +
+          "\nExpected (POS): " + totExp + " units\nCounted: " + totCnt + " units\nDifference: " + (diff >= 0 ? "+" : "") + diff +
+          "\n\nBy size: " + sizes.map((s) => s + " " + bySize[s].c + "/" + bySize[s].e).join(", ") +
+          "\n\nMissing (POS not found): " + nMissing + "\nUnder-counted: " + nUnder + "\nOver-counted: " + nOver + "\nNew/extra (not on POS): " + nExtra;
+        const stat = (lbl, n, col) => (<div style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderTop: "1px solid #1e2d3d" }}><span style={{ color: "#94a3b8", fontSize: 13 }}>{lbl}</span><b style={{ color: col, fontSize: 15 }}>{n}</b></div>);
+        return (
+          <div onPointerDown={(e) => { if (e.target === e.currentTarget) setShowReport(false); }} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.6)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+            <div style={{ background: "#0f1923", border: "1px solid #1e2d3d", borderRadius: 16, padding: 18, width: "100%", maxWidth: 460, maxHeight: "86vh", overflowY: "auto" }}>
+              <div style={{ fontWeight: 800, fontSize: 18, color: "#f1f5f9" }}>{isEs ? "Reporte de conteo" : "Count report"}</div>
+              <div style={{ fontSize: 12, color: "#7b8aa0", marginBottom: 10 }}>{dt} · {who || "—"}</div>
+              <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+                <div style={{ flex: 1, background: "#16202b", borderRadius: 10, padding: 10, textAlign: "center" }}><div style={{ fontSize: 11, color: "#7b8aa0" }}>{isEs ? "POS" : "POS"}</div><div style={{ fontSize: 20, fontWeight: 800, color: "#e2e8f0" }}>{totExp}</div></div>
+                <div style={{ flex: 1, background: "#16202b", borderRadius: 10, padding: 10, textAlign: "center" }}><div style={{ fontSize: 11, color: "#7b8aa0" }}>{isEs ? "Contado" : "Counted"}</div><div style={{ fontSize: 20, fontWeight: 800, color: "#e2e8f0" }}>{totCnt}</div></div>
+                <div style={{ flex: 1, background: "#16202b", borderRadius: 10, padding: 10, textAlign: "center" }}><div style={{ fontSize: 11, color: "#7b8aa0" }}>{isEs ? "Dif." : "Diff"}</div><div style={{ fontSize: 20, fontWeight: 800, color: diff === 0 ? "#22c55e" : "#f59e0b" }}>{diff >= 0 ? "+" : ""}{diff}</div></div>
+              </div>
+              <div style={{ fontSize: 12, fontWeight: 800, color: "#7b8aa0", margin: "6px 0 2px" }}>{isEs ? "POR TAMAÑO" : "BY SIZE"}</div>
+              {sizes.map((s) => stat(s, bySize[s].c + " / " + bySize[s].e, bySize[s].c === bySize[s].e ? "#22c55e" : "#f59e0b"))}
+              <div style={{ fontSize: 12, fontWeight: 800, color: "#7b8aa0", margin: "10px 0 2px" }}>{isEs ? "DISCREPANCIAS" : "DISCREPANCIES"}</div>
+              {stat(isEs ? "Sin encontrar (POS)" : "Missing (on POS, not found)", nMissing, nMissing ? "#fb7185" : "#22c55e")}
+              {stat(isEs ? "Contados de menos" : "Under-counted", nUnder, nUnder ? "#f59e0b" : "#22c55e")}
+              {stat(isEs ? "Contados de más" : "Over-counted", nOver, nOver ? "#f43f5e" : "#22c55e")}
+              {stat(isEs ? "Nuevos (no en POS)" : "New / extra (not on POS)", nExtra, nExtra ? "#60a5fa" : "#22c55e")}
+              <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+                <button onClick={downloadReportCSV} style={{ flex: 1, padding: 12, borderRadius: 11, border: "none", background: "#2563eb", color: "#fff", fontWeight: 800, fontSize: 14, cursor: "pointer" }}>⬇ {isEs ? "CSV/Excel" : "Download CSV"}</button>
+                <button onClick={() => copySummary(text)} style={{ flex: 1, padding: 12, borderRadius: 11, border: "none", background: "#16342a", color: "#4ade80", fontWeight: 800, fontSize: 14, cursor: "pointer" }}>📋 {isEs ? "Copiar" : "Copy summary"}</button>
+              </div>
+              <button onClick={() => setShowReport(false)} style={{ width: "100%", marginTop: 8, padding: 11, borderRadius: 11, border: "none", background: "#16202b", color: "#e2e8f0", fontWeight: 700, fontSize: 14, cursor: "pointer" }}>{isEs ? "Cerrar" : "Close"}</button>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
