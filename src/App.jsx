@@ -2572,7 +2572,7 @@ const FOCI = {
   b: { pos: [-20, 4, 6.5], tgt: [16, 2, 6.5] },
   d: { pos: [-20, 4, -5], tgt: [16, 2, -5] },
   c: { pos: [-20, 4, -11], tgt: [16, 2, -11] },
-  couch: { pos: [-16, 5.5, 5], tgt: [-16, 2.6, -8] },
+  couch: { pos: [-17, 6.5, 9], tgt: [-17, 3, -7] },
 };
 function rackOf(n) { for (const r of RACKS) if (n >= r.range[0] && n <= r.range[1]) return r; return null; }
 function parseBay(name) {
@@ -2653,16 +2653,19 @@ function Warehouse3D({ bays, items, onPickBay, focus }) {
       const l = mkLabel(THREE, r.label, "#64748b", 4); l.position.set(0, H + 1.2, r.z); gl.content.add(l);
     });
     if (couchName) {
-      const top = 2.4;
-      const grp = new THREE.Group(); grp.position.set(-16, 0, -8);
+      const top = 2.7, on = sel === couchName;
+      const grp = new THREE.Group(); grp.position.set(-17, 0, -7);
       const legMat = new THREE.MeshStandardMaterial({ color: 0x24384f });
-      [[-2.2, -2.2], [2.2, -2.2], [-2.2, 2.2], [2.2, 2.2]].forEach(([lx, lz]) => { const leg = new THREE.Mesh(new THREE.BoxGeometry(0.18, top, 0.18), legMat); leg.position.set(lx, top / 2, lz); grp.add(leg); });
-      const plat = new THREE.Mesh(new THREE.BoxGeometry(5, 0.18, 5), new THREE.MeshStandardMaterial({ color: sel === couchName ? 0x14532d : 0x1b2c40 }));
+      [[-4.4, -2.2], [4.4, -2.2], [-4.4, 2.2], [4.4, 2.2], [0, -2.2], [0, 2.2]].forEach(([lx, lz]) => { const leg = new THREE.Mesh(new THREE.BoxGeometry(0.22, top, 0.22), legMat); leg.position.set(lx, top / 2, lz); grp.add(leg); });
+      const plat = new THREE.Mesh(new THREE.BoxGeometry(9.6, 0.2, 5), new THREE.MeshStandardMaterial({ color: on ? 0x14532d : 0x1b2c40 }));
       plat.position.y = top; plat.userData.bay = couchName; grp.add(plat); gl.pads.push(plat);
-      for (let i = 0; i < 4; i++) { const rung = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.08, 0.08), legMat); rung.position.set(-2.7, 0.4 + i * 0.6, 2.3); grp.add(rung); }
-      const its = items.filter((i) => (i.bay || "").toUpperCase().trim() === couchName.toUpperCase().trim()); const n = Math.min(its.length, 6);
-      for (let k = 0; k < n; k++) { const it = its[k]; const hex = SIZE_HEX[(it.size || "").toUpperCase()] || "#94a3b8"; const bed = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.32, 3), new THREE.MeshStandardMaterial({ color: hex })); bed.position.set(-1.8 + k * 0.6, top + 0.26, 0); grp.add(bed); }
-      grp.add((() => { const l = mkLabel(THREE, "COUCH BAY", sel === couchName ? "#22c55e" : "#fbbf24", 3); l.position.set(0, top + 1.2, 0); return l; })());
+      grp.add((() => { const e = new THREE.LineSegments(new THREE.EdgesGeometry(plat.geometry), new THREE.LineBasicMaterial({ color: on ? 0x22c55e : 0x334862 })); e.position.y = top; return e; })());
+      for (let i = 0; i < 5; i++) { const rung = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.08, 0.08), legMat); rung.position.set(-5.1, 0.45 + i * (top / 5), 2.1); grp.add(rung); }
+      // 8 stacks of mattresses across the platform
+      const its = items.filter((i) => (i.bay || "").toUpperCase().trim() === couchName.toUpperCase().trim());
+      const cap = Math.min(its.length, 48);
+      for (let k = 0; k < cap; k++) { const it = its[k]; const hex = SIZE_HEX[(it.size || "").toUpperCase()] || "#94a3b8"; const col = k % 8, row = Math.floor(k / 8); const bed = new THREE.Mesh(new THREE.BoxGeometry(0.95, 0.18, 3), new THREE.MeshStandardMaterial({ color: hex, roughness: 0.7 })); bed.position.set(-4.05 + col * 1.16, top + 0.2 + row * 0.2, 0); grp.add(bed); }
+      grp.add((() => { const l = mkLabel(THREE, "COUCH BAY", on ? "#22c55e" : "#fbbf24", 3.6); l.position.set(0, top + 1.7, 0); return l; })());
       gl.content.add(grp);
     }
   }
@@ -2708,15 +2711,20 @@ function Warehouse3D({ bays, items, onPickBay, focus }) {
     };
     renderer.domElement.addEventListener("pointerdown", onDown); window.addEventListener("pointerup", onUp);
     const ro = new ResizeObserver(() => { const W = mount.clientWidth, H = mount.clientHeight; if (W && H) { cam.aspect = W / H; cam.updateProjectionMatrix(); renderer.setSize(W, H); } }); ro.observe(mount);
-    let raf; const loop = () => { raf = requestAnimationFrame(loop); ctr.update(); renderer.render(scene, cam); }; loop();
-    glRef.current = { renderer, scene, cam, ctr, content, pads: [], ro, raf, onUp, dom: renderer.domElement };
+    const state = { renderer, scene, cam, ctr, content, pads: [], ro, onUp, dom: renderer.domElement, stopped: false, raf: 0 };
+    glRef.current = state;
+    const loop = () => { if (state.stopped) return; ctr.update(); renderer.render(scene, cam); state.raf = requestAnimationFrame(loop); };
+    state.raf = requestAnimationFrame(loop);
     build(); applyFocus();
   }
 
   function teardown() {
     const gl = glRef.current; if (!gl.renderer) return;
-    cancelAnimationFrame(gl.raf); gl.ro && gl.ro.disconnect();
+    gl.stopped = true; cancelAnimationFrame(gl.raf);
+    gl.ro && gl.ro.disconnect();
     window.removeEventListener("pointerup", gl.onUp);
+    try { gl.ctr && gl.ctr.dispose(); } catch {}
+    try { gl.renderer.forceContextLoss(); } catch {}
     try { gl.renderer.dispose(); gl.dom && gl.dom.remove(); } catch {}
     glRef.current = {};
   }
